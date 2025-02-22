@@ -103,7 +103,7 @@
       {
         title: "H53576 HIGH MOBILITY ENGINEER EXCAVATOR (HMEE)",
         fields: [
-          { label: "Image", value: "https://placehold.co/200x300" },
+          { label: "Image", value: "assets/hmee.jpg" },
           { label: "NSN", value: "2420015354061" },
           { label: "SN", value: "GE0HMEE1C91063187/UC09GK" },
           { label: "Description", value: "JCB-made backhoe painted tan located in the motorpool" },
