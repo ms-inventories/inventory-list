@@ -58,7 +58,7 @@
       {
         title: "CO5036 COMPUTER SYSTEM DIGITAL",
         fields: [
-          { label: "Image", value: "https://placehold.co/300/300" },
+          { label: "Image", value: "https://placehold.co/300X300" },
           { label: "NSN", value: "7010016269244" },
           { label: "SN", value: "B2UYK128DUP00017" },
           { label: "Description", value: "A computer that is mounted in a truck" },
