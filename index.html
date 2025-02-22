@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Equipment Inventory</title>
+  <!-- Tailwind CSS (dark theme) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
+  <!-- Password Prompt -->
+  <div id="passwordPrompt" class="flex flex-col items-center justify-center h-screen">
+    <h1 class="text-2xl mb-4">Enter Password</h1>
+    <input 
+      type="password" 
+      id="passwordInput" 
+      class="text-gray-900 px-3 py-2 rounded w-64 mb-4 focus:outline-none" 
+      placeholder="Password..."
+    />
+    <button 
+      onclick="checkPassword()" 
+      class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+    >
+      Submit
+    </button>
+  </div>
+
+  <div id="mainContent" class="hidden p-4">
+    <h1 class="text-3xl font-bold mb-8">Equipment Inventory</h1>
+    <div id="itemsContainer" class="space-y-8"></div>
+  </div>
+
+
+</body>
+</html>
