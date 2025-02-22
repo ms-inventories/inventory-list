@@ -289,8 +289,7 @@
         ]
       }
     ];
-
-    const value = "msplatoon";
+ const value = "msplatoon";
 
     /**
      * Checks the password typed by the user.
@@ -314,7 +313,7 @@
       const container = document.getElementById("itemsContainer");
       
       items.forEach(item => {
-        // Each item is placed in a "card"
+        // Create a "card" for each item
         const itemCard = document.createElement("div");
         itemCard.className = "border border-gray-700 rounded p-4";
 
@@ -324,7 +323,7 @@
         titleEl.className = "text-xl font-bold mb-3";
         itemCard.appendChild(titleEl);
 
-        // Build a table of fields
+        // Table
         const tableEl = document.createElement("table");
         tableEl.className = "table-auto w-full border border-gray-700";
 
@@ -339,15 +338,23 @@
           const valueCell = document.createElement("td");
           valueCell.className = "p-2 border border-gray-700";
 
-          // If the field is an Image, create <img> tag
           if (field.label.toLowerCase() === "image") {
-            const img = document.createElement("img");
-            img.src = field.value;
-            img.alt = item.title;
-            img.className = "max-h-48";
-            valueCell.appendChild(img);
+            if (Array.isArray(field.value)) {
+              field.value.forEach((imgSrc) => {
+                const img = document.createElement("img");
+                img.src = imgSrc;
+                img.alt = item.title;
+                img.className = "max-h-48 inline-block mr-2 mb-2";
+                valueCell.appendChild(img);
+              });
+            } else {
+              const img = document.createElement("img");
+              img.src = field.value;
+              img.alt = item.title;
+              img.className = "max-h-48";
+              valueCell.appendChild(img);
+            }
           } else {
-            // Otherwise, just put the value as text
             valueCell.textContent = field.value;
           }
 
