@@ -114,7 +114,7 @@
       {
         title: "L77215 LOADSKDSTRTYPIII",
         fields: [
-          { label: "Image", value: "https://placehold.co/200x300" },
+          { label: "Image", value: "assets/skidsteer.png" },
           { label: "NSN", value: "3805015524487" },
           { label: "SN", value: "NCM459289/UA07G0" },
           { label: "Description", value: "Bobcat/Skidsteer in the garage usually with forks attached" },
