@@ -181,7 +181,7 @@
       {
         title: "T05106 TRAILER, FLAT BED",
         fields: [
-          { label: "Image", value: "https://placehold.co/200x300" },
+          { label: "Image", value: ["https://placehold.co/200x300", "assets/flat-bed.jpg"] },
           { label: "NSN", value: "2330016207184" },
           { label: "SN", value: "LEUTII0056" },
           { label: "Description", value: "Trailer is not in the motor pool; reportedly at Fort Indiantown Gap getting worked on" },
