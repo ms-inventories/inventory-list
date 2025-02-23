@@ -70,7 +70,7 @@
       {
         title: "D41659 DRIVERS ENHANCERS: AN/VAS-5",
         fields: [
-          { label: "Image", value: "assets/dve.jpg" },
+          { label: "Image", value: ["assets/dve.jpg","https://placehold.co/300x300"] },
           { label: "Description", value: "Sensors that mount on the front of a truck." },
           { label: "Location", value: "Pelican cases in the Stable Cages (Top Shelf all the way in). Sensors currently mounted on trucks." },
           { label: "NSN (1)", value: "5855015049801 – OH Qty: 5" },
