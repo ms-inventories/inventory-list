@@ -2,33 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Equipment Inventory</title>
-  <!-- Tailwind CSS (dark theme) -->
+  <title>Inventory Admin</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
-  <!-- Password Prompt -->
-  <div id="passwordPrompt" class="flex flex-col items-center justify-center h-screen">
-    <h1 class="text-2xl mb-4">Enter Password</h1>
-    <input 
-      type="password" 
-      id="passwordInput" 
-      class="text-gray-900 px-3 py-2 rounded w-64 mb-4 focus:outline-none" 
-      placeholder="Password..."
-    />
-    <button 
-      onclick="checkPassword()" 
-      class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-    >
-      Submit
+<body class="bg-gray-900 text-gray-100 font-sans min-h-screen p-4">
+  <h1 class="text-3xl font-bold mb-6">Inventory Admin</h1>
+
+  <div class="mb-6 border border-gray-700 rounded p-4">
+    <div class="flex flex-col gap-3 max-w-xl">
+      <label class="text-sm text-gray-300">Site password (from JSON)</label>
+      <input id="sitePwInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Enter site password..." />
+
+      <label class="text-sm text-gray-300">Admin key (Lambda ENV: ADMIN_KEY)</label>
+      <input id="adminKeyInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Enter admin key..." />
+
+      <div class="flex gap-2">
+        <button id="loadBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+          Load inventory
+        </button>
+        <button id="saveBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
+          Save inventory.json
+        </button>
+      </div>
+
+      <p class="text-sm text-gray-400">
+        Tip: This editor updates the whole JSON at once. Upload images first, then paste their keys into the Image fields.
+      </p>
+    </div>
+  </div>
+
+  <div class="mb-6 border border-gray-700 rounded p-4">
+    <h2 class="text-xl font-bold mb-3">Upload Image</h2>
+    <input id="fileInput" type="file" accept="image/*" class="mb-3" />
+    <button id="uploadBtn" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded">
+      Upload to S3
     </button>
+    <p id="uploadResult" class="mt-3 text-sm text-gray-300"></p>
   </div>
 
-  <div id="mainContent" class="hidden p-4">
-    <h1 class="text-3xl font-bold mb-8">Equipment Inventory</h1>
-    <div id="itemsContainer" class="space-y-8"></div>
+  <div class="border border-gray-700 rounded p-4">
+    <h2 class="text-xl font-bold mb-3">inventory.json (edit)</h2>
+    <textarea id="jsonEditor" class="w-full h-[60vh] text-gray-900 p-3 rounded font-mono"></textarea>
   </div>
-<script src="script.js"></script>
 
+  <script src="admin.js"></script>
 </body>
 </html>
