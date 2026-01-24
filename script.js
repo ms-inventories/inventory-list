@@ -1,5 +1,6 @@
-const INVENTORY_URL = "https://ms-inventory.s3.amazonaws.com/inventory.json";
-const IMAGE_BASE_URL = "https://ms-inventory.s3.amazonaws.com/";
+const INVENTORY_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/inventory.json";
+const IMAGE_BASE_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/";
+
 
 let inventory = null; 
 let items = [];
