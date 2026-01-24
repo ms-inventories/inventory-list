@@ -8,7 +8,8 @@ let items = [];
 function normalizeImageSrc(src) {
   if (!src) return "";
   if (src.startsWith("http://") || src.startsWith("https://")) return src;
-  return IMAGE_BASE_URL + src.replace(/^\/+/, "");
+  if (src.startsWith("images/")) return IMAGE_BASE_URL + src.replace(/^\/+/, "");
+  return src;
 }
 
 async function loadInventory() {
