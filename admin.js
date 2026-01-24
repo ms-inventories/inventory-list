@@ -1,4 +1,5 @@
 const API_BASE_URL = "https://j2pdaptydpur4jjasyl7pz3xc40ckbqd.lambda-url.us-east-1.on.aws";
+const INVENTORY_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/inventory.json";
 
 function getAdminKey() {
   return document.getElementById("adminKeyInput").value.trim();
@@ -41,14 +42,22 @@ async function callApi(path, options) {
 }
 
 async function loadInventory() {
-  const inventory = await callApi("/inventory", { method: "GET" });
+  const res = await fetch(INVENTORY_URL + "?t=" + Date.now(), {
+    cache: "no-store"
+  });
+
+  if (!res.ok) {
+    throw new Error("Failed to load inventory.json from S3");
+  }
+
+  const inventory = await res.json();
 
   const sitePasswordInput = document.getElementById("sitePwInput").value;
   if (sitePasswordInput !== inventory.password) {
     throw new Error("Site password does not match inventory.json");
   }
 
-  document.getElementById("jsonEditor").value = prettyJson(inventory);
+  document.getElementById("jsonEditor").value = JSON.stringify(inventory, null, 2);
 }
 
 async function saveInventory() {
