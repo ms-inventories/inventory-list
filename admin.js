@@ -1,134 +1,105 @@
-const API_BASE_URL = "https://j2pdaptydpur4jjasyl7pz3xc40ckbqd.lambda-url.us-east-1.on.aws";
 const INVENTORY_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/inventory.json";
+const API_BASE_URL = "https://j2pdaptydpur4jjasyl7pz3xc40ckbqd.lambda-url.us-east-1.on.aws";
+
+let inventory = null;
 
 function getAdminKey() {
   return document.getElementById("adminKeyInput").value.trim();
 }
 
-function prettyJson(value) {
-  return JSON.stringify(value, null, 2);
-}
-
-async function callApi(path, options) {
-  const adminKey = getAdminKey();
-  const requestOptions = options || {};
-  const requestHeaders = requestOptions.headers || {};
-
-  if (adminKey) {
-    requestHeaders["x-admin-key"] = adminKey;
-  }
-
-  requestOptions.headers = requestHeaders;
-
-  const res = await fetch(`${API_BASE_URL}${path}`, requestOptions);
-  const text = await res.text();
-
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = text;
-  }
-
-  if (!res.ok) {
-    const message =
-      typeof data === "string"
-        ? data
-        : (data && (data.error || data.details)) || res.statusText;
-    throw new Error(message);
-  }
-
-  return data;
-}
-
 async function loadInventory() {
-  const res = await fetch(INVENTORY_URL + "?t=" + Date.now(), {
-    cache: "no-store"
+  const res = await fetch(INVENTORY_URL + "?t=" + Date.now());
+  if (!res.ok) throw new Error("Failed to load inventory");
+
+  inventory = await res.json();
+
+  const pw = document.getElementById("sitePwInput").value;
+  if (pw !== inventory.password) throw new Error("Wrong site password");
+
+  renderItems();
+}
+
+function renderItems() {
+  const container = document.getElementById("itemsContainer");
+  container.innerHTML = "";
+
+  inventory.items.forEach((item, itemIndex) => {
+    const card = document.createElement("div");
+    card.className = "border border-gray-700 rounded p-4";
+
+    card.innerHTML = `
+      <input class="text-xl font-bold mb-4 w-full text-gray-900 px-2 py-1"
+        value="${item.title}"
+        oninput="inventory.items[${itemIndex}].title = this.value" />
+
+      <div class="space-y-3" id="fields-${itemIndex}"></div>
+
+      <button class="mt-3 bg-blue-600 px-3 py-1 rounded"
+        onclick="addField(${itemIndex})">
+        + Add Field
+      </button>
+    `;
+
+    container.appendChild(card);
+
+    item.fields.forEach((field, fieldIndex) => {
+      renderField(itemIndex, fieldIndex);
+    });
   });
+}
 
-  if (!res.ok) {
-    throw new Error("Failed to load inventory.json from S3");
-  }
+function renderField(itemIndex, fieldIndex) {
+  const fieldsDiv = document.getElementById(`fields-${itemIndex}`);
+  const field = inventory.items[itemIndex].fields[fieldIndex];
 
-  const inventory = await res.json();
+  const row = document.createElement("div");
+  row.className = "flex gap-2";
 
-  const sitePasswordInput = document.getElementById("sitePwInput").value;
-  if (sitePasswordInput !== inventory.password) {
-    throw new Error("Site password does not match inventory.json");
-  }
+  row.innerHTML = `
+    <input class="w-1/4 text-gray-900 px-2 py-1"
+      value="${field.label}"
+      oninput="inventory.items[${itemIndex}].fields[${fieldIndex}].label = this.value" />
 
-  document.getElementById("jsonEditor").value = JSON.stringify(inventory, null, 2);
+    <input class="flex-1 text-gray-900 px-2 py-1"
+      value="${Array.isArray(field.value) ? field.value.join(', ') : field.value}"
+      oninput="inventory.items[${itemIndex}].fields[${fieldIndex}].value = this.value" />
+
+    <button class="bg-red-600 px-2 rounded"
+      onclick="removeField(${itemIndex}, ${fieldIndex})">X</button>
+  `;
+
+  fieldsDiv.appendChild(row);
+}
+
+function addField(itemIndex) {
+  inventory.items[itemIndex].fields.push({ label: "", value: "" });
+  renderItems();
+}
+
+function removeField(itemIndex, fieldIndex) {
+  inventory.items[itemIndex].fields.splice(fieldIndex, 1);
+  renderItems();
+}
+
+function addItem() {
+  inventory.items.push({ title: "New Item", fields: [] });
+  renderItems();
 }
 
 async function saveInventory() {
-  const raw = document.getElementById("jsonEditor").value;
-  const inventory = JSON.parse(raw);
-
-  await callApi("/inventory", {
+  const res = await fetch(API_BASE_URL + "/inventory", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-key": getAdminKey()
+    },
     body: JSON.stringify(inventory)
   });
+
+  if (!res.ok) throw new Error("Save failed");
+  alert("Saved");
 }
 
-async function uploadImage() {
-  const fileInput = document.getElementById("fileInput");
-  const file = fileInput.files && fileInput.files[0];
-
-  const uploadResult = document.getElementById("uploadResult");
-  uploadResult.textContent = "";
-
-  if (!file) {
-    throw new Error("Select an image first");
-  }
-
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const key = `images/${Date.now()}-${safeName}`;
-
-  const presign = await callApi("/presign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, contentType: file.type })
-  });
-
-  const putRes = await fetch(presign.uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file
-  });
-
-  if (!putRes.ok) {
-    throw new Error(`S3 upload failed: ${putRes.status}`);
-  }
-
-  uploadResult.textContent = `Uploaded\nKey: ${presign.key}\nPublic URL: ${presign.publicUrl || ""}`;
-}
-
-document.getElementById("loadBtn").addEventListener("click", async () => {
-  try {
-    await loadInventory();
-    alert("Loaded inventory.json");
-  } catch (e) {
-    console.error(e);
-    alert(`Load failed: ${e.message}`);
-  }
-});
-
-document.getElementById("saveBtn").addEventListener("click", async () => {
-  try {
-    await saveInventory();
-    alert("Saved inventory.json");
-  } catch (e) {
-    console.error(e);
-    alert(`Save failed: ${e.message}`);
-  }
-});
-
-document.getElementById("uploadBtn").addEventListener("click", async () => {
-  try {
-    await uploadImage();
-  } catch (e) {
-    console.error(e);
-    alert(`Upload failed: ${e.message}`);
-  }
-});
+document.getElementById("loadBtn").onclick = () => loadInventory().catch(e => alert(e.message));
+document.getElementById("saveBtn").onclick = () => saveInventory().catch(e => alert(e.message));
+document.getElementById("addItemBtn").onclick = addItem;
