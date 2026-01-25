@@ -2,28 +2,44 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Equipment Inventory</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
-  <div id="passwordPrompt" class="flex flex-col items-center justify-center h-screen">
-    <h1 class="text-2xl mb-4">Enter Password</h1>
-    <input
-      type="password"
-      id="passwordInput"
-      class="text-gray-900 px-3 py-2 rounded w-64 mb-4 focus:outline-none"
-      placeholder="Password..."
-    />
-    <button
-      onclick="checkPassword()"
-      class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-    >
-      Submit
-    </button>
+  <div id="passwordPrompt" class="flex flex-col items-center justify-center h-screen p-4">
+    <h1 class="text-2xl mb-6">Equipment Inventory</h1>
+
+    <div class="w-full max-w-md space-y-3">
+      <label class="text-sm text-gray-300">Platoon</label>
+      <select id="platoonSelect" class="w-full text-gray-900 px-3 py-2 rounded"></select>
+
+      <label class="text-sm text-gray-300">Password</label>
+      <input
+        type="password"
+        id="passwordInput"
+        class="w-full text-gray-900 px-3 py-2 rounded focus:outline-none"
+        placeholder="Password..."
+      />
+
+      <button
+        id="submitBtn"
+        class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+      >
+        Submit
+      </button>
+
+      <div id="loginStatus" class="text-sm text-gray-300"></div>
+    </div>
   </div>
 
-  <div id="mainContent" class="hidden p-4">
-    <h1 class="text-3xl font-bold mb-8">Equipment Inventory</h1>
+  <div id="mainContent" class="hidden p-4 max-w-6xl mx-auto">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-8">
+      <h1 id="pageTitle" class="text-3xl font-bold">Equipment Inventory</h1>
+      <button id="changePlatoonBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">
+        Change platoon
+      </button>
+    </div>
     <div id="itemsContainer" class="space-y-8"></div>
   </div>
 
