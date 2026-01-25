@@ -9,9 +9,12 @@ let inventory = null;
 let templateLabels = [];
 let isAuthed = false;
 let lastPlatoonId = null;
+let sessionAdminKey = "";
+let pendingDeletedImages = [];
 
 function setStatus(text, isError) {
   const el = document.getElementById("status");
+  if (!el) return;
   el.textContent = text || "";
   el.className = isError ? "text-sm text-red-300" : "text-sm text-gray-300";
 }
@@ -24,6 +27,34 @@ function normalizeImageSrc(src) {
 
 function safeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function openModal(html) {
+  const backdrop = document.getElementById("modalBackdrop");
+  const panel = document.getElementById("modalPanel");
+  if (!backdrop || !panel) return;
+  panel.innerHTML = html;
+  backdrop.classList.remove("hidden");
+}
+
+function closeModal() {
+  const backdrop = document.getElementById("modalBackdrop");
+  const panel = document.getElementById("modalPanel");
+  if (!backdrop || !panel) return;
+  backdrop.classList.add("hidden");
+  panel.innerHTML = "";
+}
+
+function setAppVisible() {
+  const app = document.getElementById("appPanel");
+  if (!app) return;
+  app.classList.remove("hidden");
+}
+
+function setAppHidden() {
+  const app = document.getElementById("appPanel");
+  if (!app) return;
+  app.classList.add("hidden");
 }
 
 async function fetchJson(url) {
@@ -63,11 +94,15 @@ async function callApi(path, options, adminKeyValue) {
 
 async function verifyAdminKey(adminKey) {
   const key = `images/auth-check-${Date.now()}.txt`;
-  await callApi("/presign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, contentType: "text/plain" })
-  }, adminKey);
+  await callApi(
+    "/presign",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, contentType: "text/plain" })
+    },
+    adminKey
+  );
 }
 
 function ensureInventoryShape(data) {
@@ -155,10 +190,6 @@ function applyTemplates() {
   });
 }
 
-function getPlatoonById(id) {
-  return (indexData.platoons || []).find(p => p.id === id) || null;
-}
-
 async function loadIndex() {
   indexData = await fetchJson(INDEX_URL);
   if (!indexData || !Array.isArray(indexData.platoons) || indexData.platoons.length === 0) {
@@ -166,33 +197,19 @@ async function loadIndex() {
   }
 }
 
+function getPlatoonById(id) {
+  return (indexData.platoons || []).find(p => p.id === id) || null;
+}
+
 async function loadPlatoonInventory(platoon) {
   const data = await fetchJson(`${BUCKET_BASE_URL}/${platoon.file}`);
   return ensureInventoryShape(data);
 }
 
-function setAppVisible() {
-  document.getElementById("appPanel").classList.remove("hidden");
-}
-
-function setAppHidden() {
-  document.getElementById("appPanel").classList.add("hidden");
-}
-
-function openModal(html) {
-  const backdrop = document.getElementById("modalBackdrop");
-  const panel = document.getElementById("modalPanel");
-  panel.innerHTML = html;
-  backdrop.classList.remove("hidden");
-}
-
-function closeModal() {
-  document.getElementById("modalBackdrop").classList.add("hidden");
-  document.getElementById("modalPanel").innerHTML = "";
-}
-
 function populatePlatoonSelect(selectedId) {
   const select = document.getElementById("platoonSelect");
+  if (!select) return;
+
   select.innerHTML = "";
 
   (indexData.platoons || []).forEach(p => {
@@ -203,6 +220,22 @@ function populatePlatoonSelect(selectedId) {
   });
 
   if (selectedId) select.value = selectedId;
+}
+
+function setAdminKeySession(value) {
+  sessionAdminKey = value || "";
+}
+
+function getAdminKeyFromSession() {
+  return sessionAdminKey;
+}
+
+function clearSession() {
+  sessionAdminKey = "";
+}
+
+function clearPendingDeletes() {
+  pendingDeletedImages = [];
 }
 
 function buildSavePayload() {
@@ -242,12 +275,21 @@ async function saveInventory(adminKey) {
 
   const payload = buildSavePayload();
 
-  await callApi("/inventory", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ file: currentPlatoon.file, data: payload })
-  }, adminKey);
+  await callApi(
+    "/inventory",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file: currentPlatoon.file,
+        data: payload,
+        deletedImages: pendingDeletedImages
+      })
+    },
+    adminKey
+  );
 
+  clearPendingDeletes();
   setStatus("Saved", false);
 }
 
@@ -293,22 +335,35 @@ function addImageKey(itemIndex, fieldIndex, keyOrUrl) {
   const field = inventory.items[itemIndex].fields[fieldIndex];
   if (!Array.isArray(field.value)) field.value = [];
   field.value.push(value);
+
+  const idx = pendingDeletedImages.indexOf(value);
+  if (idx !== -1) pendingDeletedImages.splice(idx, 1);
 }
 
 function removeImageAt(itemIndex, fieldIndex, imgIndex) {
   const field = inventory.items[itemIndex].fields[fieldIndex];
   if (!Array.isArray(field.value)) field.value = [];
+
+  const key = String(field.value[imgIndex] || "").trim();
   field.value.splice(imgIndex, 1);
+
+  if (key.startsWith("images/") && !pendingDeletedImages.includes(key)) {
+    pendingDeletedImages.push(key);
+  }
 }
 
 async function uploadImageForField(adminKey, itemIndex, fieldIndex, file) {
   const key = `images/${Date.now()}-${safeFileName(file.name)}`;
 
-  const presign = await callApi("/presign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, contentType: file.type })
-  }, adminKey);
+  const presign = await callApi(
+    "/presign",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, contentType: file.type })
+    },
+    adminKey
+  );
 
   const putRes = await fetch(presign.uploadUrl, {
     method: "PUT",
@@ -321,310 +376,9 @@ async function uploadImageForField(adminKey, itemIndex, fieldIndex, file) {
   addImageKey(itemIndex, fieldIndex, presign.key);
 }
 
-async function signInFlow() {
-  openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Sign in</div>
-
-      <label class="text-sm text-gray-300">Admin key</label>
-      <input id="modalAdminKey" type="password" class="text-gray-900 px-3 py-2 rounded" />
-
-      <label class="text-sm text-gray-300">Platoon</label>
-      <select id="modalPlatoonSelect" class="text-gray-900 px-3 py-2 rounded"></select>
-
-      <label class="text-sm text-gray-300">Platoon password</label>
-      <input id="modalPlatoonPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
-
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalSignInBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Sign in</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
-      </div>
-    </div>
-  `);
-
-  const modalStatus = document.getElementById("modalStatus");
-  const setModalStatus = (t, e) => {
-    modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
-  };
-
-  await loadIndex();
-
-  const modalPlatoonSelect = document.getElementById("modalPlatoonSelect");
-  modalPlatoonSelect.innerHTML = "";
-  indexData.platoons.forEach(p => {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.textContent = p.name || p.id;
-    modalPlatoonSelect.appendChild(opt);
-  });
-
-  document.getElementById("modalCancelBtn").addEventListener("click", () => {
-    closeModal();
-  });
-
-  document.getElementById("modalSignInBtn").addEventListener("click", async () => {
-    setModalStatus("Signing in...", false);
-
-    const adminKey = document.getElementById("modalAdminKey").value.trim();
-    const platoonId = document.getElementById("modalPlatoonSelect").value;
-    const platoonPw = document.getElementById("modalPlatoonPw").value;
-
-    if (!adminKey || !platoonPw || !platoonId) {
-      setModalStatus("Enter admin key and platoon password", true);
-      return;
-    }
-
-    try {
-      await verifyAdminKey(adminKey);
-    } catch {
-      setModalStatus("Wrong admin key", true);
-      return;
-    }
-
-    const platoon = getPlatoonById(platoonId);
-    if (!platoon) {
-      setModalStatus("Invalid platoon selection", true);
-      return;
-    }
-
-    let loaded;
-    try {
-      loaded = await loadPlatoonInventory(platoon);
-    } catch {
-      setModalStatus("Failed to load platoon inventory", true);
-      return;
-    }
-
-    if (platoonPw !== loaded.password) {
-      setModalStatus("Wrong platoon password", true);
-      return;
-    }
-
-    isAuthed = true;
-    currentPlatoon = platoon;
-    inventory = loaded;
-    applyTemplates();
-
-    populatePlatoonSelect(platoon.id);
-    lastPlatoonId = platoon.id;
-
-    setAppVisible();
-    renderItems();
-    setStatus("Signed in", false);
-    closeModal();
-  });
-}
-
-async function switchPlatoonFlow(nextPlatoonId) {
-  const platoon = getPlatoonById(nextPlatoonId);
-  if (!platoon) return;
-
-  openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Switch platoon</div>
-      <div class="text-sm text-gray-300">Enter password for ${platoon.name || platoon.id}</div>
-
-      <label class="text-sm text-gray-300">Platoon password</label>
-      <input id="modalSwitchPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
-
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalSwitchBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Switch</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
-      </div>
-    </div>
-  `);
-
-  const modalStatus = document.getElementById("modalStatus");
-  const setModalStatus = (t, e) => {
-    modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
-  };
-
-  document.getElementById("modalCancelBtn").addEventListener("click", () => {
-    closeModal();
-    populatePlatoonSelect(lastPlatoonId);
-  });
-
-  document.getElementById("modalSwitchBtn").addEventListener("click", async () => {
-    setModalStatus("Loading...", false);
-    const pw = document.getElementById("modalSwitchPw").value;
-
-    let loaded;
-    try {
-      loaded = await loadPlatoonInventory(platoon);
-    } catch {
-      setModalStatus("Failed to load platoon inventory", true);
-      return;
-    }
-
-    if (pw !== loaded.password) {
-      setModalStatus("Wrong password", true);
-      return;
-    }
-
-    currentPlatoon = platoon;
-    inventory = loaded;
-    applyTemplates();
-    lastPlatoonId = platoon.id;
-
-    renderItems();
-    setStatus("Loaded", false);
-    closeModal();
-  });
-}
-
-function addPlatoonFlow() {
-  openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Add platoon</div>
-
-      <label class="text-sm text-gray-300">Platoon id</label>
-      <input id="modalPlatoonId" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd" />
-
-      <label class="text-sm text-gray-300">Platoon name</label>
-      <input id="modalPlatoonName" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd Platoon" />
-
-      <label class="text-sm text-gray-300">Platoon password</label>
-      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
-
-      <label class="text-sm text-gray-300">Confirm password</label>
-      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
-
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalCreateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Create</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
-      </div>
-    </div>
-  `);
-
-  const modalStatus = document.getElementById("modalStatus");
-  const setModalStatus = (t, e) => {
-    modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
-  };
-
-  document.getElementById("modalCancelBtn").addEventListener("click", () => {
-    closeModal();
-  });
-
-  document.getElementById("modalCreateBtn").addEventListener("click", async () => {
-    const id = document.getElementById("modalPlatoonId").value.trim();
-    const name = document.getElementById("modalPlatoonName").value.trim();
-    const pw1 = document.getElementById("modalPw1").value;
-    const pw2 = document.getElementById("modalPw2").value;
-
-    if (!id || !name || !pw1 || !pw2) {
-      setModalStatus("Fill out all fields", true);
-      return;
-    }
-
-    if (pw1 !== pw2) {
-      setModalStatus("Passwords do not match", true);
-      return;
-    }
-
-    setModalStatus("Creating...", false);
-
-    const adminKey = getAdminKeyFromSession();
-    try {
-      await callApi("/platoon", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, name, password: pw1 })
-      }, adminKey);
-    } catch (e) {
-      setModalStatus(e.message, true);
-      return;
-    }
-
-    await loadIndex();
-    populatePlatoonSelect(id);
-
-    currentPlatoon = getPlatoonById(id);
-    inventory = { password: pw1, items: [] };
-    applyTemplates();
-    renderItems();
-
-    lastPlatoonId = id;
-    setStatus("Platoon created", false);
-    closeModal();
-  });
-}
-
-function changePasswordFlow() {
-  openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Change password</div>
-
-      <label class="text-sm text-gray-300">New password</label>
-      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
-
-      <label class="text-sm text-gray-300">Confirm password</label>
-      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
-
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalUpdateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Update</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
-      </div>
-    </div>
-  `);
-
-  const modalStatus = document.getElementById("modalStatus");
-  const setModalStatus = (t, e) => {
-    modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
-  };
-
-  document.getElementById("modalCancelBtn").addEventListener("click", () => {
-    closeModal();
-  });
-
-  document.getElementById("modalUpdateBtn").addEventListener("click", async () => {
-    const pw1 = document.getElementById("modalPw1").value;
-    const pw2 = document.getElementById("modalPw2").value;
-
-    if (!pw1 || !pw2) {
-      setModalStatus("Enter password twice", true);
-      return;
-    }
-
-    if (pw1 !== pw2) {
-      setModalStatus("Passwords do not match", true);
-      return;
-    }
-
-    inventory.password = pw1;
-
-    setModalStatus("Saving...", false);
-    try {
-      await saveInventory(getAdminKeyFromSession());
-    } catch (e) {
-      setModalStatus(e.message, true);
-      return;
-    }
-
-    setStatus("Password updated", false);
-    closeModal();
-  });
-}
-
-let sessionAdminKey = "";
-
-function getAdminKeyFromSession() {
-  return sessionAdminKey;
-}
-
-function clearSession() {
-  sessionAdminKey = "";
-}
-
 function renderItems() {
   const container = document.getElementById("itemsContainer");
+  if (!container) return;
   container.innerHTML = "";
 
   inventory.items.forEach((item, itemIndex) => {
@@ -824,77 +578,6 @@ function renderItems() {
   });
 }
 
-document.getElementById("modalBackdrop").addEventListener("click", e => {
-  if (e.target && e.target.id === "modalBackdrop") closeModal();
-});
-
-document.getElementById("saveBtn").addEventListener("click", async () => {
-  try {
-    await saveInventory(getAdminKeyFromSession());
-  } catch (e) {
-    setStatus(e.message, true);
-  }
-});
-
-document.getElementById("addItemBtn").addEventListener("click", () => {
-  addItem();
-});
-
-document.getElementById("signOutBtn").addEventListener("click", () => {
-  isAuthed = false;
-  indexData = null;
-  currentPlatoon = null;
-  inventory = null;
-  templateLabels = [];
-  lastPlatoonId = null;
-  clearSession();
-  setAppHidden();
-  setStatus("", false);
-  signInFlow();
-});
-
-document.getElementById("addPlatoonBtn").addEventListener("click", () => {
-  addPlatoonFlow();
-});
-
-document.getElementById("changePwBtn").addEventListener("click", () => {
-  if (!isAuthed || !inventory) return;
-  changePasswordFlow();
-});
-
-document.getElementById("platoonSelect").addEventListener("change", async e => {
-  if (!isAuthed || !indexData) return;
-  const nextId = e.target.value;
-  if (!nextId || nextId === lastPlatoonId) return;
-  await switchPlatoonFlow(nextId);
-});
-
-document.addEventListener("DOMContentLoaded", async () => {
-  setAppHidden();
-  try {
-    await loadIndex();
-  } catch (e) {
-    openModal(`
-      <div class="flex flex-col gap-3">
-        <div class="text-xl font-bold">Error</div>
-        <div class="text-sm text-red-300">${String(e.message || "Failed to load index.json")}</div>
-        <button id="modalCloseBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded mt-2">Close</button>
-      </div>
-    `);
-    document.getElementById("modalCloseBtn").addEventListener("click", () => closeModal());
-    return;
-  }
-  signInFlow();
-});
-
-function getAdminKeyFromSession() {
-  return sessionAdminKey;
-}
-
-function setAdminKeySession(value) {
-  sessionAdminKey = value;
-}
-
 async function signInFlow() {
   openModal(`
     <div class="flex flex-col gap-3">
@@ -924,7 +607,7 @@ async function signInFlow() {
 
   const modalPlatoonSelect = document.getElementById("modalPlatoonSelect");
   modalPlatoonSelect.innerHTML = "";
-  indexData.platoons.forEach(p => {
+  (indexData.platoons || []).forEach(p => {
     const opt = document.createElement("option");
     opt.value = p.id;
     opt.textContent = p.name || p.id;
@@ -952,7 +635,7 @@ async function signInFlow() {
 
     const platoon = getPlatoonById(platoonId);
     if (!platoon) {
-      setModalStatus("Invalid platoon selection", true);
+      setModalStatus("Invalid platoon", true);
       return;
     }
 
@@ -960,7 +643,7 @@ async function signInFlow() {
     try {
       loaded = await loadPlatoonInventory(platoon);
     } catch {
-      setModalStatus("Failed to load platoon inventory", true);
+      setModalStatus("Failed to load platoon", true);
       return;
     }
 
@@ -974,6 +657,7 @@ async function signInFlow() {
     currentPlatoon = platoon;
     inventory = loaded;
     applyTemplates();
+    clearPendingDeletes();
 
     populatePlatoonSelect(platoon.id);
     lastPlatoonId = platoon.id;
@@ -984,3 +668,375 @@ async function signInFlow() {
     closeModal();
   });
 }
+
+async function switchPlatoonFlow(nextPlatoonId) {
+  const platoon = getPlatoonById(nextPlatoonId);
+  if (!platoon) return;
+
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Switch platoon</div>
+      <div class="text-sm text-gray-300">Enter password for ${platoon.name || platoon.id}</div>
+
+      <label class="text-sm text-gray-300">Platoon password</label>
+      <input id="modalSwitchPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalSwitchBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Switch</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => {
+    closeModal();
+    populatePlatoonSelect(lastPlatoonId);
+  });
+
+  document.getElementById("modalSwitchBtn").addEventListener("click", async () => {
+    setModalStatus("Loading...", false);
+    const pw = document.getElementById("modalSwitchPw").value;
+
+    let loaded;
+    try {
+      loaded = await loadPlatoonInventory(platoon);
+    } catch {
+      setModalStatus("Failed to load platoon", true);
+      return;
+    }
+
+    if (pw !== loaded.password) {
+      setModalStatus("Wrong password", true);
+      return;
+    }
+
+    currentPlatoon = platoon;
+    inventory = loaded;
+    applyTemplates();
+    clearPendingDeletes();
+    lastPlatoonId = platoon.id;
+
+    renderItems();
+    setStatus("Loaded", false);
+    closeModal();
+  });
+}
+
+function addPlatoonFlow() {
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Add platoon</div>
+
+      <label class="text-sm text-gray-300">Platoon id</label>
+      <input id="modalPlatoonId" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd" />
+
+      <label class="text-sm text-gray-300">Platoon name</label>
+      <input id="modalPlatoonName" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd Platoon" />
+
+      <label class="text-sm text-gray-300">Platoon password</label>
+      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <label class="text-sm text-gray-300">Confirm password</label>
+      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalCreateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Create</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => closeModal());
+
+  document.getElementById("modalCreateBtn").addEventListener("click", async () => {
+    const id = document.getElementById("modalPlatoonId").value.trim();
+    const name = document.getElementById("modalPlatoonName").value.trim();
+    const pw1 = document.getElementById("modalPw1").value;
+    const pw2 = document.getElementById("modalPw2").value;
+
+    if (!id || !name || !pw1 || !pw2) {
+      setModalStatus("Fill out all fields", true);
+      return;
+    }
+
+    if (pw1 !== pw2) {
+      setModalStatus("Passwords do not match", true);
+      return;
+    }
+
+    setModalStatus("Creating...", false);
+
+    try {
+      await callApi(
+        "/platoon",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, name, password: pw1 })
+        },
+        getAdminKeyFromSession()
+      );
+    } catch (e) {
+      setModalStatus(e.message, true);
+      return;
+    }
+
+    try {
+      await loadIndex();
+    } catch {
+      setModalStatus("Created, but failed to reload index.json", true);
+      return;
+    }
+
+    const p = getPlatoonById(id);
+    if (!p) {
+      setModalStatus("Created, but could not find new platoon", true);
+      return;
+    }
+
+    currentPlatoon = p;
+    inventory = { password: pw1, items: [] };
+    applyTemplates();
+    clearPendingDeletes();
+    lastPlatoonId = p.id;
+
+    populatePlatoonSelect(p.id);
+    renderItems();
+    setStatus("Platoon created", false);
+    closeModal();
+  });
+}
+
+function changePasswordFlow() {
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Change password</div>
+
+      <label class="text-sm text-gray-300">New password</label>
+      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <label class="text-sm text-gray-300">Confirm password</label>
+      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalUpdateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Update</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => closeModal());
+
+  document.getElementById("modalUpdateBtn").addEventListener("click", async () => {
+    const pw1 = document.getElementById("modalPw1").value;
+    const pw2 = document.getElementById("modalPw2").value;
+
+    if (!pw1 || !pw2) {
+      setModalStatus("Enter password twice", true);
+      return;
+    }
+
+    if (pw1 !== pw2) {
+      setModalStatus("Passwords do not match", true);
+      return;
+    }
+
+    inventory.password = pw1;
+
+    setModalStatus("Saving...", false);
+    try {
+      await saveInventory(getAdminKeyFromSession());
+    } catch (e) {
+      setModalStatus(e.message, true);
+      return;
+    }
+
+    setStatus("Password updated", false);
+    closeModal();
+  });
+}
+
+function deletePlatoonFlow() {
+  const platoon = currentPlatoon;
+  if (!platoon) return;
+
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Delete platoon</div>
+      <div class="text-sm text-red-300">This will delete platoon data and delete images not used anywhere else.</div>
+      <div class="text-sm text-gray-300">Type permanently delete to confirm:</div>
+      <input id="modalConfirmText" type="text" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalDeleteBtn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">Delete</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => closeModal());
+
+  document.getElementById("modalDeleteBtn").addEventListener("click", async () => {
+    const confirmText = document.getElementById("modalConfirmText").value.trim();
+    if (confirmText !== "permanently delete") {
+      setModalStatus("You must type permanently delete", true);
+      return;
+    }
+
+    setModalStatus("Deleting...", false);
+
+    try {
+      await callApi(
+        "/platoon/delete",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: platoon.id, confirm: "permanently delete" })
+        },
+        getAdminKeyFromSession()
+      );
+    } catch (e) {
+      setModalStatus(e.message, true);
+      return;
+    }
+
+    closeModal();
+    signOutToSignIn();
+  });
+}
+
+function signOutToSignIn() {
+  isAuthed = false;
+  indexData = null;
+  currentPlatoon = null;
+  inventory = null;
+  templateLabels = [];
+  lastPlatoonId = null;
+  clearSession();
+  clearPendingDeletes();
+  setAppHidden();
+  setStatus("", false);
+
+  loadIndex()
+    .then(() => signInFlow())
+    .catch(e => {
+      openModal(`
+        <div class="flex flex-col gap-3">
+          <div class="text-xl font-bold">Error</div>
+          <div class="text-sm text-red-300">${String(e.message || "Failed to load index.json")}</div>
+          <button id="modalCloseBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded mt-2">Close</button>
+        </div>
+      `);
+      const btn = document.getElementById("modalCloseBtn");
+      if (btn) btn.addEventListener("click", () => closeModal());
+    });
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  setAppHidden();
+  setStatus("", false);
+
+  try {
+    await loadIndex();
+  } catch (e) {
+    openModal(`
+      <div class="flex flex-col gap-3">
+        <div class="text-xl font-bold">Error</div>
+        <div class="text-sm text-red-300">${String(e.message || "Failed to load index.json")}</div>
+        <button id="modalCloseBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded mt-2">Close</button>
+      </div>
+    `);
+    const btn = document.getElementById("modalCloseBtn");
+    if (btn) btn.addEventListener("click", () => closeModal());
+    return;
+  }
+
+  const backdrop = document.getElementById("modalBackdrop");
+  if (backdrop) {
+    backdrop.addEventListener("click", e => {
+      if (e.target && e.target.id === "modalBackdrop") closeModal();
+    });
+  }
+
+  const saveBtn = document.getElementById("saveBtn");
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      try {
+        await saveInventory(getAdminKeyFromSession());
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    });
+  }
+
+  const addItemBtn = document.getElementById("addItemBtn");
+  if (addItemBtn) {
+    addItemBtn.addEventListener("click", () => addItem());
+  }
+
+  const signOutBtn = document.getElementById("signOutBtn");
+  if (signOutBtn) {
+    signOutBtn.addEventListener("click", () => signOutToSignIn());
+  }
+
+  const addPlatoonBtn = document.getElementById("addPlatoonBtn");
+  if (addPlatoonBtn) {
+    addPlatoonBtn.addEventListener("click", () => addPlatoonFlow());
+  }
+
+  const changePwBtn = document.getElementById("changePwBtn");
+  if (changePwBtn) {
+    changePwBtn.addEventListener("click", () => {
+      if (!isAuthed || !inventory) return;
+      changePasswordFlow();
+    });
+  }
+
+  const deletePlatoonBtn = document.getElementById("deletePlatoonBtn");
+  if (deletePlatoonBtn) {
+    deletePlatoonBtn.addEventListener("click", () => {
+      if (!isAuthed || !currentPlatoon) return;
+      deletePlatoonFlow();
+    });
+  }
+
+  const platoonSelect = document.getElementById("platoonSelect");
+  if (platoonSelect) {
+    platoonSelect.addEventListener("change", async e => {
+      if (!isAuthed || !indexData) return;
+      const nextId = e.target.value;
+      if (!nextId || nextId === lastPlatoonId) return;
+      await switchPlatoonFlow(nextId);
+    });
+  }
+
+  signInFlow();
+});
