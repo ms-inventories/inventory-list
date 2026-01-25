@@ -8,25 +8,12 @@ let currentPlatoon = null;
 let inventory = null;
 let templateLabels = [];
 let isAuthed = false;
-
-function setAuthStatus(text, isError) {
-  const el = document.getElementById("authStatus");
-  el.textContent = text || "";
-  el.className = isError ? "text-sm text-red-300" : "text-sm text-gray-300";
-}
+let lastPlatoonId = null;
 
 function setStatus(text, isError) {
   const el = document.getElementById("status");
   el.textContent = text || "";
   el.className = isError ? "text-sm text-red-300" : "text-sm text-gray-300";
-}
-
-function getAdminKey() {
-  return document.getElementById("adminKeyInput").value.trim();
-}
-
-function getPlatoonPassword() {
-  return document.getElementById("platoonPwInput").value;
 }
 
 function normalizeImageSrc(src) {
@@ -45,10 +32,10 @@ async function fetchJson(url) {
   return await res.json();
 }
 
-async function callApi(path, options) {
+async function callApi(path, options, adminKeyValue) {
   const requestOptions = options || {};
   const requestHeaders = requestOptions.headers || {};
-  const adminKey = getAdminKey();
+  const adminKey = adminKeyValue || "";
 
   if (adminKey) requestHeaders["x-admin-key"] = adminKey;
   requestOptions.headers = requestHeaders;
@@ -74,13 +61,13 @@ async function callApi(path, options) {
   return data;
 }
 
-async function verifyAdminKey() {
+async function verifyAdminKey(adminKey) {
   const key = `images/auth-check-${Date.now()}.txt`;
   await callApi("/presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key, contentType: "text/plain" })
-  });
+  }, adminKey);
 }
 
 function ensureInventoryShape(data) {
@@ -168,23 +155,8 @@ function applyTemplates() {
   });
 }
 
-function renderTabs() {
-  const tabsEl = document.getElementById("tabs");
-  tabsEl.innerHTML = "";
-
-  (indexData.platoons || []).forEach(p => {
-    const btn = document.createElement("button");
-    const active = currentPlatoon && currentPlatoon.id === p.id;
-    btn.className = active
-      ? "bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
-      : "bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded";
-    btn.textContent = p.name || p.id;
-    btn.addEventListener("click", async () => {
-      if (!isAuthed) return;
-      await switchPlatoon(p.id);
-    });
-    tabsEl.appendChild(btn);
-  });
+function getPlatoonById(id) {
+  return (indexData.platoons || []).find(p => p.id === id) || null;
 }
 
 async function loadIndex() {
@@ -194,97 +166,43 @@ async function loadIndex() {
   }
 }
 
-function getPlatoonById(id) {
-  return (indexData.platoons || []).find(p => p.id === id) || null;
-}
-
 async function loadPlatoonInventory(platoon) {
   const data = await fetchJson(`${BUCKET_BASE_URL}/${platoon.file}`);
   return ensureInventoryShape(data);
 }
 
-function showApp() {
-  document.getElementById("authPanel").classList.add("hidden");
+function setAppVisible() {
   document.getElementById("appPanel").classList.remove("hidden");
 }
 
-function showAuth() {
+function setAppHidden() {
   document.getElementById("appPanel").classList.add("hidden");
-  document.getElementById("authPanel").classList.remove("hidden");
 }
 
-async function signIn() {
-  setAuthStatus("Signing in...", false);
-
-  const adminKey = getAdminKey();
-  const platoonPw = getPlatoonPassword();
-
-  if (!adminKey || !platoonPw) {
-    setAuthStatus("Enter admin key and platoon password", true);
-    return;
-  }
-
-  try {
-    await verifyAdminKey();
-  } catch {
-    setAuthStatus("Wrong admin key", true);
-    return;
-  }
-
-  await loadIndex();
-
-  currentPlatoon = indexData.platoons[0];
-  const loaded = await loadPlatoonInventory(currentPlatoon);
-
-  if (platoonPw !== loaded.password) {
-    setAuthStatus("Wrong platoon password", true);
-    return;
-  }
-
-  inventory = loaded;
-  applyTemplates();
-  isAuthed = true;
-
-  showApp();
-  renderTabs();
-  renderItems();
-  setAuthStatus("", false);
-  setStatus("Signed in", false);
+function openModal(html) {
+  const backdrop = document.getElementById("modalBackdrop");
+  const panel = document.getElementById("modalPanel");
+  panel.innerHTML = html;
+  backdrop.classList.remove("hidden");
 }
 
-function signOut() {
-  indexData = null;
-  currentPlatoon = null;
-  inventory = null;
-  templateLabels = [];
-  isAuthed = false;
-  document.getElementById("itemsContainer").innerHTML = "";
-  setStatus("", false);
-  setAuthStatus("", false);
-  showAuth();
+function closeModal() {
+  document.getElementById("modalBackdrop").classList.add("hidden");
+  document.getElementById("modalPanel").innerHTML = "";
 }
 
-async function switchPlatoon(platoonId) {
-  const p = getPlatoonById(platoonId);
-  if (!p) return;
+function populatePlatoonSelect(selectedId) {
+  const select = document.getElementById("platoonSelect");
+  select.innerHTML = "";
 
-  const pw = prompt(`Enter password for ${p.name || p.id}`);
-  if (pw === null) return;
+  (indexData.platoons || []).forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name || p.id;
+    select.appendChild(opt);
+  });
 
-  setStatus("Loading...", false);
-
-  const loaded = await loadPlatoonInventory(p);
-  if (pw !== loaded.password) {
-    setStatus("Wrong platoon password", true);
-    return;
-  }
-
-  currentPlatoon = p;
-  inventory = loaded;
-  applyTemplates();
-  renderTabs();
-  renderItems();
-  setStatus("Loaded", false);
+  if (selectedId) select.value = selectedId;
 }
 
 function buildSavePayload() {
@@ -314,7 +232,7 @@ function buildSavePayload() {
   return { password: inventory.password, items };
 }
 
-async function saveInventory() {
+async function saveInventory(adminKey) {
   if (!isAuthed || !inventory || !currentPlatoon) {
     setStatus("Sign in first", true);
     return;
@@ -328,7 +246,7 @@ async function saveInventory() {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file: currentPlatoon.file, data: payload })
-  });
+  }, adminKey);
 
   setStatus("Saved", false);
 }
@@ -383,14 +301,14 @@ function removeImageAt(itemIndex, fieldIndex, imgIndex) {
   field.value.splice(imgIndex, 1);
 }
 
-async function uploadImageForField(itemIndex, fieldIndex, file) {
+async function uploadImageForField(adminKey, itemIndex, fieldIndex, file) {
   const key = `images/${Date.now()}-${safeFileName(file.name)}`;
 
   const presign = await callApi("/presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key, contentType: file.type })
-  });
+  }, adminKey);
 
   const putRes = await fetch(presign.uploadUrl, {
     method: "PUT",
@@ -403,36 +321,306 @@ async function uploadImageForField(itemIndex, fieldIndex, file) {
   addImageKey(itemIndex, fieldIndex, presign.key);
 }
 
-async function addPlatoon() {
-  const id = prompt("New platoon id (example: 1st, 2nd, hq)");
-  if (!id) return;
+async function signInFlow() {
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Sign in</div>
 
-  const name = prompt("Platoon name (example: 1st Platoon)");
-  if (!name) return;
+      <label class="text-sm text-gray-300">Admin key</label>
+      <input id="modalAdminKey" type="password" class="text-gray-900 px-3 py-2 rounded" />
 
-  const password = prompt("Platoon password");
-  if (!password) return;
+      <label class="text-sm text-gray-300">Platoon</label>
+      <select id="modalPlatoonSelect" class="text-gray-900 px-3 py-2 rounded"></select>
 
-  setStatus("Creating platoon...", false);
+      <label class="text-sm text-gray-300">Platoon password</label>
+      <input id="modalPlatoonPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
 
-  await callApi("/platoon", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, name, password })
-  });
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalSignInBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Sign in</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
 
   await loadIndex();
-  currentPlatoon = getPlatoonById(id) || indexData.platoons[0];
-  renderTabs();
-  setStatus("Platoon created", false);
+
+  const modalPlatoonSelect = document.getElementById("modalPlatoonSelect");
+  modalPlatoonSelect.innerHTML = "";
+  indexData.platoons.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name || p.id;
+    modalPlatoonSelect.appendChild(opt);
+  });
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => {
+    closeModal();
+  });
+
+  document.getElementById("modalSignInBtn").addEventListener("click", async () => {
+    setModalStatus("Signing in...", false);
+
+    const adminKey = document.getElementById("modalAdminKey").value.trim();
+    const platoonId = document.getElementById("modalPlatoonSelect").value;
+    const platoonPw = document.getElementById("modalPlatoonPw").value;
+
+    if (!adminKey || !platoonPw || !platoonId) {
+      setModalStatus("Enter admin key and platoon password", true);
+      return;
+    }
+
+    try {
+      await verifyAdminKey(adminKey);
+    } catch {
+      setModalStatus("Wrong admin key", true);
+      return;
+    }
+
+    const platoon = getPlatoonById(platoonId);
+    if (!platoon) {
+      setModalStatus("Invalid platoon selection", true);
+      return;
+    }
+
+    let loaded;
+    try {
+      loaded = await loadPlatoonInventory(platoon);
+    } catch {
+      setModalStatus("Failed to load platoon inventory", true);
+      return;
+    }
+
+    if (platoonPw !== loaded.password) {
+      setModalStatus("Wrong platoon password", true);
+      return;
+    }
+
+    isAuthed = true;
+    currentPlatoon = platoon;
+    inventory = loaded;
+    applyTemplates();
+
+    populatePlatoonSelect(platoon.id);
+    lastPlatoonId = platoon.id;
+
+    setAppVisible();
+    renderItems();
+    setStatus("Signed in", false);
+    closeModal();
+  });
 }
 
-function changePassword() {
-  if (!inventory) return;
-  const pw = prompt("New platoon password");
-  if (!pw) return;
-  inventory.password = pw;
-  setStatus("Password updated. Click Save.", false);
+async function switchPlatoonFlow(nextPlatoonId) {
+  const platoon = getPlatoonById(nextPlatoonId);
+  if (!platoon) return;
+
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Switch platoon</div>
+      <div class="text-sm text-gray-300">Enter password for ${platoon.name || platoon.id}</div>
+
+      <label class="text-sm text-gray-300">Platoon password</label>
+      <input id="modalSwitchPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalSwitchBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Switch</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => {
+    closeModal();
+    populatePlatoonSelect(lastPlatoonId);
+  });
+
+  document.getElementById("modalSwitchBtn").addEventListener("click", async () => {
+    setModalStatus("Loading...", false);
+    const pw = document.getElementById("modalSwitchPw").value;
+
+    let loaded;
+    try {
+      loaded = await loadPlatoonInventory(platoon);
+    } catch {
+      setModalStatus("Failed to load platoon inventory", true);
+      return;
+    }
+
+    if (pw !== loaded.password) {
+      setModalStatus("Wrong password", true);
+      return;
+    }
+
+    currentPlatoon = platoon;
+    inventory = loaded;
+    applyTemplates();
+    lastPlatoonId = platoon.id;
+
+    renderItems();
+    setStatus("Loaded", false);
+    closeModal();
+  });
+}
+
+function addPlatoonFlow() {
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Add platoon</div>
+
+      <label class="text-sm text-gray-300">Platoon id</label>
+      <input id="modalPlatoonId" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd" />
+
+      <label class="text-sm text-gray-300">Platoon name</label>
+      <input id="modalPlatoonName" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd Platoon" />
+
+      <label class="text-sm text-gray-300">Platoon password</label>
+      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <label class="text-sm text-gray-300">Confirm password</label>
+      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalCreateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Create</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => {
+    closeModal();
+  });
+
+  document.getElementById("modalCreateBtn").addEventListener("click", async () => {
+    const id = document.getElementById("modalPlatoonId").value.trim();
+    const name = document.getElementById("modalPlatoonName").value.trim();
+    const pw1 = document.getElementById("modalPw1").value;
+    const pw2 = document.getElementById("modalPw2").value;
+
+    if (!id || !name || !pw1 || !pw2) {
+      setModalStatus("Fill out all fields", true);
+      return;
+    }
+
+    if (pw1 !== pw2) {
+      setModalStatus("Passwords do not match", true);
+      return;
+    }
+
+    setModalStatus("Creating...", false);
+
+    const adminKey = getAdminKeyFromSession();
+    try {
+      await callApi("/platoon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name, password: pw1 })
+      }, adminKey);
+    } catch (e) {
+      setModalStatus(e.message, true);
+      return;
+    }
+
+    await loadIndex();
+    populatePlatoonSelect(id);
+
+    currentPlatoon = getPlatoonById(id);
+    inventory = { password: pw1, items: [] };
+    applyTemplates();
+    renderItems();
+
+    lastPlatoonId = id;
+    setStatus("Platoon created", false);
+    closeModal();
+  });
+}
+
+function changePasswordFlow() {
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Change password</div>
+
+      <label class="text-sm text-gray-300">New password</label>
+      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <label class="text-sm text-gray-300">Confirm password</label>
+      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalUpdateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Update</button>
+        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => {
+    closeModal();
+  });
+
+  document.getElementById("modalUpdateBtn").addEventListener("click", async () => {
+    const pw1 = document.getElementById("modalPw1").value;
+    const pw2 = document.getElementById("modalPw2").value;
+
+    if (!pw1 || !pw2) {
+      setModalStatus("Enter password twice", true);
+      return;
+    }
+
+    if (pw1 !== pw2) {
+      setModalStatus("Passwords do not match", true);
+      return;
+    }
+
+    inventory.password = pw1;
+
+    setModalStatus("Saving...", false);
+    try {
+      await saveInventory(getAdminKeyFromSession());
+    } catch (e) {
+      setModalStatus(e.message, true);
+      return;
+    }
+
+    setStatus("Password updated", false);
+    closeModal();
+  });
+}
+
+let sessionAdminKey = "";
+
+function getAdminKeyFromSession() {
+  return sessionAdminKey;
+}
+
+function clearSession() {
+  sessionAdminKey = "";
 }
 
 function renderItems() {
@@ -607,7 +795,7 @@ function renderItems() {
 
           try {
             setStatus("Uploading...", false);
-            await uploadImageForField(itemIndex, fieldIndex, file);
+            await uploadImageForField(getAdminKeyFromSession(), itemIndex, fieldIndex, file);
             fileInput.value = "";
             renderItems();
             setStatus("Uploaded", false);
@@ -636,12 +824,16 @@ function renderItems() {
   });
 }
 
-document.getElementById("signInBtn").addEventListener("click", () => {
-  signIn().catch(e => setAuthStatus(e.message, true));
+document.getElementById("modalBackdrop").addEventListener("click", e => {
+  if (e.target && e.target.id === "modalBackdrop") closeModal();
 });
 
-document.getElementById("saveBtn").addEventListener("click", () => {
-  saveInventory().catch(e => setStatus(e.message, true));
+document.getElementById("saveBtn").addEventListener("click", async () => {
+  try {
+    await saveInventory(getAdminKeyFromSession());
+  } catch (e) {
+    setStatus(e.message, true);
+  }
 });
 
 document.getElementById("addItemBtn").addEventListener("click", () => {
@@ -649,13 +841,146 @@ document.getElementById("addItemBtn").addEventListener("click", () => {
 });
 
 document.getElementById("signOutBtn").addEventListener("click", () => {
-  signOut();
+  isAuthed = false;
+  indexData = null;
+  currentPlatoon = null;
+  inventory = null;
+  templateLabels = [];
+  lastPlatoonId = null;
+  clearSession();
+  setAppHidden();
+  setStatus("", false);
+  signInFlow();
 });
 
 document.getElementById("addPlatoonBtn").addEventListener("click", () => {
-  addPlatoon().catch(e => setStatus(e.message, true));
+  addPlatoonFlow();
 });
 
 document.getElementById("changePwBtn").addEventListener("click", () => {
-  changePassword();
+  if (!isAuthed || !inventory) return;
+  changePasswordFlow();
 });
+
+document.getElementById("platoonSelect").addEventListener("change", async e => {
+  if (!isAuthed || !indexData) return;
+  const nextId = e.target.value;
+  if (!nextId || nextId === lastPlatoonId) return;
+  await switchPlatoonFlow(nextId);
+});
+
+document.addEventListener("DOMContentLoaded", async () => {
+  setAppHidden();
+  try {
+    await loadIndex();
+  } catch (e) {
+    openModal(`
+      <div class="flex flex-col gap-3">
+        <div class="text-xl font-bold">Error</div>
+        <div class="text-sm text-red-300">${String(e.message || "Failed to load index.json")}</div>
+        <button id="modalCloseBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded mt-2">Close</button>
+      </div>
+    `);
+    document.getElementById("modalCloseBtn").addEventListener("click", () => closeModal());
+    return;
+  }
+  signInFlow();
+});
+
+function getAdminKeyFromSession() {
+  return sessionAdminKey;
+}
+
+function setAdminKeySession(value) {
+  sessionAdminKey = value;
+}
+
+async function signInFlow() {
+  openModal(`
+    <div class="flex flex-col gap-3">
+      <div class="text-xl font-bold">Sign in</div>
+
+      <label class="text-sm text-gray-300">Admin key</label>
+      <input id="modalAdminKey" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <label class="text-sm text-gray-300">Platoon</label>
+      <select id="modalPlatoonSelect" class="text-gray-900 px-3 py-2 rounded"></select>
+
+      <label class="text-sm text-gray-300">Platoon password</label>
+      <input id="modalPlatoonPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
+
+      <div class="flex gap-2 items-center mt-2">
+        <button id="modalSignInBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Sign in</button>
+        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+  };
+
+  const modalPlatoonSelect = document.getElementById("modalPlatoonSelect");
+  modalPlatoonSelect.innerHTML = "";
+  indexData.platoons.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name || p.id;
+    modalPlatoonSelect.appendChild(opt);
+  });
+
+  document.getElementById("modalSignInBtn").addEventListener("click", async () => {
+    setModalStatus("Signing in...", false);
+
+    const adminKey = document.getElementById("modalAdminKey").value.trim();
+    const platoonId = document.getElementById("modalPlatoonSelect").value;
+    const platoonPw = document.getElementById("modalPlatoonPw").value;
+
+    if (!adminKey || !platoonPw || !platoonId) {
+      setModalStatus("Enter admin key and platoon password", true);
+      return;
+    }
+
+    try {
+      await verifyAdminKey(adminKey);
+    } catch {
+      setModalStatus("Wrong admin key", true);
+      return;
+    }
+
+    const platoon = getPlatoonById(platoonId);
+    if (!platoon) {
+      setModalStatus("Invalid platoon selection", true);
+      return;
+    }
+
+    let loaded;
+    try {
+      loaded = await loadPlatoonInventory(platoon);
+    } catch {
+      setModalStatus("Failed to load platoon inventory", true);
+      return;
+    }
+
+    if (platoonPw !== loaded.password) {
+      setModalStatus("Wrong platoon password", true);
+      return;
+    }
+
+    setAdminKeySession(adminKey);
+    isAuthed = true;
+    currentPlatoon = platoon;
+    inventory = loaded;
+    applyTemplates();
+
+    populatePlatoonSelect(platoon.id);
+    lastPlatoonId = platoon.id;
+
+    setAppVisible();
+    renderItems();
+    setStatus("Signed in", false);
+    closeModal();
+  });
+}
