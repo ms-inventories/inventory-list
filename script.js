@@ -1,64 +1,64 @@
-const INVENTORY_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/inventory.json";
-const IMAGE_BASE_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/";
+const BUCKET_BASE_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com";
+const INDEX_URL = `${BUCKET_BASE_URL}/inventories/index.json`;
+const IMAGE_BASE_URL = `${BUCKET_BASE_URL}/`;
 
+let indexData = null;
+let selectedPlatoon = null;
+let inventory = null;
 
-let inventory = null; 
-let items = [];
+function setLoginStatus(text) {
+  document.getElementById("loginStatus").textContent = text || "";
+}
 
 function normalizeImageSrc(src) {
   if (!src) return "";
   if (src.startsWith("http://") || src.startsWith("https://")) return src;
-  if (src.startsWith("images/")) return IMAGE_BASE_URL + src.replace(/^\/+/, "");
-  return src;
+  return IMAGE_BASE_URL + src.replace(/^\/+/, "");
 }
 
-async function loadInventory() {
-  const url =
-    INVENTORY_URL +
-    (INVENTORY_URL.includes("?") ? "&" : "?") +
-    "t=" +
-    Date.now();
-
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Failed to load inventory (${res.status})`);
-
-  inventory = await res.json();
-  items = Array.isArray(inventory.items) ? inventory.items : [];
+async function fetchJson(url) {
+  const res = await fetch(url + (url.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+  return await res.json();
 }
 
-document.addEventListener("DOMContentLoaded", async () => {
-  try {
-    await loadInventory();
-  } catch (err) {
-    console.error(err);
-    alert(
-      "Could not load inventory data. Check S3 permissions/CORS and INVENTORY_URL."
-    );
-  }
-});
+function populatePlatoons() {
+  const select = document.getElementById("platoonSelect");
+  select.innerHTML = "";
 
-function checkPassword() {
-  const userInput = document.getElementById("passwordInput").value;
+  (indexData.platoons || []).forEach((p, i) => {
+    const option = document.createElement("option");
+    option.value = p.id;
+    option.textContent = p.name || p.id;
+    if (i === 0) option.selected = true;
+    select.appendChild(option);
+  });
 
-  if (!inventory) {
-    alert("Inventory still loading. Try again in a second.");
-    return;
-  }
+  const first = (indexData.platoons || [])[0];
+  selectedPlatoon = first || null;
+}
 
-  if (userInput === inventory.password) {
-    document.getElementById("passwordPrompt").classList.add("hidden");
-    document.getElementById("mainContent").classList.remove("hidden");
-    buildItems();
-  } else {
-    alert("Incorrect password!");
+function getSelectedPlatoonById(id) {
+  return (indexData.platoons || []).find(p => p.id === id) || null;
+}
+
+async function loadIndex() {
+  indexData = await fetchJson(INDEX_URL);
+  if (!indexData || !Array.isArray(indexData.platoons) || indexData.platoons.length === 0) {
+    throw new Error("index.json has no platoons");
   }
+  populatePlatoons();
+}
+
+async function loadPlatoonInventory(file) {
+  return await fetchJson(`${BUCKET_BASE_URL}/${file}`);
 }
 
 function buildItems() {
   const container = document.getElementById("itemsContainer");
   container.innerHTML = "";
 
-  items.forEach((item) => {
+  (inventory.items || []).forEach(item => {
     const itemCard = document.createElement("div");
     itemCard.className = "border border-gray-700 rounded p-4";
 
@@ -70,7 +70,7 @@ function buildItems() {
     const tableEl = document.createElement("table");
     tableEl.className = "table-auto w-full border border-gray-700";
 
-    (item.fields || []).forEach((field) => {
+    (item.fields || []).forEach(field => {
       const row = document.createElement("tr");
       row.className = "border border-gray-700";
 
@@ -83,7 +83,7 @@ function buildItems() {
 
       if ((field.label || "").toLowerCase() === "image") {
         const values = Array.isArray(field.value) ? field.value : [field.value];
-        values.filter(Boolean).forEach((imgSrc) => {
+        values.filter(Boolean).forEach(imgSrc => {
           const img = document.createElement("img");
           img.src = normalizeImageSrc(imgSrc);
           img.alt = item.title || "Inventory image";
@@ -103,3 +103,59 @@ function buildItems() {
     container.appendChild(itemCard);
   });
 }
+
+async function attemptLogin() {
+  setLoginStatus("");
+
+  const selectId = document.getElementById("platoonSelect").value;
+  selectedPlatoon = getSelectedPlatoonById(selectId);
+
+  if (!selectedPlatoon) {
+    setLoginStatus("Select a platoon");
+    return;
+  }
+
+  setLoginStatus("Loading...");
+
+  let data;
+  try {
+    data = await loadPlatoonInventory(selectedPlatoon.file);
+  } catch (e) {
+    setLoginStatus("Failed to load platoon inventory");
+    return;
+  }
+
+  const userInput = document.getElementById("passwordInput").value;
+  if (userInput !== data.password) {
+    setLoginStatus("Incorrect password");
+    return;
+  }
+
+  inventory = data;
+
+  document.getElementById("passwordPrompt").classList.add("hidden");
+  document.getElementById("mainContent").classList.remove("hidden");
+
+  document.getElementById("pageTitle").textContent = selectedPlatoon.name || "Equipment Inventory";
+  buildItems();
+}
+
+function resetToLogin() {
+  document.getElementById("mainContent").classList.add("hidden");
+  document.getElementById("passwordPrompt").classList.remove("hidden");
+  document.getElementById("passwordInput").value = "";
+  setLoginStatus("");
+  inventory = null;
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  try {
+    await loadIndex();
+    setLoginStatus("");
+  } catch (e) {
+    setLoginStatus("Failed to load index.json");
+  }
+
+  document.getElementById("submitBtn").addEventListener("click", attemptLogin);
+  document.getElementById("changePlatoonBtn").addEventListener("click", resetToLogin);
+});
