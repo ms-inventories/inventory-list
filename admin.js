@@ -885,8 +885,8 @@ function deletePlatoonFlow() {
     <div class="flex flex-col gap-3">
       <div class="text-xl font-bold">Delete platoon</div>
       <div class="text-sm text-red-300">This will delete platoon data and delete images not used anywhere else.</div>
-      <div class="text-sm text-gray-300">Type <i>permanently delete</i> to confirm:</div>
-      <input id="modalConfirmText" type="text" class="text-gray-900 px-3 py-2 rounded" />
+      <div class="text-sm text-gray-300">Type permanently delete to confirm:</div>
+      <input id="modalConfirmText" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="permanently delete" />
 
       <div class="flex gap-2 items-center mt-2">
         <button id="modalDeleteBtn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">Delete</button>
