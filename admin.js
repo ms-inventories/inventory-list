@@ -1,7 +1,10 @@
-const INVENTORY_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/inventory.json";
-const IMAGE_BASE_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com/";
+const BUCKET_BASE_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com";
+const INDEX_URL = `${BUCKET_BASE_URL}/inventories/index.json`;
+const IMAGE_BASE_URL = `${BUCKET_BASE_URL}/`;
 const API_BASE_URL = "https://j2pdaptydpur4jjasyl7pz3xc40ckbqd.lambda-url.us-east-1.on.aws";
 
+let indexData = null;
+let currentPlatoon = null;
 let inventory = null;
 let templateLabels = [];
 let isAuthed = false;
@@ -18,86 +21,28 @@ function setStatus(text, isError) {
   el.className = isError ? "text-sm text-red-300" : "text-sm text-gray-300";
 }
 
-function getSitePasswordInput() {
-  return document.getElementById("sitePwInput").value;
-}
-
 function getAdminKey() {
   return document.getElementById("adminKeyInput").value.trim();
+}
+
+function getPlatoonPassword() {
+  return document.getElementById("platoonPwInput").value;
 }
 
 function normalizeImageSrc(src) {
   if (!src) return "";
   if (src.startsWith("http://") || src.startsWith("https://")) return src;
-  if (src.startsWith("images/")) return IMAGE_BASE_URL + src.replace(/^\/+/, "");
-  return src;
+  return IMAGE_BASE_URL + src.replace(/^\/+/, "");
 }
 
 function safeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function buildTemplateLabels(items) {
-  const labels = [];
-  const seen = new Set();
-
-  (items || []).forEach(item => {
-    (item.fields || []).forEach(field => {
-      const label = String(field.label || "").trim();
-      if (!label) return;
-      if (seen.has(label)) return;
-      seen.add(label);
-      labels.push(label);
-    });
-  });
-
-  const imageIndex = labels.findIndex(l => l.toLowerCase() === "image");
-  if (imageIndex > 0) {
-    const imageLabel = labels.splice(imageIndex, 1)[0];
-    labels.unshift(imageLabel);
-  }
-
-  if (labels.length === 0) {
-    return ["Image", "NSN", "SN", "Description", "Location", "OH Qty", "Actual"];
-  }
-
-  return labels;
-}
-
-function ensureInventoryShape(data) {
-  const inv = data && typeof data === "object" ? data : {};
-  const items = Array.isArray(inv.items) ? inv.items : [];
-  const password = typeof inv.password === "string" ? inv.password : "";
-
-  items.forEach(item => {
-    if (!item || typeof item !== "object") return;
-    if (typeof item.title !== "string") item.title = "";
-    if (!Array.isArray(item.fields)) item.fields = [];
-
-    item.fields.forEach(field => {
-      if (!field || typeof field !== "object") return;
-      if (typeof field.label !== "string") field.label = "";
-
-      const isImage = String(field.label || "").toLowerCase() === "image";
-      if (isImage) {
-        if (Array.isArray(field.value)) {
-          field.value = field.value.map(v => String(v)).filter(Boolean);
-        } else if (typeof field.value === "string" && field.value.trim()) {
-          field.value = [field.value.trim()];
-        } else {
-          field.value = [];
-        }
-      } else {
-        if (Array.isArray(field.value)) field.value = field.value.join(", ");
-        if (field.value === null || field.value === undefined) field.value = "";
-        field.value = String(field.value);
-      }
-
-      if (!field._custom) field._custom = false;
-    });
-  });
-
-  return { password, items };
+async function fetchJson(url) {
+  const res = await fetch(url + (url.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+  return await res.json();
 }
 
 async function callApi(path, options) {
@@ -138,11 +83,67 @@ async function verifyAdminKey() {
   });
 }
 
-async function loadInventoryFromS3() {
-  const res = await fetch(INVENTORY_URL + "?t=" + Date.now(), { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to load inventory.json from S3");
-  const data = await res.json();
-  return ensureInventoryShape(data);
+function ensureInventoryShape(data) {
+  const inv = data && typeof data === "object" ? data : {};
+  const items = Array.isArray(inv.items) ? inv.items : [];
+  const password = typeof inv.password === "string" ? inv.password : "";
+
+  items.forEach(item => {
+    if (!item || typeof item !== "object") return;
+    if (typeof item.title !== "string") item.title = "";
+    if (!Array.isArray(item.fields)) item.fields = [];
+
+    item.fields.forEach(field => {
+      if (!field || typeof field !== "object") return;
+      if (typeof field.label !== "string") field.label = "";
+
+      const isImage = String(field.label || "").toLowerCase() === "image";
+      if (isImage) {
+        if (Array.isArray(field.value)) {
+          field.value = field.value.map(v => String(v)).filter(Boolean);
+        } else if (typeof field.value === "string" && field.value.trim()) {
+          field.value = [field.value.trim()];
+        } else {
+          field.value = [];
+        }
+      } else {
+        if (Array.isArray(field.value)) field.value = field.value.join(", ");
+        if (field.value === null || field.value === undefined) field.value = "";
+        field.value = String(field.value);
+      }
+
+      if (!field._custom) field._custom = false;
+    });
+  });
+
+  return { password, items };
+}
+
+function buildTemplateLabels(items) {
+  const labels = [];
+  const seen = new Set();
+
+  (items || []).forEach(item => {
+    (item.fields || []).forEach(field => {
+      const label = String(field.label || "").trim();
+      if (!label) return;
+      if (seen.has(label)) return;
+      seen.add(label);
+      labels.push(label);
+    });
+  });
+
+  const imageIndex = labels.findIndex(l => l.toLowerCase() === "image");
+  if (imageIndex > 0) {
+    const imageLabel = labels.splice(imageIndex, 1)[0];
+    labels.unshift(imageLabel);
+  }
+
+  if (labels.length === 0) {
+    return ["Image", "NSN", "SN", "Description", "Location", "OH Qty", "Actual"];
+  }
+
+  return labels;
 }
 
 function applyTemplates() {
@@ -167,6 +168,41 @@ function applyTemplates() {
   });
 }
 
+function renderTabs() {
+  const tabsEl = document.getElementById("tabs");
+  tabsEl.innerHTML = "";
+
+  (indexData.platoons || []).forEach(p => {
+    const btn = document.createElement("button");
+    const active = currentPlatoon && currentPlatoon.id === p.id;
+    btn.className = active
+      ? "bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
+      : "bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded";
+    btn.textContent = p.name || p.id;
+    btn.addEventListener("click", async () => {
+      if (!isAuthed) return;
+      await switchPlatoon(p.id);
+    });
+    tabsEl.appendChild(btn);
+  });
+}
+
+async function loadIndex() {
+  indexData = await fetchJson(INDEX_URL);
+  if (!indexData || !Array.isArray(indexData.platoons) || indexData.platoons.length === 0) {
+    throw new Error("index.json has no platoons");
+  }
+}
+
+function getPlatoonById(id) {
+  return (indexData.platoons || []).find(p => p.id === id) || null;
+}
+
+async function loadPlatoonInventory(platoon) {
+  const data = await fetchJson(`${BUCKET_BASE_URL}/${platoon.file}`);
+  return ensureInventoryShape(data);
+}
+
 function showApp() {
   document.getElementById("authPanel").classList.add("hidden");
   document.getElementById("appPanel").classList.remove("hidden");
@@ -180,25 +216,28 @@ function showAuth() {
 async function signIn() {
   setAuthStatus("Signing in...", false);
 
-  const sitePw = getSitePasswordInput();
   const adminKey = getAdminKey();
+  const platoonPw = getPlatoonPassword();
 
-  if (!sitePw || !adminKey) {
-    setAuthStatus("Enter site password and admin key", true);
-    return;
-  }
-
-  const loaded = await loadInventoryFromS3();
-
-  if (sitePw !== loaded.password) {
-    setAuthStatus("Wrong site password", true);
+  if (!adminKey || !platoonPw) {
+    setAuthStatus("Enter admin key and platoon password", true);
     return;
   }
 
   try {
     await verifyAdminKey();
-  } catch (e) {
+  } catch {
     setAuthStatus("Wrong admin key", true);
+    return;
+  }
+
+  await loadIndex();
+
+  currentPlatoon = indexData.platoons[0];
+  const loaded = await loadPlatoonInventory(currentPlatoon);
+
+  if (platoonPw !== loaded.password) {
+    setAuthStatus("Wrong platoon password", true);
     return;
   }
 
@@ -207,19 +246,45 @@ async function signIn() {
   isAuthed = true;
 
   showApp();
+  renderTabs();
   renderItems();
   setAuthStatus("", false);
   setStatus("Signed in", false);
 }
 
 function signOut() {
+  indexData = null;
+  currentPlatoon = null;
   inventory = null;
   templateLabels = [];
   isAuthed = false;
-  showAuth();
   document.getElementById("itemsContainer").innerHTML = "";
   setStatus("", false);
   setAuthStatus("", false);
+  showAuth();
+}
+
+async function switchPlatoon(platoonId) {
+  const p = getPlatoonById(platoonId);
+  if (!p) return;
+
+  const pw = prompt(`Enter password for ${p.name || p.id}`);
+  if (pw === null) return;
+
+  setStatus("Loading...", false);
+
+  const loaded = await loadPlatoonInventory(p);
+  if (pw !== loaded.password) {
+    setStatus("Wrong platoon password", true);
+    return;
+  }
+
+  currentPlatoon = p;
+  inventory = loaded;
+  applyTemplates();
+  renderTabs();
+  renderItems();
+  setStatus("Loaded", false);
 }
 
 function buildSavePayload() {
@@ -250,7 +315,7 @@ function buildSavePayload() {
 }
 
 async function saveInventory() {
-  if (!isAuthed || !inventory) {
+  if (!isAuthed || !inventory || !currentPlatoon) {
     setStatus("Sign in first", true);
     return;
   }
@@ -259,23 +324,17 @@ async function saveInventory() {
 
   const payload = buildSavePayload();
 
-  try {
-    await callApi("/inventory", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    setStatus("Saved", false);
-  } catch (e) {
-    setStatus("Save failed: " + e.message, true);
-  }
+  await callApi("/inventory", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file: currentPlatoon.file, data: payload })
+  });
+
+  setStatus("Saved", false);
 }
 
 function addItem() {
-  if (!isAuthed || !inventory) {
-    setStatus("Sign in first", true);
-    return;
-  }
+  if (!isAuthed || !inventory) return;
 
   const fields = templateLabels.map(label => {
     const isImage = label.toLowerCase() === "image";
@@ -325,8 +384,7 @@ function removeImageAt(itemIndex, fieldIndex, imgIndex) {
 }
 
 async function uploadImageForField(itemIndex, fieldIndex, file) {
-  const safeName = safeFileName(file.name);
-  const key = `images/${Date.now()}-${safeName}`;
+  const key = `images/${Date.now()}-${safeFileName(file.name)}`;
 
   const presign = await callApi("/presign", {
     method: "POST",
@@ -343,6 +401,38 @@ async function uploadImageForField(itemIndex, fieldIndex, file) {
   if (!putRes.ok) throw new Error("Upload failed: " + putRes.status);
 
   addImageKey(itemIndex, fieldIndex, presign.key);
+}
+
+async function addPlatoon() {
+  const id = prompt("New platoon id (example: 1st, 2nd, hq)");
+  if (!id) return;
+
+  const name = prompt("Platoon name (example: 1st Platoon)");
+  if (!name) return;
+
+  const password = prompt("Platoon password");
+  if (!password) return;
+
+  setStatus("Creating platoon...", false);
+
+  await callApi("/platoon", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, name, password })
+  });
+
+  await loadIndex();
+  currentPlatoon = getPlatoonById(id) || indexData.platoons[0];
+  renderTabs();
+  setStatus("Platoon created", false);
+}
+
+function changePassword() {
+  if (!inventory) return;
+  const pw = prompt("New platoon password");
+  if (!pw) return;
+  inventory.password = pw;
+  setStatus("Password updated. Click Save.", false);
 }
 
 function renderItems() {
@@ -367,12 +457,12 @@ function renderItems() {
 
     const addFieldBtn = document.createElement("button");
     addFieldBtn.className = "bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded";
-    addFieldBtn.textContent = "Add Field";
+    addFieldBtn.textContent = "Add field";
     addFieldBtn.addEventListener("click", () => addCustomField(itemIndex));
 
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "bg-red-600 hover:bg-red-700 px-3 py-2 rounded";
-    deleteBtn.textContent = "Delete Item";
+    deleteBtn.textContent = "Delete item";
     deleteBtn.addEventListener("click", () => deleteItem(itemIndex));
 
     titleRow.appendChild(titleInput);
@@ -412,7 +502,7 @@ function renderItems() {
         top.className = "flex items-center justify-between gap-2 mb-2";
 
         const name = document.createElement("div");
-        name.textContent = "Field Label";
+        name.textContent = "Field label";
 
         top.appendChild(name);
         top.appendChild(removeFieldBtn);
@@ -560,4 +650,12 @@ document.getElementById("addItemBtn").addEventListener("click", () => {
 
 document.getElementById("signOutBtn").addEventListener("click", () => {
   signOut();
+});
+
+document.getElementById("addPlatoonBtn").addEventListener("click", () => {
+  addPlatoon().catch(e => setStatus(e.message, true));
+});
+
+document.getElementById("changePwBtn").addEventListener("click", () => {
+  changePassword();
 });
