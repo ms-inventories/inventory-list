@@ -4,6 +4,13 @@ const API_BASE_URL = "https://j2pdaptydpur4jjasyl7pz3xc40ckbqd.lambda-url.us-eas
 
 let inventory = null;
 let templateLabels = [];
+let isAuthed = false;
+
+function setAuthStatus(text, isError) {
+  const el = document.getElementById("authStatus");
+  el.textContent = text || "";
+  el.className = isError ? "text-sm text-red-300" : "text-sm text-gray-300";
+}
 
 function setStatus(text, isError) {
   const el = document.getElementById("status");
@@ -66,9 +73,11 @@ function ensureInventoryShape(data) {
     if (!item || typeof item !== "object") return;
     if (typeof item.title !== "string") item.title = "";
     if (!Array.isArray(item.fields)) item.fields = [];
+
     item.fields.forEach(field => {
       if (!field || typeof field !== "object") return;
       if (typeof field.label !== "string") field.label = "";
+
       const isImage = String(field.label || "").toLowerCase() === "image";
       if (isImage) {
         if (Array.isArray(field.value)) {
@@ -83,6 +92,7 @@ function ensureInventoryShape(data) {
         if (field.value === null || field.value === undefined) field.value = "";
         field.value = String(field.value);
       }
+
       if (!field._custom) field._custom = false;
     });
   });
@@ -90,52 +100,12 @@ function ensureInventoryShape(data) {
   return { password, items };
 }
 
-async function loadInventory() {
-  setStatus("Loading...", false);
-
-  const res = await fetch(INVENTORY_URL + "?t=" + Date.now(), { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to load inventory.json from S3");
-
-  const data = await res.json();
-  inventory = ensureInventoryShape(data);
-
-  const typedPw = getSitePasswordInput();
-  if (typedPw !== inventory.password) {
-    inventory = null;
-    throw new Error("Wrong site password");
-  }
-
-  templateLabels = buildTemplateLabels(inventory.items);
-
-  inventory.items.forEach(item => {
-    templateLabels.forEach(label => {
-      const exists = item.fields.some(f => String(f.label || "") === label);
-      if (!exists) {
-        const isImage = label.toLowerCase() === "image";
-        item.fields.push({ label, value: isImage ? [] : "", _custom: false });
-      }
-    });
-
-    item.fields = item.fields.slice().sort((a, b) => {
-      const aIdx = templateLabels.indexOf(a.label);
-      const bIdx = templateLabels.indexOf(b.label);
-      const aRank = aIdx === -1 ? 9999 : aIdx;
-      const bRank = bIdx === -1 ? 9999 : bIdx;
-      return aRank - bRank;
-    });
-  });
-
-  renderItems();
-  setStatus("Loaded", false);
-}
-
 async function callApi(path, options) {
   const requestOptions = options || {};
   const requestHeaders = requestOptions.headers || {};
-
   const adminKey = getAdminKey();
-  if (adminKey) requestHeaders["x-admin-key"] = adminKey;
 
+  if (adminKey) requestHeaders["x-admin-key"] = adminKey;
   requestOptions.headers = requestHeaders;
 
   const res = await fetch(API_BASE_URL + path, requestOptions);
@@ -157,6 +127,99 @@ async function callApi(path, options) {
   }
 
   return data;
+}
+
+async function verifyAdminKey() {
+  const key = `images/auth-check-${Date.now()}.txt`;
+  await callApi("/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, contentType: "text/plain" })
+  });
+}
+
+async function loadInventoryFromS3() {
+  const res = await fetch(INVENTORY_URL + "?t=" + Date.now(), { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to load inventory.json from S3");
+  const data = await res.json();
+  return ensureInventoryShape(data);
+}
+
+function applyTemplates() {
+  templateLabels = buildTemplateLabels(inventory.items);
+
+  inventory.items.forEach(item => {
+    templateLabels.forEach(label => {
+      const exists = item.fields.some(f => String(f.label || "") === label);
+      if (!exists) {
+        const isImage = label.toLowerCase() === "image";
+        item.fields.push({ label, value: isImage ? [] : "", _custom: false });
+      }
+    });
+
+    item.fields = item.fields.slice().sort((a, b) => {
+      const aIdx = templateLabels.indexOf(a.label);
+      const bIdx = templateLabels.indexOf(b.label);
+      const aRank = aIdx === -1 ? 9999 : aIdx;
+      const bRank = bIdx === -1 ? 9999 : bIdx;
+      return aRank - bRank;
+    });
+  });
+}
+
+function showApp() {
+  document.getElementById("authPanel").classList.add("hidden");
+  document.getElementById("appPanel").classList.remove("hidden");
+}
+
+function showAuth() {
+  document.getElementById("appPanel").classList.add("hidden");
+  document.getElementById("authPanel").classList.remove("hidden");
+}
+
+async function signIn() {
+  setAuthStatus("Signing in...", false);
+
+  const sitePw = getSitePasswordInput();
+  const adminKey = getAdminKey();
+
+  if (!sitePw || !adminKey) {
+    setAuthStatus("Enter site password and admin key", true);
+    return;
+  }
+
+  const loaded = await loadInventoryFromS3();
+
+  if (sitePw !== loaded.password) {
+    setAuthStatus("Wrong site password", true);
+    return;
+  }
+
+  try {
+    await verifyAdminKey();
+  } catch (e) {
+    setAuthStatus("Wrong admin key", true);
+    return;
+  }
+
+  inventory = loaded;
+  applyTemplates();
+  isAuthed = true;
+
+  showApp();
+  renderItems();
+  setAuthStatus("", false);
+  setStatus("Signed in", false);
+}
+
+function signOut() {
+  inventory = null;
+  templateLabels = [];
+  isAuthed = false;
+  showAuth();
+  document.getElementById("itemsContainer").innerHTML = "";
+  setStatus("", false);
+  setAuthStatus("", false);
 }
 
 function buildSavePayload() {
@@ -187,24 +250,30 @@ function buildSavePayload() {
 }
 
 async function saveInventory() {
-  if (!inventory) throw new Error("Load inventory first");
+  if (!isAuthed || !inventory) {
+    setStatus("Sign in first", true);
+    return;
+  }
 
   setStatus("Saving...", false);
 
   const payload = buildSavePayload();
 
-  await callApi("/inventory", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
-  setStatus("Saved", false);
+  try {
+    await callApi("/inventory", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    setStatus("Saved", false);
+  } catch (e) {
+    setStatus("Save failed: " + e.message, true);
+  }
 }
 
 function addItem() {
-  if (!inventory) {
-    setStatus("Load inventory first", true);
+  if (!isAuthed || !inventory) {
+    setStatus("Sign in first", true);
     return;
   }
 
@@ -215,6 +284,14 @@ function addItem() {
 
   inventory.items.push({ title: "New Item", fields });
   renderItems();
+
+  const newIndex = inventory.items.length - 1;
+  requestAnimationFrame(() => {
+    const card = document.getElementById(`item-card-${newIndex}`);
+    const title = document.getElementById(`item-title-${newIndex}`);
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (title) title.focus();
+  });
 }
 
 function deleteItem(itemIndex) {
@@ -263,7 +340,7 @@ async function uploadImageForField(itemIndex, fieldIndex, file) {
     body: file
   });
 
-  if (!putRes.ok) throw new Error("S3 upload failed: " + putRes.status);
+  if (!putRes.ok) throw new Error("Upload failed: " + putRes.status);
 
   addImageKey(itemIndex, fieldIndex, presign.key);
 }
@@ -274,41 +351,34 @@ function renderItems() {
 
   inventory.items.forEach((item, itemIndex) => {
     const card = document.createElement("div");
+    card.id = `item-card-${itemIndex}`;
     card.className = "border border-gray-700 rounded p-4";
 
-    const header = document.createElement("div");
-    header.className = "flex flex-col gap-3 mb-4";
-
     const titleRow = document.createElement("div");
-    titleRow.className = "flex flex-wrap gap-3 items-center";
+    titleRow.className = "flex flex-wrap gap-2 items-center mb-4";
 
     const titleInput = document.createElement("input");
+    titleInput.id = `item-title-${itemIndex}`;
     titleInput.className = "flex-1 min-w-[280px] text-gray-900 px-3 py-2 rounded text-xl font-bold";
     titleInput.value = item.title || "";
     titleInput.addEventListener("input", e => {
       inventory.items[itemIndex].title = e.target.value;
     });
 
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "bg-red-600 hover:bg-red-700 px-3 py-2 rounded";
-    deleteBtn.textContent = "Delete Item";
-    deleteBtn.addEventListener("click", () => {
-      deleteItem(itemIndex);
-    });
-
     const addFieldBtn = document.createElement("button");
     addFieldBtn.className = "bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded";
     addFieldBtn.textContent = "Add Field";
-    addFieldBtn.addEventListener("click", () => {
-      addCustomField(itemIndex);
-    });
+    addFieldBtn.addEventListener("click", () => addCustomField(itemIndex));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "bg-red-600 hover:bg-red-700 px-3 py-2 rounded";
+    deleteBtn.textContent = "Delete Item";
+    deleteBtn.addEventListener("click", () => deleteItem(itemIndex));
 
     titleRow.appendChild(titleInput);
     titleRow.appendChild(addFieldBtn);
     titleRow.appendChild(deleteBtn);
-
-    header.appendChild(titleRow);
-    card.appendChild(header);
+    card.appendChild(titleRow);
 
     const table = document.createElement("table");
     table.className = "table-auto w-full border border-gray-700";
@@ -323,24 +393,44 @@ function renderItems() {
       const valueCell = document.createElement("td");
       valueCell.className = "p-2 border border-gray-700";
 
-      const labelText = document.createElement("div");
-      labelText.className = "flex items-center justify-between gap-2";
-
-      const labelLeft = document.createElement("div");
-      labelLeft.textContent = field.label || "";
-
       const removeFieldBtn = document.createElement("button");
       removeFieldBtn.className = "bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-sm";
       removeFieldBtn.textContent = "Remove";
-      removeFieldBtn.addEventListener("click", () => {
-        removeField(itemIndex, fieldIndex);
-      });
-
-      labelText.appendChild(labelLeft);
-      labelText.appendChild(removeFieldBtn);
-      labelCell.appendChild(labelText);
+      removeFieldBtn.addEventListener("click", () => removeField(itemIndex, fieldIndex));
 
       const isImage = String(field.label || "").toLowerCase() === "image";
+
+      if (field._custom) {
+        const labelInput = document.createElement("input");
+        labelInput.className = "w-full text-gray-900 px-3 py-2 rounded";
+        labelInput.value = field.label || "";
+        labelInput.addEventListener("input", e => {
+          inventory.items[itemIndex].fields[fieldIndex].label = e.target.value;
+        });
+
+        const top = document.createElement("div");
+        top.className = "flex items-center justify-between gap-2 mb-2";
+
+        const name = document.createElement("div");
+        name.textContent = "Field Label";
+
+        top.appendChild(name);
+        top.appendChild(removeFieldBtn);
+
+        labelCell.appendChild(top);
+        labelCell.appendChild(labelInput);
+      } else {
+        const top = document.createElement("div");
+        top.className = "flex items-center justify-between gap-2";
+
+        const name = document.createElement("div");
+        name.textContent = field.label || "";
+
+        top.appendChild(name);
+        top.appendChild(removeFieldBtn);
+
+        labelCell.appendChild(top);
+      }
 
       if (!isImage) {
         const valueInput = document.createElement("input");
@@ -349,32 +439,6 @@ function renderItems() {
         valueInput.addEventListener("input", e => {
           inventory.items[itemIndex].fields[fieldIndex].value = e.target.value;
         });
-
-        const labelEditWrap = document.createElement("div");
-        labelEditWrap.className = "mt-2";
-
-        if (field._custom) {
-          const labelInput = document.createElement("input");
-          labelInput.className = "w-full text-gray-900 px-3 py-2 rounded";
-          labelInput.value = field.label || "";
-          labelInput.addEventListener("input", e => {
-            inventory.items[itemIndex].fields[fieldIndex].label = e.target.value;
-          });
-
-          labelCell.innerHTML = "";
-          const customLabelTitle = document.createElement("div");
-          customLabelTitle.className = "flex items-center justify-between gap-2 mb-2";
-
-          const customLabelName = document.createElement("div");
-          customLabelName.className = "font-semibold";
-          customLabelName.textContent = "Field Label";
-
-          customLabelTitle.appendChild(customLabelName);
-          customLabelTitle.appendChild(removeFieldBtn);
-
-          labelCell.appendChild(customLabelTitle);
-          labelCell.appendChild(labelInput);
-        }
 
         valueCell.appendChild(valueInput);
       } else {
@@ -399,7 +463,7 @@ function renderItems() {
 
           const rm = document.createElement("button");
           rm.className = "mt-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-sm w-full";
-          rm.textContent = "Remove Image";
+          rm.textContent = "Remove image";
           rm.addEventListener("click", () => {
             removeImageAt(itemIndex, fieldIndex, imgIndex);
             renderItems();
@@ -408,7 +472,6 @@ function renderItems() {
           wrap.appendChild(img);
           wrap.appendChild(small);
           wrap.appendChild(rm);
-
           grid.appendChild(wrap);
         });
 
@@ -420,11 +483,11 @@ function renderItems() {
 
         const addInput = document.createElement("input");
         addInput.className = "flex-1 min-w-[260px] text-gray-900 px-3 py-2 rounded";
-        addInput.placeholder = "Paste an image key like images/file.jpg (or a full URL)";
+        addInput.placeholder = "Paste an image key like images/file.jpg";
 
         const addBtn = document.createElement("button");
         addBtn.className = "bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded";
-        addBtn.textContent = "Add";
+        addBtn.textContent = "Add image";
         addBtn.addEventListener("click", () => {
           addImageKey(itemIndex, fieldIndex, addInput.value);
           addInput.value = "";
@@ -444,7 +507,7 @@ function renderItems() {
 
         const uploadBtn = document.createElement("button");
         uploadBtn.className = "bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded";
-        uploadBtn.textContent = "Upload to S3";
+        uploadBtn.textContent = "Upload images";
         uploadBtn.addEventListener("click", async () => {
           const file = fileInput.files && fileInput.files[0];
           if (!file) {
@@ -453,13 +516,13 @@ function renderItems() {
           }
 
           try {
-            setStatus("Uploading image...", false);
+            setStatus("Uploading...", false);
             await uploadImageForField(itemIndex, fieldIndex, file);
             fileInput.value = "";
             renderItems();
             setStatus("Uploaded", false);
           } catch (e) {
-            setStatus("Upload failed: " + e.message, true);
+            setStatus(e.message, true);
           }
         });
 
@@ -483,22 +546,18 @@ function renderItems() {
   });
 }
 
-document.getElementById("loadBtn").addEventListener("click", async () => {
-  try {
-    await loadInventory();
-  } catch (e) {
-    setStatus(e.message, true);
-  }
+document.getElementById("signInBtn").addEventListener("click", () => {
+  signIn().catch(e => setAuthStatus(e.message, true));
 });
 
-document.getElementById("saveBtn").addEventListener("click", async () => {
-  try {
-    await saveInventory();
-  } catch (e) {
-    setStatus(e.message, true);
-  }
+document.getElementById("saveBtn").addEventListener("click", () => {
+  saveInventory().catch(e => setStatus(e.message, true));
 });
 
 document.getElementById("addItemBtn").addEventListener("click", () => {
   addItem();
+});
+
+document.getElementById("signOutBtn").addEventListener("click", () => {
+  signOut();
 });
