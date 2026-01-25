@@ -7,30 +7,36 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen p-4">
-  <div class="flex flex-col gap-4 max-w-6xl mx-auto">
-    <div class="flex flex-col gap-3">
-      <h1 class="text-3xl font-bold">Inventory Admin</h1>
+  <div class="max-w-6xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">Inventory Admin</h1>
 
-      <div class="flex flex-wrap gap-3 items-center">
-        <input id="sitePwInput" type="password" placeholder="Site password"
-          class="px-3 py-2 rounded text-gray-900 w-64" />
+    <div id="authPanel" class="border border-gray-700 rounded p-4 max-w-xl">
+      <div class="flex flex-col gap-3">
+        <label class="text-sm text-gray-300">Site password</label>
+        <input id="sitePwInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Enter site password" />
 
-        <input id="adminKeyInput" type="password" placeholder="Admin key"
-          class="px-3 py-2 rounded text-gray-900 w-64" />
+        <label class="text-sm text-gray-300">Admin key</label>
+        <input id="adminKeyInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Enter admin key" />
 
-        <button id="loadBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Load</button>
-        <button id="saveBtn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">Save</button>
-        <button id="addItemBtn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Add Item</button>
-
-        <div id="status" class="text-sm text-gray-300"></div>
-      </div>
-
-      <div class="text-sm text-gray-400">
-        Upload images inside an item card. Images are stored as S3 keys like images/file.jpg.
+        <div class="flex gap-2 items-center">
+          <button id="signInBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">Sign in</button>
+          <div id="authStatus" class="text-sm text-gray-300"></div>
+        </div>
       </div>
     </div>
 
-    <div id="itemsContainer" class="space-y-8"></div>
+    <div id="appPanel" class="hidden">
+      <div class="sticky top-0 z-10 bg-gray-900 pt-2 pb-3">
+        <div class="border border-gray-700 rounded p-3 flex flex-wrap gap-2 items-center">
+          <button id="saveBtn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">Save</button>
+          <button id="addItemBtn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Add Item</button>
+          <button id="signOutBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Sign out</button>
+          <div id="status" class="text-sm text-gray-300"></div>
+        </div>
+      </div>
+
+      <div id="itemsContainer" class="space-y-8 mt-4"></div>
+    </div>
   </div>
 
   <script src="admin.js"></script>
