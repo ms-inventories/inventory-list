@@ -885,7 +885,7 @@ function deletePlatoonFlow() {
     <div class="flex flex-col gap-3">
       <div class="text-xl font-bold">Delete platoon</div>
       <div class="text-sm text-red-300">This will delete platoon data and delete images not used anywhere else.</div>
-      <div class="text-sm text-gray-300">Type permanently delete to confirm:</div>
+      <div class="text-sm text-gray-300">Type <i>permanently delete</i> to confirm:</div>
       <input id="modalConfirmText" type="text" class="text-gray-900 px-3 py-2 rounded" />
 
       <div class="flex gap-2 items-center mt-2">
@@ -907,7 +907,7 @@ function deletePlatoonFlow() {
   document.getElementById("modalDeleteBtn").addEventListener("click", async () => {
     const confirmText = document.getElementById("modalConfirmText").value.trim();
     if (confirmText !== "permanently delete") {
-      setModalStatus("You must type permanently delete", true);
+      setModalStatus("You must type <i>permanently delete</i>", true);
       return;
     }
 
