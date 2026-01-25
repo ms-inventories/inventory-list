@@ -8,18 +8,18 @@
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen p-4">
   <div class="max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Inventory Admin</h1>
+    <h1 class="text-3xl font-bold mb-4">Inventory Admin</h1>
 
     <div id="authPanel" class="border border-gray-700 rounded p-4 max-w-xl">
       <div class="flex flex-col gap-3">
-        <label class="text-sm text-gray-300">Site password</label>
-        <input id="sitePwInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Enter site password" />
-
         <label class="text-sm text-gray-300">Admin key</label>
-        <input id="adminKeyInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Enter admin key" />
+        <input id="adminKeyInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Admin key" />
+
+        <label class="text-sm text-gray-300">Platoon password</label>
+        <input id="platoonPwInput" type="password" class="text-gray-900 px-3 py-2 rounded" placeholder="Password for selected platoon" />
 
         <div class="flex gap-2 items-center">
-          <button id="signInBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">Sign in</button>
+          <button id="signInBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Sign in</button>
           <div id="authStatus" class="text-sm text-gray-300"></div>
         </div>
       </div>
@@ -28,9 +28,15 @@
     <div id="appPanel" class="hidden">
       <div class="sticky top-0 z-10 bg-gray-900 pt-2 pb-3">
         <div class="border border-gray-700 rounded p-3 flex flex-wrap gap-2 items-center">
+          <div id="tabs" class="flex flex-wrap gap-2"></div>
+
+          <button id="addPlatoonBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Add platoon</button>
+          <button id="changePwBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Change password</button>
+
           <button id="saveBtn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">Save</button>
-          <button id="addItemBtn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Add Item</button>
+          <button id="addItemBtn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Add item</button>
           <button id="signOutBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Sign out</button>
+
           <div id="status" class="text-sm text-gray-300"></div>
         </div>
       </div>
