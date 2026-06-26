@@ -12,11 +12,21 @@ let lastPlatoonId = null;
 let sessionAdminKey = "";
 let pendingDeletedImages = [];
 
+function refreshIcons() {
+  if (window.lucide && typeof window.lucide.createIcons === "function") {
+    window.lucide.createIcons();
+  }
+}
+
+function setButtonContent(button, icon, text) {
+  button.innerHTML = `<i data-lucide="${icon}" aria-hidden="true"></i><span>${text}</span>`;
+}
+
 function setStatus(text, isError) {
   const el = document.getElementById("status");
   if (!el) return;
   el.textContent = text || "";
-  el.className = isError ? "text-sm text-red-300" : "text-sm text-gray-300";
+  el.className = isError ? "status-text error" : "status-text";
 }
 
 function normalizeImageSrc(src) {
@@ -29,12 +39,22 @@ function safeFileName(name) {
   return String(name || "").replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function openModal(html) {
   const backdrop = document.getElementById("modalBackdrop");
   const panel = document.getElementById("modalPanel");
   if (!backdrop || !panel) return;
   panel.innerHTML = html;
   backdrop.classList.remove("hidden");
+  refreshIcons();
 }
 
 function closeModal() {
@@ -142,6 +162,7 @@ function ensureInventoryShape(data) {
 }
 
 function buildTemplateLabels(items) {
+  const defaultLabels = ["Image", "LIN", "Army Name", "Common Name", "NSN", "SN", "Description", "Location", "OH Qty", "Actual", "Status"];
   const labels = [];
   const seen = new Set();
 
@@ -155,17 +176,29 @@ function buildTemplateLabels(items) {
     });
   });
 
-  const imageIndex = labels.findIndex(l => l.toLowerCase() === "image");
-  if (imageIndex > 0) {
-    const imageLabel = labels.splice(imageIndex, 1)[0];
-    labels.unshift(imageLabel);
-  }
-
   if (labels.length === 0) {
-    return ["Image", "NSN", "SN", "Description", "Location", "OH Qty", "Actual"];
+    return defaultLabels;
   }
 
-  return labels;
+  const merged = [];
+  const mergedKeys = new Set();
+
+  defaultLabels.forEach(label => {
+    const existing = labels.find(l => l.toLowerCase() === label.toLowerCase()) || label;
+    const key = existing.toLowerCase();
+    if (mergedKeys.has(key)) return;
+    mergedKeys.add(key);
+    merged.push(existing);
+  });
+
+  labels.forEach(label => {
+    const key = label.toLowerCase();
+    if (mergedKeys.has(key)) return;
+    mergedKeys.add(key);
+    merged.push(label);
+  });
+
+  return merged;
 }
 
 function applyTemplates() {
@@ -313,6 +346,146 @@ function addItem() {
   });
 }
 
+function getDraftFields(values) {
+  const valueMap = values || {};
+  return templateLabels.map(label => {
+    const isImage = label.toLowerCase() === "image";
+    const value = Object.prototype.hasOwnProperty.call(valueMap, label)
+      ? valueMap[label]
+      : (isImage ? [] : "");
+
+    return {
+      label,
+      value: isImage ? (Array.isArray(value) ? value : []) : String(value || ""),
+      _custom: false
+    };
+  });
+}
+
+function addScannedItemDraft(draft) {
+  if (!isAuthed || !inventory) return;
+
+  const commonName = String(draft.commonName || "").trim();
+  const armyName = String(draft.armyName || "").trim();
+  const lin = String(draft.lin || "").trim().toUpperCase();
+  const description = String(draft.description || "").trim();
+  const location = String(draft.location || "").trim();
+  const title = commonName || armyName || lin || "New Item";
+
+  const values = {
+    LIN: lin,
+    "Army Name": armyName,
+    "Common Name": commonName,
+    Description: description,
+    Location: location
+  };
+
+  inventory.items.push({ title, fields: getDraftFields(values) });
+  renderItems();
+
+  const newIndex = inventory.items.length - 1;
+  requestAnimationFrame(() => {
+    const card = document.getElementById(`item-card-${newIndex}`);
+    const titleInput = document.getElementById(`item-title-${newIndex}`);
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (titleInput) titleInput.focus();
+  });
+}
+
+function scannedItemDraftFlow(parsed) {
+  const safeLine = escapeHtml(parsed.line || "");
+  const safeLin = escapeHtml(parsed.lin || "");
+  const safeArmyName = escapeHtml(parsed.armyName || parsed.line || "");
+
+  openModal(`
+    <div class="modal-stack">
+      <div class="modal-heading">
+        <span class="modal-icon"><i data-lucide="scan-text" aria-hidden="true"></i></span>
+        <div>
+          <p class="eyebrow">Packet scan</p>
+          <div class="modal-title">Create draft item</div>
+        </div>
+      </div>
+      <p class="modal-copy">Check the OCR result, then add the friendly name your squad will actually recognize.</p>
+
+      <label class="field-label" for="modalOcrLine">OCR line</label>
+      <textarea id="modalOcrLine" class="input ocr-textarea">${safeLine}</textarea>
+
+      <label class="field-label" for="modalLin">LIN</label>
+      <input id="modalLin" type="text" class="input" value="${safeLin}" />
+
+      <label class="field-label" for="modalArmyName">Army name</label>
+      <input id="modalArmyName" type="text" class="input" value="${safeArmyName}" />
+
+      <label class="field-label" for="modalCommonName">Common name</label>
+      <input id="modalCommonName" type="text" class="input" placeholder="example: CROWS turret" />
+
+      <label class="field-label" for="modalLocation">Location</label>
+      <input id="modalLocation" type="text" class="input" placeholder="example: arms room cage, shelf 2" />
+
+      <div class="button-row">
+        <button id="modalCreateDraftBtn" class="btn btn-primary">
+          <i data-lucide="plus" aria-hidden="true"></i>
+          <span>Create draft</span>
+        </button>
+        <button id="modalCancelBtn" class="btn btn-secondary">
+          <i data-lucide="x" aria-hidden="true"></i>
+          <span>Cancel</span>
+        </button>
+        <div id="modalStatus" class="status-text"></div>
+      </div>
+    </div>
+  `);
+
+  const modalStatus = document.getElementById("modalStatus");
+  const setModalStatus = (t, e) => {
+    modalStatus.textContent = t || "";
+    modalStatus.className = e ? "status-text error" : "status-text";
+  };
+
+  document.getElementById("modalCancelBtn").addEventListener("click", () => closeModal());
+  document.getElementById("modalOcrLine").addEventListener("blur", e => {
+    const reparsed = parsePacketLine(e.target.value);
+    const linInput = document.getElementById("modalLin");
+    const armyNameInput = document.getElementById("modalArmyName");
+    if (linInput && !linInput.value.trim()) linInput.value = reparsed.lin;
+    if (armyNameInput && !armyNameInput.value.trim()) armyNameInput.value = reparsed.armyName;
+  });
+
+  document.getElementById("modalCreateDraftBtn").addEventListener("click", () => {
+    const armyName = document.getElementById("modalArmyName").value.trim();
+    const lin = document.getElementById("modalLin").value.trim();
+    const commonName = document.getElementById("modalCommonName").value.trim();
+    const location = document.getElementById("modalLocation").value.trim();
+
+    if (!armyName && !lin && !commonName) {
+      setModalStatus("Add at least a LIN, Army name, or common name", true);
+      return;
+    }
+
+    addScannedItemDraft({ lin, armyName, commonName, location });
+    setStatus("Draft item added", false);
+    closeModal();
+  });
+}
+
+async function scanItemToDraft(file) {
+  const scanBtn = document.getElementById("scanItemBtn");
+  if (!file) return;
+
+  try {
+    if (scanBtn) scanBtn.disabled = true;
+    setStatus("Reading packet photo...", false);
+    const parsed = await recognizePacketImage(file, setStatus);
+    setStatus("Packet text found", false);
+    scannedItemDraftFlow(parsed);
+  } catch (e) {
+    setStatus(e.message || "Could not read that photo", true);
+  } finally {
+    if (scanBtn) scanBtn.disabled = false;
+  }
+}
+
 function deleteItem(itemIndex) {
   inventory.items.splice(itemIndex, 1);
   renderItems();
@@ -381,67 +554,92 @@ function renderItems() {
   if (!container) return;
   container.innerHTML = "";
 
+  if (!inventory.items.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No equipment has been added yet. Use Add item to start a platoon list.";
+    container.appendChild(empty);
+    refreshIcons();
+    return;
+  }
+
   inventory.items.forEach((item, itemIndex) => {
     const card = document.createElement("div");
     card.id = `item-card-${itemIndex}`;
-    card.className = "border border-gray-700 rounded p-4";
+    card.className = "editor-card";
 
     const titleRow = document.createElement("div");
-    titleRow.className = "flex flex-wrap gap-2 items-center mb-4";
+    titleRow.className = "editor-card-header";
 
     const titleInput = document.createElement("input");
     titleInput.id = `item-title-${itemIndex}`;
-    titleInput.className = "flex-1 min-w-[280px] text-gray-900 px-3 py-2 rounded text-xl font-bold";
+    titleInput.className = "input title-input";
+    titleInput.placeholder = "Equipment name";
     titleInput.value = item.title || "";
     titleInput.addEventListener("input", e => {
       inventory.items[itemIndex].title = e.target.value;
     });
 
     const addFieldBtn = document.createElement("button");
-    addFieldBtn.className = "bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded";
-    addFieldBtn.textContent = "Add field";
+    addFieldBtn.className = "btn btn-secondary btn-small";
+    setButtonContent(addFieldBtn, "list-plus", "Add field");
     addFieldBtn.addEventListener("click", () => addCustomField(itemIndex));
 
     const deleteBtn = document.createElement("button");
-    deleteBtn.className = "bg-red-600 hover:bg-red-700 px-3 py-2 rounded";
-    deleteBtn.textContent = "Delete item";
+    deleteBtn.className = "btn btn-danger btn-small";
+    setButtonContent(deleteBtn, "trash-2", "Delete item");
     deleteBtn.addEventListener("click", () => deleteItem(itemIndex));
 
+    const itemActions = document.createElement("details");
+    itemActions.className = "action-menu item-actions";
+
+    const itemActionsSummary = document.createElement("summary");
+    itemActionsSummary.className = "btn btn-secondary btn-small";
+    setButtonContent(itemActionsSummary, "more-horizontal", "Item actions");
+
+    const itemActionsPanel = document.createElement("div");
+    itemActionsPanel.className = "menu-panel";
+    itemActionsPanel.appendChild(addFieldBtn);
+    itemActionsPanel.appendChild(deleteBtn);
+    itemActions.appendChild(itemActionsSummary);
+    itemActions.appendChild(itemActionsPanel);
+
     titleRow.appendChild(titleInput);
-    titleRow.appendChild(addFieldBtn);
-    titleRow.appendChild(deleteBtn);
+    titleRow.appendChild(itemActions);
     card.appendChild(titleRow);
 
-    const table = document.createElement("table");
-    table.className = "table-auto w-full border border-gray-700";
+    const fieldList = document.createElement("div");
+    fieldList.className = "field-editor-list";
 
     item.fields.forEach((field, fieldIndex) => {
-      const row = document.createElement("tr");
-      row.className = "border border-gray-700";
+      const row = document.createElement("div");
+      row.className = "field-editor-row";
 
-      const labelCell = document.createElement("td");
-      labelCell.className = "p-2 font-semibold w-1/4 border border-gray-700 align-top";
+      const labelCell = document.createElement("div");
+      labelCell.className = "field-editor-label";
 
-      const valueCell = document.createElement("td");
-      valueCell.className = "p-2 border border-gray-700";
+      const valueCell = document.createElement("div");
+      valueCell.className = "field-editor-control";
 
       const removeFieldBtn = document.createElement("button");
-      removeFieldBtn.className = "bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-sm";
-      removeFieldBtn.textContent = "Remove";
+      removeFieldBtn.className = "btn btn-subtle btn-small field-remove-btn";
+      removeFieldBtn.title = "Remove field";
+      removeFieldBtn.setAttribute("aria-label", "Remove field");
+      setButtonContent(removeFieldBtn, "x", "Remove");
       removeFieldBtn.addEventListener("click", () => removeField(itemIndex, fieldIndex));
 
       const isImage = String(field.label || "").toLowerCase() === "image";
 
       if (field._custom) {
         const labelInput = document.createElement("input");
-        labelInput.className = "w-full text-gray-900 px-3 py-2 rounded";
+        labelInput.className = "input";
         labelInput.value = field.label || "";
         labelInput.addEventListener("input", e => {
           inventory.items[itemIndex].fields[fieldIndex].label = e.target.value;
         });
 
         const top = document.createElement("div");
-        top.className = "flex items-center justify-between gap-2 mb-2";
+        top.className = "field-editor-top";
 
         const name = document.createElement("div");
         name.textContent = "Field label";
@@ -453,7 +651,7 @@ function renderItems() {
         labelCell.appendChild(labelInput);
       } else {
         const top = document.createElement("div");
-        top.className = "flex items-center justify-between gap-2";
+        top.className = "field-editor-top";
 
         const name = document.createElement("div");
         name.textContent = field.label || "";
@@ -466,7 +664,8 @@ function renderItems() {
 
       if (!isImage) {
         const valueInput = document.createElement("input");
-        valueInput.className = "w-full text-gray-900 px-3 py-2 rounded";
+        valueInput.className = "input";
+        valueInput.placeholder = "Not recorded";
         valueInput.value = field.value || "";
         valueInput.addEventListener("input", e => {
           inventory.items[itemIndex].fields[fieldIndex].value = e.target.value;
@@ -478,24 +677,24 @@ function renderItems() {
         const images = inventory.items[itemIndex].fields[fieldIndex].value;
 
         const grid = document.createElement("div");
-        grid.className = "flex flex-wrap gap-3";
+        grid.className = "image-thumb-grid";
 
         images.forEach((imgKeyOrUrl, imgIndex) => {
           const wrap = document.createElement("div");
-          wrap.className = "border border-gray-700 rounded p-2";
+          wrap.className = "image-thumb";
 
           const img = document.createElement("img");
-          img.className = "max-h-32";
           img.src = normalizeImageSrc(imgKeyOrUrl);
           img.alt = item.title || "Image";
+          img.loading = "lazy";
 
           const small = document.createElement("div");
-          small.className = "text-xs text-gray-400 mt-2 break-all max-w-[220px]";
+          small.className = "image-key";
           small.textContent = imgKeyOrUrl;
 
           const rm = document.createElement("button");
-          rm.className = "mt-2 bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-sm w-full";
-          rm.textContent = "Remove image";
+          rm.className = "btn btn-subtle btn-small btn-full";
+          setButtonContent(rm, "image-minus", "Remove image");
           rm.addEventListener("click", () => {
             removeImageAt(itemIndex, fieldIndex, imgIndex);
             renderItems();
@@ -507,19 +706,26 @@ function renderItems() {
           grid.appendChild(wrap);
         });
 
+        if (!images.length) {
+          const emptyImage = document.createElement("div");
+          emptyImage.className = "empty-state";
+          emptyImage.textContent = "No photos attached to this item.";
+          grid.appendChild(emptyImage);
+        }
+
         const controls = document.createElement("div");
-        controls.className = "mt-4 flex flex-col gap-3";
+        controls.className = "upload-controls";
 
         const addRow = document.createElement("div");
-        addRow.className = "flex flex-wrap gap-2 items-center";
+        addRow.className = "inline-control";
 
         const addInput = document.createElement("input");
-        addInput.className = "flex-1 min-w-[260px] text-gray-900 px-3 py-2 rounded";
+        addInput.className = "input";
         addInput.placeholder = "Paste an image key like images/file.jpg";
 
         const addBtn = document.createElement("button");
-        addBtn.className = "bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded";
-        addBtn.textContent = "Add image";
+        addBtn.className = "btn btn-secondary";
+        setButtonContent(addBtn, "link", "Add image");
         addBtn.addEventListener("click", () => {
           addImageKey(itemIndex, fieldIndex, addInput.value);
           addInput.value = "";
@@ -530,16 +736,16 @@ function renderItems() {
         addRow.appendChild(addBtn);
 
         const uploadRow = document.createElement("div");
-        uploadRow.className = "flex flex-wrap gap-2 items-center";
+        uploadRow.className = "inline-control";
 
         const fileInput = document.createElement("input");
         fileInput.type = "file";
         fileInput.accept = "image/*";
-        fileInput.className = "text-sm";
+        fileInput.className = "file-input";
 
         const uploadBtn = document.createElement("button");
-        uploadBtn.className = "bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded";
-        uploadBtn.textContent = "Upload images";
+        uploadBtn.className = "btn btn-accent";
+        setButtonContent(uploadBtn, "upload", "Upload image");
         uploadBtn.addEventListener("click", async () => {
           const file = fileInput.files && fileInput.files[0];
           if (!file) {
@@ -565,36 +771,61 @@ function renderItems() {
         controls.appendChild(uploadRow);
 
         valueCell.appendChild(grid);
-        valueCell.appendChild(controls);
+
+        const photoTools = document.createElement("details");
+        photoTools.className = "disclosure";
+
+        const photoSummary = document.createElement("summary");
+        photoSummary.className = "btn btn-secondary btn-full";
+        setButtonContent(photoSummary, "settings-2", "Photo tools");
+
+        const photoPanel = document.createElement("div");
+        photoPanel.className = "disclosure-panel";
+        photoPanel.appendChild(controls);
+
+        photoTools.appendChild(photoSummary);
+        photoTools.appendChild(photoPanel);
+        valueCell.appendChild(photoTools);
       }
 
       row.appendChild(labelCell);
       row.appendChild(valueCell);
-      table.appendChild(row);
+      fieldList.appendChild(row);
     });
 
-    card.appendChild(table);
+    card.appendChild(fieldList);
     container.appendChild(card);
   });
+
+  refreshIcons();
 }
 
 async function signInFlow() {
   openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Sign in</div>
+    <div class="modal-stack">
+      <div class="modal-heading">
+        <span class="modal-icon"><i data-lucide="shield-check" aria-hidden="true"></i></span>
+        <div>
+          <p class="eyebrow">Admin access</p>
+          <div class="modal-title">Sign in</div>
+        </div>
+      </div>
 
-      <label class="text-sm text-gray-300">Admin key</label>
-      <input id="modalAdminKey" type="password" class="text-gray-900 px-3 py-2 rounded" />
+      <label class="field-label" for="modalAdminKey">Admin key</label>
+      <input id="modalAdminKey" type="password" class="input" />
 
-      <label class="text-sm text-gray-300">Platoon</label>
-      <select id="modalPlatoonSelect" class="text-gray-900 px-3 py-2 rounded"></select>
+      <label class="field-label" for="modalPlatoonSelect">Platoon</label>
+      <select id="modalPlatoonSelect" class="select"></select>
 
-      <label class="text-sm text-gray-300">Platoon password</label>
-      <input id="modalPlatoonPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
+      <label class="field-label" for="modalPlatoonPw">Platoon password</label>
+      <input id="modalPlatoonPw" type="password" class="input" />
 
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalSignInBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Sign in</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      <div class="button-row">
+        <button id="modalSignInBtn" class="btn btn-primary">
+          <i data-lucide="log-in" aria-hidden="true"></i>
+          <span>Sign in</span>
+        </button>
+        <div id="modalStatus" class="status-text"></div>
       </div>
     </div>
   `);
@@ -602,7 +833,7 @@ async function signInFlow() {
   const modalStatus = document.getElementById("modalStatus");
   const setModalStatus = (t, e) => {
     modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+    modalStatus.className = e ? "status-text error" : "status-text";
   };
 
   const modalPlatoonSelect = document.getElementById("modalPlatoonSelect");
@@ -672,19 +903,32 @@ async function signInFlow() {
 async function switchPlatoonFlow(nextPlatoonId) {
   const platoon = getPlatoonById(nextPlatoonId);
   if (!platoon) return;
+  const platoonName = escapeHtml(platoon.name || platoon.id);
 
   openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Switch platoon</div>
-      <div class="text-sm text-gray-300">Enter password for ${platoon.name || platoon.id}</div>
+    <div class="modal-stack">
+      <div class="modal-heading">
+        <span class="modal-icon"><i data-lucide="repeat-2" aria-hidden="true"></i></span>
+        <div>
+          <p class="eyebrow">Switch list</p>
+          <div class="modal-title">Switch platoon</div>
+        </div>
+      </div>
+      <p class="modal-copy">Enter the password for ${platoonName}.</p>
 
-      <label class="text-sm text-gray-300">Platoon password</label>
-      <input id="modalSwitchPw" type="password" class="text-gray-900 px-3 py-2 rounded" />
+      <label class="field-label" for="modalSwitchPw">Platoon password</label>
+      <input id="modalSwitchPw" type="password" class="input" />
 
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalSwitchBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Switch</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      <div class="button-row">
+        <button id="modalSwitchBtn" class="btn btn-primary">
+          <i data-lucide="check" aria-hidden="true"></i>
+          <span>Switch</span>
+        </button>
+        <button id="modalCancelBtn" class="btn btn-secondary">
+          <i data-lucide="x" aria-hidden="true"></i>
+          <span>Cancel</span>
+        </button>
+        <div id="modalStatus" class="status-text"></div>
       </div>
     </div>
   `);
@@ -692,7 +936,7 @@ async function switchPlatoonFlow(nextPlatoonId) {
   const modalStatus = document.getElementById("modalStatus");
   const setModalStatus = (t, e) => {
     modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+    modalStatus.className = e ? "status-text error" : "status-text";
   };
 
   document.getElementById("modalCancelBtn").addEventListener("click", () => {
@@ -731,25 +975,37 @@ async function switchPlatoonFlow(nextPlatoonId) {
 
 function addPlatoonFlow() {
   openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Add platoon</div>
+    <div class="modal-stack">
+      <div class="modal-heading">
+        <span class="modal-icon"><i data-lucide="users-round" aria-hidden="true"></i></span>
+        <div>
+          <p class="eyebrow">New unit list</p>
+          <div class="modal-title">Add platoon</div>
+        </div>
+      </div>
 
-      <label class="text-sm text-gray-300">Platoon id</label>
-      <input id="modalPlatoonId" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd" />
+      <label class="field-label" for="modalPlatoonId">Platoon id</label>
+      <input id="modalPlatoonId" type="text" class="input" placeholder="example: 2nd" />
 
-      <label class="text-sm text-gray-300">Platoon name</label>
-      <input id="modalPlatoonName" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="example: 2nd Platoon" />
+      <label class="field-label" for="modalPlatoonName">Platoon name</label>
+      <input id="modalPlatoonName" type="text" class="input" placeholder="example: 2nd Platoon" />
 
-      <label class="text-sm text-gray-300">Platoon password</label>
-      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
+      <label class="field-label" for="modalPw1">Platoon password</label>
+      <input id="modalPw1" type="password" class="input" />
 
-      <label class="text-sm text-gray-300">Confirm password</label>
-      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
+      <label class="field-label" for="modalPw2">Confirm password</label>
+      <input id="modalPw2" type="password" class="input" />
 
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalCreateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Create</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      <div class="button-row">
+        <button id="modalCreateBtn" class="btn btn-primary">
+          <i data-lucide="plus" aria-hidden="true"></i>
+          <span>Create</span>
+        </button>
+        <button id="modalCancelBtn" class="btn btn-secondary">
+          <i data-lucide="x" aria-hidden="true"></i>
+          <span>Cancel</span>
+        </button>
+        <div id="modalStatus" class="status-text"></div>
       </div>
     </div>
   `);
@@ -757,7 +1013,7 @@ function addPlatoonFlow() {
   const modalStatus = document.getElementById("modalStatus");
   const setModalStatus = (t, e) => {
     modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+    modalStatus.className = e ? "status-text error" : "status-text";
   };
 
   document.getElementById("modalCancelBtn").addEventListener("click", () => closeModal());
@@ -823,19 +1079,31 @@ function addPlatoonFlow() {
 
 function changePasswordFlow() {
   openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Change password</div>
+    <div class="modal-stack">
+      <div class="modal-heading">
+        <span class="modal-icon"><i data-lucide="key-round" aria-hidden="true"></i></span>
+        <div>
+          <p class="eyebrow">Access control</p>
+          <div class="modal-title">Change password</div>
+        </div>
+      </div>
 
-      <label class="text-sm text-gray-300">New password</label>
-      <input id="modalPw1" type="password" class="text-gray-900 px-3 py-2 rounded" />
+      <label class="field-label" for="modalPw1">New password</label>
+      <input id="modalPw1" type="password" class="input" />
 
-      <label class="text-sm text-gray-300">Confirm password</label>
-      <input id="modalPw2" type="password" class="text-gray-900 px-3 py-2 rounded" />
+      <label class="field-label" for="modalPw2">Confirm password</label>
+      <input id="modalPw2" type="password" class="input" />
 
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalUpdateBtn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Update</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      <div class="button-row">
+        <button id="modalUpdateBtn" class="btn btn-primary">
+          <i data-lucide="save" aria-hidden="true"></i>
+          <span>Update</span>
+        </button>
+        <button id="modalCancelBtn" class="btn btn-secondary">
+          <i data-lucide="x" aria-hidden="true"></i>
+          <span>Cancel</span>
+        </button>
+        <div id="modalStatus" class="status-text"></div>
       </div>
     </div>
   `);
@@ -843,7 +1111,7 @@ function changePasswordFlow() {
   const modalStatus = document.getElementById("modalStatus");
   const setModalStatus = (t, e) => {
     modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+    modalStatus.className = e ? "status-text error" : "status-text";
   };
 
   document.getElementById("modalCancelBtn").addEventListener("click", () => closeModal());
@@ -882,16 +1150,28 @@ function deletePlatoonFlow() {
   if (!platoon) return;
 
   openModal(`
-    <div class="flex flex-col gap-3">
-      <div class="text-xl font-bold">Delete platoon</div>
-      <div class="text-sm text-red-300">This will delete platoon data and delete images not used anywhere else.</div>
-      <div class="text-sm text-gray-300">Type permanently delete to confirm:</div>
-      <input id="modalConfirmText" type="text" class="text-gray-900 px-3 py-2 rounded" placeholder="permanently delete" />
+    <div class="modal-stack">
+      <div class="modal-heading">
+        <span class="modal-icon"><i data-lucide="triangle-alert" aria-hidden="true"></i></span>
+        <div>
+          <p class="eyebrow">Destructive action</p>
+          <div class="modal-title">Delete platoon</div>
+        </div>
+      </div>
+      <p class="modal-copy">This will delete platoon data and images not used anywhere else.</p>
+      <p class="modal-copy">Type permanently delete to confirm.</p>
+      <input id="modalConfirmText" type="text" class="input" placeholder="permanently delete" />
 
-      <div class="flex gap-2 items-center mt-2">
-        <button id="modalDeleteBtn" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">Delete</button>
-        <button id="modalCancelBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Cancel</button>
-        <div id="modalStatus" class="text-sm text-gray-300"></div>
+      <div class="button-row">
+        <button id="modalDeleteBtn" class="btn btn-danger">
+          <i data-lucide="trash-2" aria-hidden="true"></i>
+          <span>Delete</span>
+        </button>
+        <button id="modalCancelBtn" class="btn btn-secondary">
+          <i data-lucide="x" aria-hidden="true"></i>
+          <span>Cancel</span>
+        </button>
+        <div id="modalStatus" class="status-text"></div>
       </div>
     </div>
   `);
@@ -899,7 +1179,7 @@ function deletePlatoonFlow() {
   const modalStatus = document.getElementById("modalStatus");
   const setModalStatus = (t, e) => {
     modalStatus.textContent = t || "";
-    modalStatus.className = e ? "text-sm text-red-300" : "text-sm text-gray-300";
+    modalStatus.className = e ? "status-text error" : "status-text";
   };
 
   document.getElementById("modalCancelBtn").addEventListener("click", () => closeModal());
@@ -907,7 +1187,7 @@ function deletePlatoonFlow() {
   document.getElementById("modalDeleteBtn").addEventListener("click", async () => {
     const confirmText = document.getElementById("modalConfirmText").value.trim();
     if (confirmText !== "permanently delete") {
-      setModalStatus("You must type <i>permanently delete</i>", true);
+      setModalStatus("Type permanently delete exactly", true);
       return;
     }
 
@@ -948,11 +1228,21 @@ function signOutToSignIn() {
   loadIndex()
     .then(() => signInFlow())
     .catch(e => {
+      const message = escapeHtml(e.message || "Failed to load index.json");
       openModal(`
-        <div class="flex flex-col gap-3">
-          <div class="text-xl font-bold">Error</div>
-          <div class="text-sm text-red-300">${String(e.message || "Failed to load index.json")}</div>
-          <button id="modalCloseBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded mt-2">Close</button>
+        <div class="modal-stack">
+          <div class="modal-heading">
+            <span class="modal-icon"><i data-lucide="circle-alert" aria-hidden="true"></i></span>
+            <div>
+              <p class="eyebrow">Connection issue</p>
+              <div class="modal-title">Error</div>
+            </div>
+          </div>
+          <div class="status-text error">${message}</div>
+          <button id="modalCloseBtn" class="btn btn-secondary">
+            <i data-lucide="x" aria-hidden="true"></i>
+            <span>Close</span>
+          </button>
         </div>
       `);
       const btn = document.getElementById("modalCloseBtn");
@@ -967,11 +1257,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadIndex();
   } catch (e) {
+    const message = escapeHtml(e.message || "Failed to load index.json");
     openModal(`
-      <div class="flex flex-col gap-3">
-        <div class="text-xl font-bold">Error</div>
-        <div class="text-sm text-red-300">${String(e.message || "Failed to load index.json")}</div>
-        <button id="modalCloseBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded mt-2">Close</button>
+      <div class="modal-stack">
+        <div class="modal-heading">
+          <span class="modal-icon"><i data-lucide="circle-alert" aria-hidden="true"></i></span>
+          <div>
+            <p class="eyebrow">Connection issue</p>
+            <div class="modal-title">Error</div>
+          </div>
+        </div>
+        <div class="status-text error">${message}</div>
+        <button id="modalCloseBtn" class="btn btn-secondary">
+          <i data-lucide="x" aria-hidden="true"></i>
+          <span>Close</span>
+        </button>
       </div>
     `);
     const btn = document.getElementById("modalCloseBtn");
@@ -1000,6 +1300,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   const addItemBtn = document.getElementById("addItemBtn");
   if (addItemBtn) {
     addItemBtn.addEventListener("click", () => addItem());
+  }
+
+  const scanItemBtn = document.getElementById("scanItemBtn");
+  const adminScanInput = document.getElementById("adminScanInput");
+  if (scanItemBtn && adminScanInput) {
+    scanItemBtn.addEventListener("click", () => adminScanInput.click());
+    adminScanInput.addEventListener("change", e => {
+      const file = e.target.files && e.target.files[0];
+      scanItemToDraft(file);
+      e.target.value = "";
+    });
   }
 
   const signOutBtn = document.getElementById("signOutBtn");

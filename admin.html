@@ -4,40 +4,85 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Inventory Admin</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen p-4">
-  <div class="max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold mb-4">Inventory Admin</h1>
+<body class="app-body">
+  <div class="app-frame admin-frame">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Admin editor</p>
+        <h1>Inventory Admin</h1>
+        <p class="header-copy">Update platoon equipment, photos, locations, and counts.</p>
+      </div>
+      <div class="header-actions">
+        <a class="btn btn-secondary" href="index.html">
+          <i data-lucide="clipboard-list" aria-hidden="true"></i>
+          <span>View inventory</span>
+        </a>
+      </div>
+    </header>
 
     <div id="appPanel" class="hidden">
-      <div class="sticky top-0 z-10 bg-gray-900 pt-2 pb-3">
-        <div class="border border-gray-700 rounded p-3 flex flex-wrap gap-2 items-center">
-          <select id="platoonSelect" class="text-gray-900 px-3 py-2 rounded"></select>
+      <div class="admin-toolbar">
+        <div class="toolbar-inner">
+          <div class="toolbar-group">
+            <select id="platoonSelect" class="select toolbar-select" aria-label="Platoon"></select>
+            <button id="saveBtn" class="btn btn-primary">
+              <i data-lucide="save" aria-hidden="true"></i>
+              <span>Save</span>
+            </button>
+            <button id="addItemBtn" class="btn btn-accent">
+              <i data-lucide="plus" aria-hidden="true"></i>
+              <span>Add item</span>
+            </button>
+            <input id="adminScanInput" class="hidden" type="file" accept="image/*" capture="environment" />
+            <button id="scanItemBtn" class="btn btn-secondary">
+              <i data-lucide="scan-text" aria-hidden="true"></i>
+              <span>Scan item</span>
+            </button>
+          </div>
 
-          <button id="addPlatoonBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Add platoon</button>
-          <button id="changePwBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Change password</button>
+          <div class="toolbar-group">
+            <details class="action-menu">
+              <summary class="btn btn-secondary">
+                <i data-lucide="more-horizontal" aria-hidden="true"></i>
+                <span>More</span>
+              </summary>
+              <div class="menu-panel">
+                <button id="addPlatoonBtn" class="btn btn-secondary">
+                  <i data-lucide="users-round" aria-hidden="true"></i>
+                  <span>Add platoon</span>
+                </button>
+                <button id="changePwBtn" class="btn btn-secondary">
+                  <i data-lucide="key-round" aria-hidden="true"></i>
+                  <span>Change password</span>
+                </button>
+                <button id="signOutBtn" class="btn btn-secondary">
+                  <i data-lucide="log-out" aria-hidden="true"></i>
+                  <span>Sign out</span>
+                </button>
+                <button id="deletePlatoonBtn" class="btn btn-danger-soft">
+                  <i data-lucide="trash-2" aria-hidden="true"></i>
+                  <span>Delete platoon</span>
+                </button>
+              </div>
+            </details>
+          </div>
 
-          <button id="saveBtn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">Save</button>
-          <button id="addItemBtn" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">Add item</button>
-          
-          <button id="signOutBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Sign out</button>
-
-          <button id="deletePlatoonBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">Delete platoon</button>
-
-
-          <div id="status" class="text-sm text-gray-300"></div>
+          <div id="status" class="status-text" role="status" aria-live="polite"></div>
         </div>
       </div>
 
-      <div id="itemsContainer" class="space-y-8 mt-4"></div>
+      <div id="itemsContainer" class="admin-item-list"></div>
     </div>
   </div>
 
-  <div id="modalBackdrop" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center p-4">
-    <div id="modalPanel" class="w-full max-w-xl border border-gray-700 rounded bg-gray-900 p-4"></div>
+  <div id="modalBackdrop" class="modal-backdrop hidden">
+    <div id="modalPanel" class="modal-panel"></div>
   </div>
 
+  <script src="ocr.js"></script>
   <script src="admin.js"></script>
 </body>
 </html>

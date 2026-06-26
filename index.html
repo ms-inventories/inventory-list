@@ -4,45 +4,85 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Equipment Inventory</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
-  <div id="passwordPrompt" class="flex flex-col items-center justify-center h-screen p-4">
-    <h1 class="text-2xl mb-6">Equipment Inventory</h1>
+<body class="app-body">
+  <div id="passwordPrompt" class="auth-screen">
+    <section class="auth-card" aria-labelledby="loginTitle">
+      <p class="eyebrow">Guard equipment accountability</p>
+      <h1 id="loginTitle">Equipment Inventory</h1>
+      <p class="auth-copy">Select your platoon and open the latest equipment list.</p>
 
-    <div class="w-full max-w-md space-y-3">
-      <label class="text-sm text-gray-300">Platoon</label>
-      <select id="platoonSelect" class="w-full text-gray-900 px-3 py-2 rounded"></select>
+      <div class="form-stack">
+        <label class="field-label" for="platoonSelect">Platoon</label>
+        <select id="platoonSelect" class="select"></select>
 
-      <label class="text-sm text-gray-300">Password</label>
-      <input
-        type="password"
-        id="passwordInput"
-        class="w-full text-gray-900 px-3 py-2 rounded focus:outline-none"
-        placeholder="Password..."
-      />
+        <label class="field-label" for="passwordInput">Password</label>
+        <input
+          type="password"
+          id="passwordInput"
+          class="input"
+          placeholder="Password..."
+        />
 
-      <button
-        id="submitBtn"
-        class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-      >
-        Submit
-      </button>
+        <button
+          id="submitBtn"
+          class="btn btn-primary btn-full"
+        >
+          <i data-lucide="log-in" aria-hidden="true"></i>
+          <span>Open inventory</span>
+        </button>
 
-      <div id="loginStatus" class="text-sm text-gray-300"></div>
-    </div>
+        <div id="loginStatus" class="status-text" role="status" aria-live="polite"></div>
+      </div>
+    </section>
   </div>
 
-  <div id="mainContent" class="hidden p-4 max-w-6xl mx-auto">
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-8">
-      <h1 id="pageTitle" class="text-3xl font-bold">Equipment Inventory</h1>
-      <button id="changePlatoonBtn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded">
-        Change platoon
-      </button>
-    </div>
-    <div id="itemsContainer" class="space-y-8"></div>
+  <div id="mainContent" class="hidden app-frame">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Platoon inventory</p>
+        <h1 id="pageTitle">Equipment Inventory</h1>
+        <p class="header-copy">Fast lookup for what is on hand and where it is staged.</p>
+      </div>
+      <div class="header-actions">
+        <label class="search-wrap" for="searchInput">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <input id="searchInput" class="input search-input" type="search" placeholder="Search packet item, LIN, NSN..." />
+        </label>
+        <input id="packetScanInput" class="hidden" type="file" accept="image/*" capture="environment" />
+        <button id="scanPacketBtn" class="btn btn-accent">
+          <i data-lucide="scan-text" aria-hidden="true"></i>
+          <span>Scan packet</span>
+        </button>
+        <button id="changePlatoonBtn" class="btn btn-secondary">
+          <i data-lucide="repeat-2" aria-hidden="true"></i>
+          <span>Change platoon</span>
+        </button>
+      </div>
+    </header>
+    <div id="scanStatus" class="status-text scan-status" role="status" aria-live="polite"></div>
+
+    <section class="summary-strip" aria-label="Inventory summary">
+      <div class="summary-item">
+        <span id="totalItemsCount" class="summary-value">0</span>
+        <span class="summary-label">Items tracked</span>
+      </div>
+      <div class="summary-item">
+        <span id="visibleItemsCount" class="summary-value">0</span>
+        <span class="summary-label">Currently shown</span>
+      </div>
+      <div class="summary-item">
+        <span id="imageItemsCount" class="summary-value">0</span>
+        <span class="summary-label">With photos</span>
+      </div>
+    </section>
+
+    <div id="itemsContainer" class="inventory-grid"></div>
   </div>
 
+  <script src="ocr.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
