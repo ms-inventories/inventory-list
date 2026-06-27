@@ -83,13 +83,16 @@ function getImageValues(item) {
   const imageField = (item.fields || []).find(isImageField);
   if (!imageField) return [];
   const values = Array.isArray(imageField.value) ? imageField.value : [imageField.value];
-  return values.map(v => String(v || "").trim()).filter(Boolean);
+  return values
+    .map(v => String(v || "").trim())
+    .filter(value => value && !isPlaceholderImageSrc(value));
 }
 
 function getDetailFields(item) {
   return (item.fields || []).filter(field => {
     if (isImageField(field)) return false;
-    return String(field.label || "").toLowerCase() !== "common name";
+    const label = String(field.label || "").toLowerCase();
+    return label !== "common name" && label !== "location";
   });
 }
 
@@ -105,6 +108,11 @@ function normalizeSearchValue(value) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function isPlaceholderImageSrc(src) {
+  const value = String(src || "").toLowerCase();
+  return value.includes("placehold.co");
 }
 
 function getSearchText(item) {
@@ -260,6 +268,24 @@ function buildItemCard(item) {
   const body = document.createElement("div");
   body.className = "card-body";
 
+  const location = getFieldValue(item, "Location");
+  if (location) {
+    const caption = document.createElement("div");
+    caption.className = "location-caption";
+
+    const captionLabel = document.createElement("span");
+    captionLabel.className = "location-caption-label";
+    captionLabel.textContent = "Location";
+
+    const captionValue = document.createElement("span");
+    captionValue.className = "location-caption-value";
+    captionValue.textContent = location;
+
+    caption.appendChild(captionLabel);
+    caption.appendChild(captionValue);
+    body.appendChild(caption);
+  }
+
   const titleRow = document.createElement("div");
   titleRow.className = "card-title-row";
 
@@ -283,15 +309,7 @@ function buildItemCard(item) {
     titleBlock.appendChild(packetMeta);
   }
 
-  const location = getFieldValue(item, "Location");
   titleRow.appendChild(titleBlock);
-
-  if (location) {
-    const badge = document.createElement("span");
-    badge.className = "item-badge";
-    badge.textContent = location;
-    titleRow.appendChild(badge);
-  }
 
   body.appendChild(titleRow);
   body.appendChild(buildDetailGrid(item));

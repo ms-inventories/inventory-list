@@ -373,6 +373,30 @@ button {
   padding: 20px;
 }
 
+.location-caption {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dec28f;
+  border-radius: var(--radius);
+  background: #fff7e8;
+  color: #5f3f13;
+  line-height: 1.35;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.location-caption-label {
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.location-caption-value {
+  overflow-wrap: anywhere;
+  font-size: 0.94rem;
+  font-weight: 780;
+}
+
 .card-title-row {
   display: flex;
   align-items: flex-start;
@@ -398,17 +422,6 @@ button {
 
 .title-block {
   min-width: 0;
-}
-
-.item-badge {
-  flex: 0 0 auto;
-  border: 1px solid #dec28f;
-  border-radius: 999px;
-  background: #fff7e8;
-  color: #754c14;
-  font-size: 0.74rem;
-  font-weight: 850;
-  padding: 5px 9px;
 }
 
 .detail-grid {
