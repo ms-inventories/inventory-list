@@ -36,10 +36,15 @@
               <i data-lucide="plus" aria-hidden="true"></i>
               <span>Add item</span>
             </button>
-            <input id="adminScanInput" class="hidden" type="file" accept="application/pdf,.pdf,image/*" />
+            <input id="adminCameraInput" class="hidden" type="file" accept="image/*" capture="environment" />
+            <input id="adminFileInput" class="hidden" type="file" accept="application/pdf,.pdf" />
             <button id="scanItemBtn" class="btn btn-secondary">
               <i data-lucide="scan-text" aria-hidden="true"></i>
-              <span>Scan item</span>
+              <span>Scan paper</span>
+            </button>
+            <button id="uploadDocBtn" class="btn btn-secondary">
+              <i data-lucide="file-up" aria-hidden="true"></i>
+              <span>Upload PDF</span>
             </button>
           </div>
 

@@ -501,8 +501,8 @@ function scannedItemDraftFlow(parsed) {
   });
 }
 
-async function scanItemToDraft(file) {
-  const scanBtn = document.getElementById("scanItemBtn");
+async function scanItemToDraft(file, activeButton) {
+  const scanBtn = activeButton || document.getElementById("scanItemBtn");
   if (!file) return;
 
   try {
@@ -1335,12 +1335,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   const scanItemBtn = document.getElementById("scanItemBtn");
-  const adminScanInput = document.getElementById("adminScanInput");
-  if (scanItemBtn && adminScanInput) {
-    scanItemBtn.addEventListener("click", () => adminScanInput.click());
-    adminScanInput.addEventListener("change", e => {
+  const uploadDocBtn = document.getElementById("uploadDocBtn");
+  const adminCameraInput = document.getElementById("adminCameraInput");
+  const adminFileInput = document.getElementById("adminFileInput");
+  if (scanItemBtn && adminCameraInput) {
+    scanItemBtn.addEventListener("click", () => adminCameraInput.click());
+    adminCameraInput.addEventListener("change", e => {
       const file = e.target.files && e.target.files[0];
-      scanItemToDraft(file);
+      scanItemToDraft(file, scanItemBtn);
+      e.target.value = "";
+    });
+  }
+  if (uploadDocBtn && adminFileInput) {
+    uploadDocBtn.addEventListener("click", () => adminFileInput.click());
+    adminFileInput.addEventListener("change", e => {
+      const file = e.target.files && e.target.files[0];
+      scanItemToDraft(file, uploadDocBtn);
       e.target.value = "";
     });
   }

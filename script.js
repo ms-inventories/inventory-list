@@ -477,8 +477,8 @@ function resetToLogin() {
   refreshIcons();
 }
 
-async function scanPacketForSearch(file) {
-  const scanBtn = document.getElementById("scanPacketBtn");
+async function scanPacketForSearch(file, activeButton) {
+  const scanBtn = activeButton || document.getElementById("scanPacketBtn");
   const searchInput = document.getElementById("searchInput");
 
   if (!file || !searchInput) return;
@@ -513,11 +513,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (e.key === "Enter") attemptLogin();
   });
   document.getElementById("scanPacketBtn").addEventListener("click", () => {
-    document.getElementById("packetScanInput").click();
+    document.getElementById("packetCameraInput").click();
   });
-  document.getElementById("packetScanInput").addEventListener("change", e => {
+  document.getElementById("uploadPacketBtn").addEventListener("click", () => {
+    document.getElementById("packetFileInput").click();
+  });
+  document.getElementById("packetCameraInput").addEventListener("change", e => {
     const file = e.target.files && e.target.files[0];
-    scanPacketForSearch(file);
+    scanPacketForSearch(file, document.getElementById("scanPacketBtn"));
+    e.target.value = "";
+  });
+  document.getElementById("packetFileInput").addEventListener("change", e => {
+    const file = e.target.files && e.target.files[0];
+    scanPacketForSearch(file, document.getElementById("uploadPacketBtn"));
     e.target.value = "";
   });
   document.addEventListener("keydown", e => {
