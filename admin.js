@@ -396,6 +396,7 @@ function scannedItemDraftFlow(parsed) {
   const safeLine = escapeHtml(parsed.line || "");
   const safeLin = escapeHtml(parsed.lin || "");
   const safeArmyName = escapeHtml(parsed.armyName || parsed.line || "");
+  const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
 
   openModal(`
     <div class="modal-stack">
@@ -407,6 +408,10 @@ function scannedItemDraftFlow(parsed) {
         </div>
       </div>
       <p class="modal-copy">Check the OCR result, then add the friendly name your squad will actually recognize.</p>
+      <div id="modalCandidateWrap" class="modal-stack hidden">
+        <p class="modal-copy">I found multiple item rows. Tap the one you want to add.</p>
+        <div id="modalCandidateList" class="candidate-list"></div>
+      </div>
 
       <label class="field-label" for="modalOcrLine">OCR line</label>
       <textarea id="modalOcrLine" class="input ocr-textarea">${safeLine}</textarea>
@@ -436,6 +441,33 @@ function scannedItemDraftFlow(parsed) {
       </div>
     </div>
   `);
+
+  const fillDraftFields = nextParsed => {
+    const ocrInput = document.getElementById("modalOcrLine");
+    const linInput = document.getElementById("modalLin");
+    const armyNameInput = document.getElementById("modalArmyName");
+    if (ocrInput) ocrInput.value = nextParsed.line || "";
+    if (linInput) linInput.value = nextParsed.lin || "";
+    if (armyNameInput) armyNameInput.value = nextParsed.armyName || nextParsed.line || "";
+  };
+
+  if (candidates.length > 1) {
+    const wrap = document.getElementById("modalCandidateWrap");
+    const list = document.getElementById("modalCandidateList");
+    if (wrap && list) {
+      wrap.classList.remove("hidden");
+      candidates.forEach(candidate => {
+        const button = document.createElement("button");
+        button.className = "btn btn-secondary candidate-btn";
+        button.type = "button";
+        button.textContent = candidate.line;
+        button.addEventListener("click", () => {
+          fillDraftFields(parsePacketLine(candidate.line));
+        });
+        list.appendChild(button);
+      });
+    }
+  }
 
   const modalStatus = document.getElementById("modalStatus");
   const setModalStatus = (t, e) => {
@@ -475,12 +507,12 @@ async function scanItemToDraft(file) {
 
   try {
     if (scanBtn) scanBtn.disabled = true;
-    setStatus("Reading packet photo...", false);
-    const parsed = await recognizePacketImage(file, setStatus);
+    setStatus("Reading packet file...", false);
+    const parsed = await recognizePacketFile(file, setStatus);
     setStatus("Packet text found", false);
     scannedItemDraftFlow(parsed);
   } catch (e) {
-    setStatus(e.message || "Could not read that photo", true);
+    setStatus(e.message || "Could not read that file", true);
   } finally {
     if (scanBtn) scanBtn.disabled = false;
   }

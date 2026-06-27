@@ -146,6 +146,88 @@ function closeImageLightbox() {
   if (existing) existing.remove();
 }
 
+function closeScanPicker() {
+  const existing = document.getElementById("scanPicker");
+  if (existing) existing.remove();
+}
+
+function searchPacketLine(line) {
+  const searchInput = document.getElementById("searchInput");
+  if (!searchInput) return;
+
+  searchInput.value = line || "";
+  buildItems();
+  setScanStatus(line ? `Searched: ${line}` : "");
+}
+
+function openScanCandidatePicker(parsed) {
+  const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+  if (candidates.length <= 1) {
+    searchPacketLine(parsed.line);
+    return;
+  }
+
+  closeScanPicker();
+
+  const backdrop = document.createElement("div");
+  backdrop.id = "scanPicker";
+  backdrop.className = "modal-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+
+  const panel = document.createElement("div");
+  panel.className = "modal-panel";
+
+  const stack = document.createElement("div");
+  stack.className = "modal-stack";
+  stack.innerHTML = `
+    <div class="modal-heading">
+      <span class="modal-icon"><i data-lucide="scan-text" aria-hidden="true"></i></span>
+      <div>
+        <p class="eyebrow">Document scan</p>
+        <div class="modal-title">Pick item row</div>
+      </div>
+    </div>
+    <p class="modal-copy">I found several possible rows. Choose the one from the packet, or scan a closer single row if this list looks wrong.</p>
+  `;
+
+  const list = document.createElement("div");
+  list.className = "candidate-list";
+
+  candidates.forEach(candidate => {
+    const button = document.createElement("button");
+    button.className = "btn btn-secondary candidate-btn";
+    button.type = "button";
+    button.textContent = candidate.line;
+    button.addEventListener("click", () => {
+      searchPacketLine(candidate.line);
+      closeScanPicker();
+    });
+    list.appendChild(button);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "button-row";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "btn btn-secondary";
+  closeBtn.type = "button";
+  closeBtn.innerHTML = '<i data-lucide="x" aria-hidden="true"></i><span>Cancel</span>';
+  closeBtn.addEventListener("click", closeScanPicker);
+
+  actions.appendChild(closeBtn);
+  stack.appendChild(list);
+  stack.appendChild(actions);
+  panel.appendChild(stack);
+  backdrop.appendChild(panel);
+  backdrop.addEventListener("click", e => {
+    if (e.target === backdrop) closeScanPicker();
+  });
+
+  document.body.appendChild(backdrop);
+  refreshIcons();
+}
+
 function openImageLightbox(src, alt) {
   closeImageLightbox();
 
@@ -403,13 +485,11 @@ async function scanPacketForSearch(file) {
 
   try {
     if (scanBtn) scanBtn.disabled = true;
-    setScanStatus("Reading packet photo...");
-    const parsed = await recognizePacketImage(file, setScanStatus);
-    searchInput.value = parsed.line;
-    buildItems();
-    setScanStatus(`Searched: ${parsed.line}`);
+    setScanStatus("Reading packet file...");
+    const parsed = await recognizePacketFile(file, setScanStatus);
+    openScanCandidatePicker(parsed);
   } catch (e) {
-    setScanStatus(e.message || "Could not read that photo", true);
+    setScanStatus(e.message || "Could not read that file", true);
   } finally {
     if (scanBtn) scanBtn.disabled = false;
   }
@@ -441,6 +521,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     e.target.value = "";
   });
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeImageLightbox();
+    if (e.key === "Escape") {
+      closeImageLightbox();
+      closeScanPicker();
+    }
   });
 });
