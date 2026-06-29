@@ -303,6 +303,63 @@ function getSuggestedSearchQuery(item) {
     || "";
 }
 
+function buildItemCopyText(item) {
+  const commonName = getFieldValue(item, "Common Name");
+  const armyName = getFieldValue(item, "Army Name") || getFieldValue(item, "Nomenclature");
+  const lin = getFieldValue(item, "LIN");
+  const nsn = getFieldValue(item, "NSN");
+  const location = getFieldValue(item, "Location");
+  const title = commonName || item.title || armyName || "(Untitled)";
+  const lines = [title];
+
+  if (lin) lines.push(`LIN: ${lin}`);
+  if (armyName && normalizeSearchValue(armyName) !== normalizeSearchValue(title)) {
+    lines.push(`Army name: ${armyName}`);
+  }
+  if (nsn) lines.push(`NSN: ${nsn}`);
+  if (location) lines.push(`Location: ${location}`);
+
+  return lines.join("\n");
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    if (!document.execCommand("copy")) throw new Error("Copy command failed");
+  } finally {
+    textarea.remove();
+  }
+}
+
+function buildCopyItemButton(item, displayTitle) {
+  const button = document.createElement("button");
+  button.className = "btn btn-secondary btn-small copy-item-btn";
+  button.type = "button";
+  button.innerHTML = '<i data-lucide="copy" aria-hidden="true"></i><span>Copy</span>';
+  button.addEventListener("click", async () => {
+    try {
+      await copyTextToClipboard(buildItemCopyText(item));
+      setScanStatus(`Copied: ${displayTitle}`);
+    } catch (e) {
+      setScanStatus("Could not copy item info", true);
+    }
+  });
+
+  return button;
+}
+
 function updateSummary(total, visible, withPhotos) {
   const totalEl = document.getElementById("totalItemsCount");
   const visibleEl = document.getElementById("visibleItemsCount");
@@ -564,6 +621,7 @@ function buildItemCard(item) {
   }
 
   titleRow.appendChild(titleBlock);
+  titleRow.appendChild(buildCopyItemButton(item, displayTitle));
 
   body.appendChild(titleRow);
   body.appendChild(buildDetailGrid(item));

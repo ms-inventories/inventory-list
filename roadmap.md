@@ -57,6 +57,7 @@ For the current mission, the highest-value work is:
 
 - 2026-06-29: Scan candidate pickers now show parsed MPO, LIN, Army name, and confidence so users can review noisy packet results before choosing a row.
 - 2026-06-29: Viewer search now shows closest-match suggestions when a strict packet search returns no exact results.
+- 2026-06-29: Result cards now have a one-tap copy action for friendly name, LIN, Army name, NSN, and location.
 
 ## Phase 1: Make Packet Lookup Excellent
 

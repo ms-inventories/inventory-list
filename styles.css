@@ -424,6 +424,10 @@ button {
   min-width: 0;
 }
 
+.copy-item-btn {
+  flex: 0 0 auto;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -998,6 +1002,15 @@ button {
   .summary-label {
     font-size: 0.68rem;
     line-height: 1.15;
+  }
+
+  .card-title-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .copy-item-btn {
+    width: 100%;
   }
 
   .header-actions,
