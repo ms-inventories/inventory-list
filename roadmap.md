@@ -24,6 +24,23 @@ Current architecture:
   - PDF.js for text extraction from clean PDFs.
 - The data model is flexible field arrays, now including `LIN`, `Army Name`, `Common Name`, `NSN`, `Description`, `Location`, quantity fields, and images.
 
+## Packet Variability Assumptions
+
+Do not assume every supply packet looks like the current sample.
+
+Expected weirdness:
+
+- Different units may export slightly different hand receipt layouts.
+- Column names and column order may move.
+- Some pages may include embedded photos, logos, seals, signatures, stamps, or extra headers.
+- Some PDFs may be real text PDFs; others may be scanned image PDFs.
+- Some pages may be rotated, skewed, cropped, low contrast, wrinkled, or partially blocked by hands/clips.
+- Handwritten notes may appear near rows but should not be required for the app to work.
+- OCR may split one item row across multiple lines or merge two rows together.
+- The same item may appear by LIN, NSN, Army nomenclature, common name, or a shortened packet description.
+
+Design implication: scanning should behave like a review/import wizard. It should extract likely candidates, show confidence and editable parsed fields, and make it easy to correct or ignore bad rows. It should not silently create records from a single guessed parse unless the user confirms it.
+
 ## Recommendation
 
 Do not move on-prem or build full auth yet unless there is a concrete requirement: sensitive data, disconnected local network use, command policy, auditability, or multiple editors who need accountable logins.
@@ -46,6 +63,15 @@ Features:
   - Show likely packet rows grouped by page.
   - Show parsed `LIN`, `Army Name`, and `OH Qty` under each candidate row.
   - Add a "search this row" and "create admin draft" action from the same picker.
+- Make scanning layout-tolerant:
+  - Treat embedded photos and stamps as noise, not failure.
+  - Ignore obvious document headers, logos, page numbers, signatures, and notes.
+  - Allow users to crop/select a page region when a full-page scan is noisy.
+  - Keep the one-line scan path as a fallback for badly formatted pages.
+- Add an import review screen:
+  - Show extracted candidates with confidence indicators.
+  - Let the user edit parsed fields before searching or creating drafts.
+  - Allow "ignore this row" so photos/headers/false positives do not pollute results.
 - Add alias matching:
   - Store search aliases such as `CROWS`, `turret`, `M153`.
   - Search against `Army Name`, `Common Name`, `LIN`, `NSN`, aliases, description, and location.
@@ -61,6 +87,7 @@ Features:
 Acceptance criteria:
 
 - A user can scan a full paper page, pick the correct row, and get the item result.
+- If a page contains embedded photos or a slightly different table layout, the app still surfaces plausible rows or offers a clean fallback.
 - A user can search either `J00697`, `JOINT CHMCL AGENT: DETECTOR`, or `chem detector` and reach the same item.
 - Long locations never overlap item titles or photos.
 
@@ -87,6 +114,8 @@ Features:
   - Upload/scan page.
   - Select multiple extracted rows.
   - Create draft items for each selected row.
+  - Review and correct parsed fields before save.
+  - Save ignored rows so the same false positives do not reappear during the same import session.
 - Add image compression before upload:
   - Resize large phone photos client-side.
   - Keep uploads fast and reduce S3/storage cost.
@@ -267,18 +296,20 @@ Potential stack:
 
 Do not rewrite just for style. The current static app is still valid until workflow complexity forces a framework.
 
-## Suggested Next 10 Issues
+## Suggested Next 12 Issues
 
-1. Add item quality indicators and admin filters for missing photo/location/common name.
-2. Add aliases field and improve search ranking.
-3. Improve packet candidate rows to parse and display `MPO`, `LIN`, `Army Name`, `NSN`, and `OH Qty`.
-4. Add bulk draft creation from packet scan/PDF.
-5. Add client-side image compression before upload.
-6. Add inventory session mode with `Found`, `Missing`, `Mismatch`, and notes.
-7. Add CSV export for inventory session results.
-8. Add JSON backup snapshots and restore UI.
-9. Add duplicate detection warnings in admin.
-10. Add a real README with deployment, data format, admin key, and recovery notes.
+1. Add layout-tolerant packet parsing with row confidence and page grouping.
+2. Add a crop/region-select fallback for noisy physical paper scans.
+3. Add item quality indicators and admin filters for missing photo/location/common name.
+4. Add aliases field and improve search ranking.
+5. Improve packet candidate rows to parse and display `MPO`, `LIN`, `Army Name`, `NSN`, and `OH Qty`.
+6. Add bulk draft creation from packet scan/PDF with review and ignore controls.
+7. Add client-side image compression before upload.
+8. Add inventory session mode with `Found`, `Missing`, `Mismatch`, and notes.
+9. Add CSV export for inventory session results.
+10. Add JSON backup snapshots and restore UI.
+11. Add duplicate detection warnings in admin.
+12. Add a real README with deployment, data format, admin key, and recovery notes.
 
 ## Technical Debt
 
@@ -287,6 +318,7 @@ Do not rewrite just for style. The current static app is still valid until workf
 - Data is a flexible field array, which is convenient but makes validation/search harder.
 - Viewer password is stored in the public inventory JSON.
 - No automated tests currently cover search parsing, OCR candidate extraction, or admin save payloads.
+- OCR/document parsing currently depends on heuristics and should gain fixtures for multiple hand receipt layouts.
 - CDN dependencies are unpinned at the integrity level.
 - `package-lock.json` is untracked and should either be removed or committed only if a real package manifest is added.
 - README is empty.
@@ -297,9 +329,9 @@ Stay on GitHub Pages + S3/Lambda for now.
 
 Build the next few features around field use:
 
-1. Better scan row selection and parsing.
+1. Better scan row selection and layout-tolerant parsing.
 2. Admin data quality filters.
-3. Bulk packet import into draft items.
+3. Bulk packet import into draft items with review/ignore controls.
 4. Inventory session mode.
 5. Backup/version history.
 
