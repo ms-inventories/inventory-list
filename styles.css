@@ -469,6 +469,78 @@ button {
   text-align: center;
 }
 
+.suggestion-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.suggestion-heading {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 8px;
+}
+
+.suggestion-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+  box-shadow: var(--shadow-soft);
+}
+
+.suggestion-btn:hover,
+.suggestion-btn:focus-visible {
+  border-color: #8e967e;
+  outline: none;
+}
+
+.suggestion-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  color: var(--olive);
+}
+
+.suggestion-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.suggestion-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.suggestion-main {
+  font-weight: 860;
+  line-height: 1.25;
+}
+
+.suggestion-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 720;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .admin-frame {
   width: min(1240px, calc(100% - 32px));
 }

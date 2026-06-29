@@ -6,6 +6,31 @@ let indexData = null;
 let selectedPlatoon = null;
 let inventory = null;
 
+const SEARCH_NOISE_TERMS = new Set([
+  "buom",
+  "ciic",
+  "date",
+  "description",
+  "dla",
+  "ea",
+  "from",
+  "lotno",
+  "mpo",
+  "nsn",
+  "officer",
+  "oh",
+  "page",
+  "qty",
+  "regno",
+  "responsible",
+  "serno",
+  "sysno",
+  "time",
+  "to",
+  "uic",
+  "ui"
+]);
+
 function refreshIcons() {
   if (window.lucide && typeof window.lucide.createIcons === "function") {
     window.lucide.createIcons();
@@ -150,12 +175,132 @@ function getSearchText(item) {
   return `${item.title || ""} ${fieldText}`;
 }
 
+function getSearchTerms(query) {
+  return normalizeSearchValue(query)
+    .split(" ")
+    .filter(term => term.length > 1 && !SEARCH_NOISE_TERMS.has(term));
+}
+
 function itemMatchesSearch(item, query) {
-  const terms = normalizeSearchValue(query).split(" ").filter(term => term.length > 1);
-  if (!terms.length) return true;
+  const normalizedQuery = normalizeSearchValue(query);
+  const terms = getSearchTerms(query);
+  if (!normalizedQuery) return true;
+  if (!terms.length) return false;
 
   const haystack = normalizeSearchValue(getSearchText(item));
   return terms.every(term => haystack.includes(term));
+}
+
+function getItemSearchParts(item) {
+  const parts = {
+    title: normalizeSearchValue(item.title),
+    commonName: normalizeSearchValue(getFieldValue(item, "Common Name")),
+    armyName: normalizeSearchValue(getFieldValue(item, "Army Name") || getFieldValue(item, "Nomenclature")),
+    lin: normalizeSearchValue(getFieldValue(item, "LIN")),
+    nsn: normalizeSearchValue(getFieldValue(item, "NSN")),
+    description: normalizeSearchValue(getFieldValue(item, "Description")),
+    location: normalizeSearchValue(getFieldValue(item, "Location")),
+    all: normalizeSearchValue(getSearchText(item))
+  };
+  parts.tokens = parts.all.split(" ").filter(term => term.length > 1);
+  return parts;
+}
+
+function getConsonantKey(value) {
+  return normalizeSearchValue(value)
+    .replace(/\s+/g, "")
+    .split("")
+    .filter((char, index) => /\d/.test(char) || index === 0 || !/[aeiou]/.test(char))
+    .join("");
+}
+
+function getVariantTokenScore(term, tokens) {
+  if (term.length < 4) return 0;
+  const termKey = getConsonantKey(term);
+
+  for (const token of tokens) {
+    if (token.length < 4) continue;
+    if (token.startsWith(term) || term.startsWith(token)) return 14;
+
+    const tokenKey = getConsonantKey(token);
+    if (termKey.length >= 4 && termKey === tokenKey) return 12;
+  }
+
+  return 0;
+}
+
+function fieldContainsTerm(fieldValue, term) {
+  return fieldValue && fieldValue.includes(term);
+}
+
+function scoreSuggestedItem(item, terms) {
+  const parts = getItemSearchParts(item);
+  let score = 0;
+  let matchedTerms = 0;
+
+  terms.forEach(term => {
+    let termScore = 0;
+
+    if (parts.lin && (parts.lin === term || parts.lin.includes(term) || term.includes(parts.lin))) {
+      termScore = Math.max(termScore, 120);
+    }
+
+    if (parts.nsn && (parts.nsn === term || parts.nsn.includes(term) || term.includes(parts.nsn))) {
+      termScore = Math.max(termScore, 95);
+    }
+
+    if (fieldContainsTerm(parts.commonName, term) || fieldContainsTerm(parts.title, term)) {
+      termScore = Math.max(termScore, 58);
+    }
+
+    if (fieldContainsTerm(parts.armyName, term)) {
+      termScore = Math.max(termScore, 48);
+    }
+
+    if (fieldContainsTerm(parts.description, term) || fieldContainsTerm(parts.location, term)) {
+      termScore = Math.max(termScore, 24);
+    }
+
+    if (fieldContainsTerm(parts.all, term)) {
+      termScore = Math.max(termScore, 16);
+    }
+
+    termScore = Math.max(termScore, getVariantTokenScore(term, parts.tokens));
+
+    if (termScore > 0) {
+      score += termScore;
+      matchedTerms += 1;
+    }
+  });
+
+  if (!matchedTerms) return 0;
+
+  score += matchedTerms * 12;
+  if (matchedTerms >= Math.ceil(terms.length * 0.4)) score += 28;
+  if (matchedTerms === terms.length) score += 35;
+
+  return score;
+}
+
+function getClosestItemMatches(items, query, limit) {
+  const terms = getSearchTerms(query);
+  if (!terms.length) return [];
+
+  return items
+    .map(item => ({ item, score: scoreSuggestedItem(item, terms) }))
+    .filter(result => result.score >= 32)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit || 4)
+    .map(result => result.item);
+}
+
+function getSuggestedSearchQuery(item) {
+  return getFieldValue(item, "Common Name")
+    || item.title
+    || getFieldValue(item, "LIN")
+    || getFieldValue(item, "Army Name")
+    || getFieldValue(item, "Nomenclature")
+    || "";
 }
 
 function updateSummary(total, visible, withPhotos) {
@@ -427,23 +572,89 @@ function buildItemCard(item) {
   return itemCard;
 }
 
+function buildSuggestionList(suggestions) {
+  const panel = document.createElement("div");
+  panel.className = "suggestion-panel";
+
+  const heading = document.createElement("p");
+  heading.className = "suggestion-heading";
+  heading.textContent = "Closest matches";
+  panel.appendChild(heading);
+
+  const list = document.createElement("div");
+  list.className = "suggestion-list";
+
+  suggestions.forEach(item => {
+    const commonName = getFieldValue(item, "Common Name");
+    const armyName = getFieldValue(item, "Army Name") || getFieldValue(item, "Nomenclature");
+    const lin = getFieldValue(item, "LIN");
+    const location = getFieldValue(item, "Location");
+    const displayTitle = commonName || item.title || armyName || "(Untitled)";
+    const meta = [
+      lin ? `LIN ${lin}` : "",
+      armyName && normalizeSearchValue(armyName) !== normalizeSearchValue(displayTitle) ? armyName : "",
+      location ? `Location: ${location}` : ""
+    ].filter(Boolean);
+
+    const button = document.createElement("button");
+    button.className = "suggestion-btn";
+    button.type = "button";
+    button.addEventListener("click", () => {
+      const searchInput = document.getElementById("searchInput");
+      if (searchInput) searchInput.value = getSuggestedSearchQuery(item);
+      setScanStatus(`Showing closest match: ${displayTitle}`);
+      buildItems();
+    });
+
+    const icon = document.createElement("span");
+    icon.className = "suggestion-icon";
+    icon.innerHTML = '<i data-lucide="corner-down-right" aria-hidden="true"></i>';
+
+    const copy = document.createElement("span");
+    copy.className = "suggestion-copy";
+
+    const title = document.createElement("span");
+    title.className = "suggestion-main";
+    title.textContent = displayTitle;
+    copy.appendChild(title);
+
+    if (meta.length) {
+      const details = document.createElement("span");
+      details.className = "suggestion-meta";
+      details.textContent = meta.join(" - ");
+      copy.appendChild(details);
+    }
+
+    button.appendChild(icon);
+    button.appendChild(copy);
+    list.appendChild(button);
+  });
+
+  panel.appendChild(list);
+  return panel;
+}
+
 function buildItems() {
   const container = document.getElementById("itemsContainer");
   const query = (document.getElementById("searchInput")?.value || "").trim();
   const items = inventory?.items || [];
   const filtered = items.filter(item => itemMatchesSearch(item, query));
+  const suggestions = filtered.length || !query ? [] : getClosestItemMatches(items, query, 4);
   const withPhotos = items.filter(item => getImageValues(item).length > 0).length;
 
   container.innerHTML = "";
-  updateSummary(items.length, filtered.length, withPhotos);
+  updateSummary(items.length, filtered.length || suggestions.length, withPhotos);
 
   if (!filtered.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = query
-      ? "No equipment matched that search."
+    empty.textContent = query && suggestions.length
+      ? "No exact match. These are the closest items I found."
+      : query
+        ? "No equipment matched that search."
       : "No equipment has been added for this platoon yet.";
     container.appendChild(empty);
+    if (suggestions.length) container.appendChild(buildSuggestionList(suggestions));
     refreshIcons();
     return;
   }
