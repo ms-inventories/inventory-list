@@ -759,6 +759,46 @@ button {
   white-space: normal;
 }
 
+.candidate-content {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+}
+
+.candidate-main {
+  color: var(--ink);
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.candidate-meta,
+.candidate-raw {
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.candidate-meta {
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.candidate-raw {
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.confidence-high {
+  color: #315f3b;
+}
+
+.confidence-medium {
+  color: #775018;
+}
+
+.confidence-low {
+  color: #8a3d17;
+}
+
 .candidate-score {
   display: block;
   color: var(--muted);

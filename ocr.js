@@ -104,11 +104,52 @@ function scorePacketCandidate(line) {
   return score;
 }
 
+function getConfidenceLabel(score) {
+  if (score >= 220) return "High";
+  if (score >= 120) return "Medium";
+  return "Low";
+}
+
+function parsePacketLineFromCandidate(candidateLine) {
+  const line = cleanOcrText(candidateLine);
+  const mpoMatch = line.match(/^(\d{6,10})\b/);
+  const mpo = mpoMatch ? mpoMatch[1] : "";
+  const withoutMpo = cleanOcrText(line.replace(/^\d{6,10}\s+/, ""));
+  const firstToken = withoutMpo.split(/\s+/)[0] || "";
+  const hasDigit = /\d/.test(firstToken);
+  const hasLetter = /[a-z]/i.test(firstToken);
+  const tokenLooksLikeLin = /^[a-z0-9]{5,8}$/i.test(firstToken) && hasDigit && hasLetter;
+  const fallbackLinMatch = withoutMpo.match(/\b[A-Z]\s?\d{5}\b/i);
+  const lin = tokenLooksLikeLin
+    ? firstToken.toUpperCase()
+    : (fallbackLinMatch ? fallbackLinMatch[0].replace(/\s+/g, "").toUpperCase() : "");
+  const armyName = tokenLooksLikeLin
+    ? cleanOcrText(withoutMpo.replace(/^\S+\s*/, ""))
+    : (fallbackLinMatch ? cleanOcrText(withoutMpo.replace(fallbackLinMatch[0], "")) : withoutMpo);
+
+  return {
+    line,
+    mpo,
+    lin,
+    armyName: armyName || withoutMpo || line
+  };
+}
+
+function packetCandidateFromLine(line) {
+  const normalized = normalizePacketCandidate(line);
+  const score = scorePacketCandidate(normalized);
+
+  return {
+    ...parsePacketLineFromCandidate(normalized),
+    score,
+    confidence: getConfidenceLabel(score)
+  };
+}
+
 function getPacketLineCandidates(text, maxCount) {
   const seen = new Set();
   const candidates = getOcrLines(text)
-    .map(normalizePacketCandidate)
-    .map(line => ({ line, score: scorePacketCandidate(line) }))
+    .map(packetCandidateFromLine)
     .filter(candidate => candidate.score > 0)
     .sort((a, b) => b.score - a.score)
     .filter(candidate => {
@@ -129,25 +170,34 @@ function getBestPacketLine(text) {
 
 function parsePacketLine(text) {
   const line = cleanOcrText(getBestPacketLine(text));
-  const withoutMpo = cleanOcrText(line.replace(/^\d{6,10}\s+/, ""));
-  const firstToken = withoutMpo.split(/\s+/)[0] || "";
-  const hasDigit = /\d/.test(firstToken);
-  const hasLetter = /[a-z]/i.test(firstToken);
-  const tokenLooksLikeLin = /^[a-z0-9]{5,8}$/i.test(firstToken) && hasDigit && hasLetter;
-  const fallbackLinMatch = withoutMpo.match(/\b[A-Z]\s?\d{5}\b/i);
-  const lin = tokenLooksLikeLin
-    ? firstToken.toUpperCase()
-    : (fallbackLinMatch ? fallbackLinMatch[0].replace(/\s+/g, "").toUpperCase() : "");
-  const withoutLin = lin
-    ? cleanOcrText(withoutMpo.replace(new RegExp(`^${lin}\\s+`, "i"), "").replace(lin, ""))
-    : withoutMpo;
+  const parsed = parsePacketLineFromCandidate(line);
 
   return {
     rawText: String(text || "").trim(),
     line,
-    lin,
-    armyName: withoutLin || withoutMpo || line,
+    mpo: parsed.mpo,
+    lin: parsed.lin,
+    armyName: parsed.armyName,
     candidates: getPacketLineCandidates(text, 8)
+  };
+}
+
+function getPacketCandidateDisplay(candidate) {
+  const line = cleanOcrText(candidate?.line || "");
+  const title = cleanOcrText(candidate?.armyName || line || "Unknown row");
+  const score = Number(candidate?.score);
+  const confidence = candidate?.confidence || (Number.isFinite(score) ? getConfidenceLabel(score) : "");
+  const meta = [];
+
+  if (candidate?.mpo) meta.push(`MPO ${candidate.mpo}`);
+  if (candidate?.lin) meta.push(`LIN ${candidate.lin}`);
+  if (confidence) meta.push(`${confidence} confidence`);
+
+  return {
+    title,
+    meta: meta.join(" | "),
+    rawLine: line && line.toLowerCase() !== title.toLowerCase() ? line : "",
+    confidence: String(confidence || "").toLowerCase()
   };
 }
 

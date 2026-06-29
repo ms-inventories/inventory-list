@@ -29,6 +29,33 @@ function setStatus(text, isError) {
   el.className = isError ? "status-text error" : "status-text";
 }
 
+function appendPacketCandidateContent(button, candidate) {
+  const display = getPacketCandidateDisplay(candidate);
+  const content = document.createElement("span");
+  const title = document.createElement("span");
+  content.className = "candidate-content";
+  title.className = "candidate-main";
+  title.textContent = display.title;
+  content.appendChild(title);
+
+  if (display.meta) {
+    const meta = document.createElement("span");
+    meta.className = `candidate-meta confidence-${display.confidence || "low"}`;
+    meta.textContent = display.meta;
+    content.appendChild(meta);
+  }
+
+  if (display.rawLine) {
+    const raw = document.createElement("span");
+    raw.className = "candidate-raw";
+    raw.textContent = display.rawLine;
+    content.appendChild(raw);
+  }
+
+  button.textContent = "";
+  button.appendChild(content);
+}
+
 function normalizeImageSrc(src) {
   if (!src) return "";
   if (src.startsWith("http://") || src.startsWith("https://")) return src;
@@ -460,9 +487,9 @@ function scannedItemDraftFlow(parsed) {
         const button = document.createElement("button");
         button.className = "btn btn-secondary candidate-btn";
         button.type = "button";
-        button.textContent = candidate.line;
+        appendPacketCandidateContent(button, candidate);
         button.addEventListener("click", () => {
-          fillDraftFields(parsePacketLine(candidate.line));
+          fillDraftFields(candidate);
         });
         list.appendChild(button);
       });

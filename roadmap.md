@@ -53,6 +53,10 @@ For the current mission, the highest-value work is:
 4. Harden backups and admin safety.
 5. Revisit auth/hosting only after the app is relied on by more people or the data becomes sensitive.
 
+## Progress
+
+- 2026-06-29: Scan candidate pickers now show parsed MPO, LIN, Army name, and confidence so users can review noisy packet results before choosing a row.
+
 ## Phase 1: Make Packet Lookup Excellent
 
 Goal: users can decode supply packet items in seconds on a phone.
