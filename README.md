@@ -22,3 +22,16 @@ npm run dev
 ```
 
 Coolify should use `react-app` as the base directory, `npm ci` as the install command, `npm run build` as the build command, and `dist` as the publish directory.
+
+## SaaS Backend
+
+The future multi-tenant API lives in `backend/`.
+
+```bash
+cd backend
+npm install
+npm run check
+npm run dev
+```
+
+See [docs/saas-architecture.md](docs/saas-architecture.md) for the Authentik, tenant, LT/NCO workflow, and Coolify deployment model.
