@@ -11,7 +11,7 @@ export const config = {
   env: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 3000),
   databaseUrl: process.env.DATABASE_URL || "",
-  baseDomain: String(process.env.BASE_DOMAIN || "inventory.876en.org").toLowerCase(),
+  baseDomain: String(process.env.BASE_DOMAIN || "876en.org").toLowerCase(),
   allowDevAuth: String(process.env.ALLOW_DEV_AUTH || "").toLowerCase() === "true",
   corsOrigins: splitCsv(process.env.CORS_ORIGINS),
   oidc: {

@@ -12,10 +12,10 @@ Each tenant is a platoon or unit workspace. Tenants are isolated by subdomain an
 
 Examples:
 
-- `first.inventory.876en.org`
-- `second.inventory.876en.org`
-- `third.inventory.876en.org`
-- `fourth.inventory.876en.org`
+- `1st.876en.org`
+- `2nd.876en.org`
+- `3rd.876en.org`
+- `ms.876en.org`
 
 The supply/main admin can create more tenants later.
 
@@ -90,19 +90,19 @@ The backend resolves tenant context from the request hostname.
 For a base domain of:
 
 ```text
-inventory.876en.org
+876en.org
 ```
 
 The tenant slug is extracted from:
 
 ```text
-first.inventory.876en.org
+1st.876en.org
 ```
 
 This resolves tenant slug:
 
 ```text
-first
+1st
 ```
 
 The database also supports explicit hostnames through `tenant_domains`, so aliases can be added later.
@@ -169,12 +169,12 @@ Coolify deploys this as the Express API service.
 
 Suggested routes:
 
-- Frontend: `https://inventory.876en.org`
-- Tenant frontend: `https://first.inventory.876en.org`
-- API same origin path later: `/api`
-- Or API subdomain: `https://api.inventory.876en.org`
+- Public homepage: `https://876en.org`
+- Tenant frontend: `https://1st.876en.org`
+- Tenant API: same-origin `/api`
+- Platform/API/media subdomain: `https://api.876en.org`
 
-Same-origin `/api` is preferred when practical because it simplifies CORS and cookies.
+Same-origin tenant `/api` is preferred because it lets the backend resolve tenant access from the hostname.
 
 ## Authentik Setup Notes
 

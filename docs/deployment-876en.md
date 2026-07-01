@@ -9,23 +9,52 @@ Suggested public routes:
 | Hostname | Service | Purpose |
 | --- | --- | --- |
 | `876en.org` | future marketing/newsletter site | Public homepage, announcements, newsletter signup |
-| `inventory.876en.org` | React app | Main inventory app shell |
-| `<tenant>.inventory.876en.org` | React app | Tenant-specific platoon workspaces |
-| `api.inventory.876en.org` | Express API | Backend API, media URLs, Authentik token validation |
+| `<tenant>.876en.org` | React app | Tenant-specific platoon workspaces, such as `1st.876en.org` or `ms.876en.org` |
+| `api.876en.org` | Express API | Backend API, media URLs, platform endpoints |
 | `auth.876en.org` | Authentik | Identity provider and account login |
 | `coolify.876en.org` | Coolify | Coolify dashboard, protect with Cloudflare Access |
 
-If wildcard tunnel routes work cleanly in your Cloudflare account, route `*.inventory.876en.org` to the React app and let the backend resolve tenant from the subdomain. If not, start with the four tenant hostnames manually.
+If wildcard tunnel routes work cleanly in your Cloudflare account, route `*.876en.org` to the React app and let the backend resolve tenant from the subdomain. Put exact infrastructure routes above the wildcard so `api`, `auth`, and `coolify` go to the correct services.
+
+## Cloudflare Tunnel Route Order
+
+Create the exact service routes first:
+
+| Hostname | Path | Service |
+| --- | --- | --- |
+| `876en.org` | empty | homepage/newsletter service |
+| `www.876en.org` | empty | homepage/newsletter service |
+| `auth.876en.org` | empty | Authentik service |
+| `coolify.876en.org` | empty | Coolify service |
+| `api.876en.org` | empty | backend API service |
+
+Then create the wildcard tenant routes:
+
+| Hostname | Path | Service |
+| --- | --- | --- |
+| `*.876en.org` | `^/api` | backend API service |
+| `*.876en.org` | empty | React frontend service |
+
+The wildcard API route must be above the wildcard frontend route. This lets tenant pages call same-origin `/api` while all normal page paths still load the React app.
+
+If wildcard routing gives you trouble, create manual pairs for the first tenants:
+
+| Hostname | Path | Service |
+| --- | --- | --- |
+| `1st.876en.org` | `^/api` | backend API service |
+| `1st.876en.org` | empty | React frontend service |
+| `ms.876en.org` | `^/api` | backend API service |
+| `ms.876en.org` | empty | React frontend service |
 
 ## Initial Four Tenants
 
 Use simple slugs until the real naming convention is decided:
 
 ```text
-first.inventory.876en.org
-second.inventory.876en.org
-third.inventory.876en.org
-fourth.inventory.876en.org
+1st.876en.org
+2nd.876en.org
+3rd.876en.org
+ms.876en.org
 ```
 
 The platform admin can create more tenants later.
@@ -44,9 +73,10 @@ Publish directory: dist
 Published routes:
 
 ```text
-inventory.876en.org -> frontend service
-*.inventory.876en.org -> frontend service
+*.876en.org -> frontend service
 ```
+
+Use exact routes for `auth.876en.org`, `coolify.876en.org`, and `api.876en.org` before the wildcard.
 
 ### Backend API
 
@@ -60,7 +90,8 @@ Port: 3000
 Published route:
 
 ```text
-api.inventory.876en.org -> backend service on port 3000
+api.876en.org -> backend service on port 3000
+*.876en.org ^/api -> backend service on port 3000
 ```
 
 ### Database
@@ -80,7 +111,7 @@ Mount the NAS/share into the backend container and set:
 ```text
 STORAGE_DRIVER=local
 STORAGE_ROOT=/data/inventory-uploads
-PUBLIC_MEDIA_BASE_URL=https://api.inventory.876en.org/media
+PUBLIC_MEDIA_BASE_URL=https://api.876en.org/media
 ```
 
 Recommended layout on NAS:
@@ -88,10 +119,10 @@ Recommended layout on NAS:
 ```text
 inventory-uploads/
   tenants/
-    first/
+    1st/
       submissions/
       items/
-    second/
+    ms/
 ```
 
 Later backend work should add:
