@@ -92,28 +92,47 @@ async function requirePlatformAdmin(request, reply) {
   return auth;
 }
 
-function registerErrorHandler(fastify) {
-  fastify.setErrorHandler((error, request, reply) => {
-    request.log.error(error);
+function route(app, method, path, handler) {
+  app[method](path, async (request, response, next) => {
+    const reply = {
+      statusCode: 200,
+      code(statusCode) {
+        this.statusCode = statusCode;
+        response.status(statusCode);
+        return this;
+      }
+    };
+
+    try {
+      const result = await handler(request, reply);
+      if (!response.headersSent) response.status(reply.statusCode).json(result ?? {});
+    } catch (error) {
+      if (reply.statusCode >= 400) error.statusCode = reply.statusCode;
+      next(error);
+    }
+  });
+}
+
+function registerErrorHandler(app) {
+  app.use((error, request, response, next) => {
+    console.error(error);
 
     if (error instanceof z.ZodError) {
-      reply.code(400).send(badRequestFromZod(error));
+      response.status(400).json(badRequestFromZod(error));
       return;
     }
 
-    const statusCode = reply.statusCode >= 400 ? reply.statusCode : 500;
-    reply.code(statusCode).send({
+    const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
+    response.status(statusCode).json({
       error: statusCode >= 500 ? "Internal server error" : error.message
     });
   });
 }
 
-export async function registerRoutes(fastify) {
-  registerErrorHandler(fastify);
+export function registerRoutes(app) {
+  route(app, "get", "/health", async () => ({ ok: true }));
 
-  fastify.get("/health", async () => ({ ok: true }));
-
-  fastify.get("/api/me", async (request, reply) => {
+  route(app, "get", "/api/me", async (request, reply) => {
     const context = await requireContext(request, reply);
 
     return {
@@ -125,7 +144,7 @@ export async function registerRoutes(fastify) {
     };
   });
 
-  fastify.post("/api/platform/tenants", async (request, reply) => {
+  route(app, "post", "/api/platform/tenants", async (request, reply) => {
     const auth = await requirePlatformAdmin(request, reply);
     const body = parseBody(
       z.object({
@@ -166,7 +185,7 @@ export async function registerRoutes(fastify) {
     return { tenant: rowToTenant(tenant) };
   });
 
-  fastify.get("/api/tenant", async (request, reply) => {
+  route(app, "get", "/api/tenant", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
     return {
       tenant: rowToTenant(context.tenant),
@@ -174,7 +193,7 @@ export async function registerRoutes(fastify) {
     };
   });
 
-  fastify.post("/api/tenant/members", async (request, reply) => {
+  route(app, "post", "/api/tenant/members", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
@@ -223,7 +242,7 @@ export async function registerRoutes(fastify) {
     return { member };
   });
 
-  fastify.get("/api/inventory/items", async (request, reply) => {
+  route(app, "get", "/api/inventory/items", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
     const result = await query(
       `
@@ -238,7 +257,7 @@ export async function registerRoutes(fastify) {
     return { items: result.rows.map(rowToInventoryItem) };
   });
 
-  fastify.post("/api/inventory/items", async (request, reply) => {
+  route(app, "post", "/api/inventory/items", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
@@ -291,7 +310,7 @@ export async function registerRoutes(fastify) {
     return { item: rowToInventoryItem(item) };
   });
 
-  fastify.get("/api/inventory/sessions", async (request, reply) => {
+  route(app, "get", "/api/inventory/sessions", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
     const result = await query(
       `
@@ -311,7 +330,7 @@ export async function registerRoutes(fastify) {
     return { sessions: result.rows };
   });
 
-  fastify.post("/api/inventory/sessions", async (request, reply) => {
+  route(app, "post", "/api/inventory/sessions", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
@@ -347,7 +366,7 @@ export async function registerRoutes(fastify) {
     return { session };
   });
 
-  fastify.post("/api/inventory/sessions/:sessionId/items", async (request, reply) => {
+  route(app, "post", "/api/inventory/sessions/:sessionId/items", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
@@ -386,7 +405,7 @@ export async function registerRoutes(fastify) {
     return { sessionItem: result.rows[0] };
   });
 
-  fastify.patch("/api/session-items/:sessionItemId/direct-check", async (request, reply) => {
+  route(app, "patch", "/api/session-items/:sessionItemId/direct-check", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
@@ -432,7 +451,7 @@ export async function registerRoutes(fastify) {
     return { sessionItem: updated };
   });
 
-  fastify.post("/api/session-items/:sessionItemId/submissions", async (request, reply) => {
+  route(app, "post", "/api/session-items/:sessionItemId/submissions", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor"]);
     const body = parseBody(
       z.object({
@@ -505,7 +524,7 @@ export async function registerRoutes(fastify) {
     return { submission };
   });
 
-  fastify.patch("/api/submissions/:submissionId/review", async (request, reply) => {
+  route(app, "patch", "/api/submissions/:submissionId/review", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
@@ -564,7 +583,7 @@ export async function registerRoutes(fastify) {
     return { submission };
   });
 
-  fastify.post("/api/submissions/:submissionId/evidence-requests", async (request, reply) => {
+  route(app, "post", "/api/submissions/:submissionId/evidence-requests", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
@@ -622,4 +641,6 @@ export async function registerRoutes(fastify) {
     reply.code(201);
     return { evidenceRequest };
   });
+
+  registerErrorHandler(app);
 }

@@ -1,0 +1,17 @@
+{
+  "name": "inventory-list-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "react-app",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --prefix react-app run dev",
+    "dev:api": "npm --prefix backend run dev",
+    "build:frontend": "npm --prefix react-app run build",
+    "check:api": "npm --prefix backend run check",
+    "check:static": "node --check ocr.js && node --check script.js && node --check admin.js",
+    "check": "npm run check:static && npm run check:api && npm run build:frontend"
+  }
+}

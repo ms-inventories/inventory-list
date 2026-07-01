@@ -11,7 +11,7 @@ export const config = {
   env: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 3000),
   databaseUrl: process.env.DATABASE_URL || "",
-  baseDomain: String(process.env.BASE_DOMAIN || "inventory.bensonhub.com").toLowerCase(),
+  baseDomain: String(process.env.BASE_DOMAIN || "inventory.876en.org").toLowerCase(),
   allowDevAuth: String(process.env.ALLOW_DEV_AUTH || "").toLowerCase() === "true",
   corsOrigins: splitCsv(process.env.CORS_ORIGINS),
   oidc: {
@@ -20,6 +20,20 @@ export const config = {
     discoveryUrl: process.env.OIDC_DISCOVERY_URL || "",
     groupsClaim: process.env.OIDC_GROUPS_CLAIM || "groups",
     platformAdminGroup: process.env.PLATFORM_ADMIN_GROUP || "inventory-platform-admins"
+  },
+  storage: {
+    driver: process.env.STORAGE_DRIVER || "local",
+    root: process.env.STORAGE_ROOT || "/data/inventory-uploads",
+    publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || ""
+  },
+  email: {
+    host: process.env.SMTP_HOST || "",
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: String(process.env.SMTP_SECURE || "").toLowerCase() === "true",
+    user: process.env.SMTP_USER || "",
+    pass: process.env.SMTP_PASS || "",
+    fromName: process.env.EMAIL_FROM_NAME || "876 EN Inventory",
+    fromAddress: process.env.EMAIL_FROM_ADDRESS || "no-reply@876en.org"
   }
 };
 

@@ -15,7 +15,7 @@ Current architecture:
 
 - Static public/admin frontend hosted from this repo, currently suitable for GitHub Pages.
 - A separate Vite/React app now lives in `react-app/` for the future Coolify-hosted version.
-- A separate Node/Fastify API now lives in `backend/` for the future multi-tenant Authentik/Coolify version.
+- A separate Node/Express API now lives in `backend/` for the future multi-tenant Authentik/Coolify version.
 - Read data comes from public S3 JSON files at `https://ms-inventories.s3.us-east-1.amazonaws.com`.
 - Admin writes go through an AWS Lambda Function URL.
 - Images are uploaded by presigned URL.
@@ -62,6 +62,7 @@ For the current mission, the highest-value work is:
 - 2026-06-29: Result cards now have a one-tap copy action for friendly name, LIN, Army name, NSN, and location.
 - 2026-07-01: Added a separate Vite/React app under `react-app/` for the future Coolify deployment while leaving the root static GitHub Pages app intact.
 - 2026-07-01: Added a SaaS architecture doc and backend scaffold for Authentik login, tenant subdomains, LT/NCO inventory sessions, evidence submissions, and LT review.
+- 2026-07-01: Switched the backend scaffold to Express, added a monorepo package, and drafted inactive Coolify GitHub Actions plus the `876en.org` deployment plan.
 
 ## Phase 1: Make Packet Lookup Excellent
 
@@ -299,9 +300,9 @@ Rewrite triggers:
 Potential stack:
 
 - Frontend: SvelteKit, React, or plain Vite.
-- Backend: Node/Express, Fastify, or serverless functions.
+- Backend: Node/Express API.
 - Database: SQLite for on-prem single-server, Postgres for multi-user.
-- Storage: S3/MinIO/local volume.
+- Storage: local NAS-mounted volume first, with S3-compatible storage optional later.
 - Auth: session cookies for on-prem, OAuth/OIDC for hosted.
 
 Do not rewrite just for style. The current static app is still valid until workflow complexity forces a framework.
@@ -330,8 +331,8 @@ Do not rewrite just for style. The current static app is still valid until workf
 - No automated tests currently cover search parsing, OCR candidate extraction, or admin save payloads.
 - OCR/document parsing currently depends on heuristics and should gain fixtures for multiple hand receipt layouts.
 - CDN dependencies are unpinned at the integrity level.
-- `package-lock.json` is untracked and should either be removed or committed only if a real package manifest is added.
-- README is empty.
+- Backend and React code are still early scaffolds and need fixtures/tests before production use.
+- GitHub Actions deploy workflow is intentionally disabled until Coolify tokens and routes are ready.
 
 ## Immediate Recommendation
 

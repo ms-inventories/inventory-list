@@ -12,10 +12,10 @@ Each tenant is a platoon or unit workspace. Tenants are isolated by subdomain an
 
 Examples:
 
-- `first.inventory.bensonhub.com`
-- `second.inventory.bensonhub.com`
-- `third.inventory.bensonhub.com`
-- `fourth.inventory.bensonhub.com`
+- `first.inventory.876en.org`
+- `second.inventory.876en.org`
+- `third.inventory.876en.org`
+- `fourth.inventory.876en.org`
 
 The supply/main admin can create more tenants later.
 
@@ -90,13 +90,13 @@ The backend resolves tenant context from the request hostname.
 For a base domain of:
 
 ```text
-inventory.bensonhub.com
+inventory.876en.org
 ```
 
 The tenant slug is extracted from:
 
 ```text
-first.inventory.bensonhub.com
+first.inventory.876en.org
 ```
 
 This resolves tenant slug:
@@ -165,14 +165,14 @@ Path:
 backend/
 ```
 
-Coolify deploys this as the API service.
+Coolify deploys this as the Express API service.
 
 Suggested routes:
 
-- Frontend: `https://inventory.bensonhub.com`
-- Tenant frontend: `https://first.inventory.bensonhub.com`
+- Frontend: `https://inventory.876en.org`
+- Tenant frontend: `https://first.inventory.876en.org`
 - API same origin path later: `/api`
-- Or API subdomain: `https://api.inventory.bensonhub.com`
+- Or API subdomain: `https://api.inventory.876en.org`
 
 Same-origin `/api` is preferred when practical because it simplifies CORS and cookies.
 

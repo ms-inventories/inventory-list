@@ -6,7 +6,7 @@ It is intentionally separate from the static GitHub Pages app in the repository 
 
 ## Responsibilities
 
-- Resolve tenant from subdomain, such as `first.inventory.bensonhub.com`.
+- Resolve tenant from subdomain, such as `first.inventory.876en.org`.
 - Validate Authentik-issued OIDC access tokens.
 - Enforce tenant roles:
   - `platform_admin`: supply/main admin who can create tenants.

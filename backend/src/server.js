@@ -1,16 +1,15 @@
-import cors from "@fastify/cors";
-import Fastify from "fastify";
+import cors from "cors";
+import express from "express";
 import { assertProductionConfig, config } from "./config.js";
 import { closePool } from "./db.js";
 import { registerRoutes } from "./routes.js";
 
 assertProductionConfig();
 
-const fastify = Fastify({
-  logger: true
-});
+const app = express();
 
-await fastify.register(cors, {
+app.use(express.json({ limit: "20mb" }));
+app.use(cors({
   origin(origin, callback) {
     if (!origin) {
       callback(null, true);
@@ -25,18 +24,20 @@ await fastify.register(cors, {
     callback(new Error("Origin not allowed"), false);
   },
   credentials: true
+}));
+
+registerRoutes(app);
+
+const server = app.listen(config.port, "0.0.0.0", () => {
+  console.log(`inventory-list-api listening on ${config.port}`);
 });
 
-await registerRoutes(fastify);
-
 const close = async signal => {
-  fastify.log.info({ signal }, "shutting down");
-  await fastify.close();
+  console.log(`shutting down from ${signal}`);
+  await new Promise(resolve => server.close(resolve));
   await closePool();
   process.exit(0);
 };
 
 process.on("SIGINT", close);
 process.on("SIGTERM", close);
-
-await fastify.listen({ port: config.port, host: "0.0.0.0" });

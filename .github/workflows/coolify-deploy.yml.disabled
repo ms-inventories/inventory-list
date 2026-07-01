@@ -1,0 +1,70 @@
+# Disabled until the Coolify tokens/webhooks are ready.
+# Rename this file to `.github/workflows/coolify-deploy.yml` when you want GitHub Actions to run it.
+
+name: Coolify Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "react-app/**"
+      - "backend/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/coolify-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: coolify-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check monorepo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Check
+        run: npm run check
+
+  deploy-frontend:
+    name: Deploy React app to Coolify
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      COOLIFY_FRONTEND_WEBHOOK_URL: ${{ secrets.COOLIFY_FRONTEND_WEBHOOK_URL }}
+      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
+    steps:
+      - name: Trigger frontend deployment
+        if: ${{ env.COOLIFY_FRONTEND_WEBHOOK_URL != '' }}
+        run: |
+          curl --fail --request POST \
+            --url "$COOLIFY_FRONTEND_WEBHOOK_URL" \
+            --header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN"
+
+  deploy-backend:
+    name: Deploy API to Coolify
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      COOLIFY_BACKEND_WEBHOOK_URL: ${{ secrets.COOLIFY_BACKEND_WEBHOOK_URL }}
+      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
+    steps:
+      - name: Trigger backend deployment
+        if: ${{ env.COOLIFY_BACKEND_WEBHOOK_URL != '' }}
+        run: |
+          curl --fail --request POST \
+            --url "$COOLIFY_BACKEND_WEBHOOK_URL" \
+            --header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN"
