@@ -37,6 +37,8 @@ Then create the wildcard tenant routes:
 
 The wildcard API route must be above the wildcard frontend route. This lets tenant pages call same-origin `/api` while all normal page paths still load the React app.
 
+If Coolify requires manual labels for the wildcard behavior, use the templates in [coolify-labels.md](coolify-labels.md).
+
 If wildcard routing gives you trouble, create manual pairs for the first tenants:
 
 | Hostname | Path | Service |

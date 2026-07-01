@@ -12,9 +12,10 @@ import {
   Settings,
   X
 } from "lucide-react";
+import { appConfig, getTenantSlugFromHostname } from "./config.js";
 import { getPacketCandidateDisplay, recognizePacketFile } from "./lib/ocr.js";
 
-const BUCKET_BASE_URL = "https://ms-inventories.s3.us-east-1.amazonaws.com";
+const BUCKET_BASE_URL = appConfig.legacyBucketBaseUrl;
 const INDEX_URL = `${BUCKET_BASE_URL}/inventories/index.json`;
 const IMAGE_BASE_URL = `${BUCKET_BASE_URL}/`;
 
@@ -289,6 +290,7 @@ function LoginScreen({
   indexData,
   selectedPlatoonId,
   password,
+  tenantSlug,
   loginStatus,
   onSelectedPlatoonIdChange,
   onPasswordChange,
@@ -297,7 +299,7 @@ function LoginScreen({
   return (
     <div className="auth-screen">
       <section className="auth-card" aria-labelledby="loginTitle">
-        <p className="eyebrow">Guard equipment accountability</p>
+        <p className="eyebrow">{tenantSlug ? `${tenantSlug} workspace` : "876 EN inventory"}</p>
         <h1 id="loginTitle">Equipment Inventory</h1>
         <p className="auth-copy">Select your platoon and open the latest equipment list.</p>
 
@@ -590,6 +592,7 @@ function ViewerApp() {
   const [lightboxImage, setLightboxImage] = useState(null);
   const cameraInputRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const tenantSlug = useMemo(() => getTenantSlugFromHostname(), []);
 
   useEffect(() => {
     let ignore = false;
@@ -717,6 +720,7 @@ function ViewerApp() {
         indexData={indexData}
         selectedPlatoonId={selectedPlatoonId}
         password={password}
+        tenantSlug={tenantSlug}
         loginStatus={loginStatus}
         onSelectedPlatoonIdChange={setSelectedPlatoonId}
         onPasswordChange={setPassword}
@@ -729,7 +733,7 @@ function ViewerApp() {
     <div className="app-frame">
       <header className="app-header">
         <div>
-          <p className="eyebrow">Platoon inventory</p>
+          <p className="eyebrow">{tenantSlug ? `${tenantSlug} workspace` : "Platoon inventory"}</p>
           <h1 id="pageTitle">{selectedPlatoon?.name || "Equipment Inventory"}</h1>
           <p className="header-copy">Fast lookup for what is on hand and where it is staged.</p>
         </div>
@@ -859,7 +863,7 @@ function AdminPlaceholder() {
         <div>
           <p className="eyebrow">Admin editor</p>
           <h1>Inventory Admin</h1>
-          <p className="header-copy">The React admin screen is the next migration step.</p>
+          <p className="header-copy">The React admin screen will use Authentik and tenant roles next.</p>
         </div>
         <div className="header-actions">
           <a className="btn btn-secondary" href="/">
