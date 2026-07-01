@@ -14,6 +14,7 @@ Primary field workflow:
 Current architecture:
 
 - Static public/admin frontend hosted from this repo, currently suitable for GitHub Pages.
+- A separate Vite/React app now lives in `react-app/` for the future Coolify-hosted version.
 - Read data comes from public S3 JSON files at `https://ms-inventories.s3.us-east-1.amazonaws.com`.
 - Admin writes go through an AWS Lambda Function URL.
 - Images are uploaded by presigned URL.
@@ -58,6 +59,7 @@ For the current mission, the highest-value work is:
 - 2026-06-29: Scan candidate pickers now show parsed MPO, LIN, Army name, and confidence so users can review noisy packet results before choosing a row.
 - 2026-06-29: Viewer search now shows closest-match suggestions when a strict packet search returns no exact results.
 - 2026-06-29: Result cards now have a one-tap copy action for friendly name, LIN, Army name, NSN, and location.
+- 2026-07-01: Added a separate Vite/React app under `react-app/` for the future Coolify deployment while leaving the root static GitHub Pages app intact.
 
 ## Phase 1: Make Packet Lookup Excellent
 
