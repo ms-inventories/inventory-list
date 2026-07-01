@@ -1,6 +1,6 @@
 # 876en.org Deployment Plan
 
-This is the planned Coolify + Cloudflare Tunnel deployment path. Nothing in GitHub Actions is active yet.
+This is the planned Coolify + Cloudflare Tunnel deployment path. GitHub Actions is active for Coolify deploy webhooks.
 
 ## Domains
 
@@ -187,19 +187,13 @@ Tenant roles live in the app database. Authentik proves identity; the app decide
 
 ## GitHub Actions
 
-The workflow is intentionally inactive:
-
-```text
-.github/workflows/coolify-deploy.yml.disabled
-```
-
-When ready, rename it to:
+The Coolify deploy workflow is active:
 
 ```text
 .github/workflows/coolify-deploy.yml
 ```
 
-GitHub secrets to create before enabling:
+GitHub secrets used by the workflow:
 
 ```text
 COOLIFY_FRONTEND_WEBHOOK_URL
@@ -207,4 +201,11 @@ COOLIFY_BACKEND_WEBHOOK_URL
 COOLIFY_DEPLOY_TOKEN
 ```
 
-Do not enable this until Coolify apps, routes, env vars, and database are ready.
+The frontend webhook is required for the React app deploy. The backend webhook can stay empty until the backend resource is ready. The workflow uses the Coolify deploy webhook with a `GET` request and the deploy token as a bearer token.
+
+The frontend job also accepts Coolify's generic doc-style secret names as a fallback:
+
+```text
+COOLIFY_WEBHOOK
+COOLIFY_TOKEN
+```

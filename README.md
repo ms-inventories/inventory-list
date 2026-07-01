@@ -42,7 +42,7 @@ npm run dev
 
 See [docs/saas-architecture.md](docs/saas-architecture.md) for the Authentik, tenant, LT/NCO workflow, and Coolify deployment model.
 
-See [docs/deployment-876en.md](docs/deployment-876en.md) for the planned `876en.org` Cloudflare Tunnel, Coolify, NAS storage, Brevo email, and inactive GitHub Actions setup.
+See [docs/deployment-876en.md](docs/deployment-876en.md) for the planned `876en.org` Cloudflare Tunnel, Coolify, NAS storage, Brevo email, and active GitHub Actions deploy setup.
 
 See [docs/coolify-labels.md](docs/coolify-labels.md) for frontend/backend wildcard label templates.
 

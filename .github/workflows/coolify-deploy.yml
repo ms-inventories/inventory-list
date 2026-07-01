@@ -1,6 +1,3 @@
-# Disabled until the Coolify tokens/webhooks are ready.
-# Rename this file to `.github/workflows/coolify-deploy.yml` when you want GitHub Actions to run it.
-
 name: Coolify Deploy
 
 on:
@@ -44,15 +41,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     env:
-      COOLIFY_FRONTEND_WEBHOOK_URL: ${{ secrets.COOLIFY_FRONTEND_WEBHOOK_URL }}
-      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
+      COOLIFY_FRONTEND_WEBHOOK_URL: ${{ secrets.COOLIFY_FRONTEND_WEBHOOK_URL || secrets.COOLIFY_WEBHOOK }}
+      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN || secrets.COOLIFY_TOKEN }}
     steps:
       - name: Trigger frontend deployment
         if: ${{ env.COOLIFY_FRONTEND_WEBHOOK_URL != '' }}
         run: |
-          curl --fail --request POST \
-            --url "$COOLIFY_FRONTEND_WEBHOOK_URL" \
-            --header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN"
+          args=(--fail --request GET --url "$COOLIFY_FRONTEND_WEBHOOK_URL")
+          if [ -n "$COOLIFY_DEPLOY_TOKEN" ]; then
+            args+=(--header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN")
+          fi
+          curl "${args[@]}"
 
   deploy-backend:
     name: Deploy API to Coolify
@@ -60,11 +59,13 @@ jobs:
     needs: check
     env:
       COOLIFY_BACKEND_WEBHOOK_URL: ${{ secrets.COOLIFY_BACKEND_WEBHOOK_URL }}
-      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
+      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN || secrets.COOLIFY_TOKEN }}
     steps:
       - name: Trigger backend deployment
         if: ${{ env.COOLIFY_BACKEND_WEBHOOK_URL != '' }}
         run: |
-          curl --fail --request POST \
-            --url "$COOLIFY_BACKEND_WEBHOOK_URL" \
-            --header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN"
+          args=(--fail --request GET --url "$COOLIFY_BACKEND_WEBHOOK_URL")
+          if [ -n "$COOLIFY_DEPLOY_TOKEN" ]; then
+            args+=(--header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN")
+          fi
+          curl "${args[@]}"
