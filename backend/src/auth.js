@@ -47,13 +47,14 @@ async function verifyBearerToken(token) {
 
   const { payload } = await jwtVerify(token, jwks, verifyOptions);
   const groups = normalizeGroupList(payload[config.oidc.groupsClaim]);
+  const email = String(payload.email || "").toLowerCase();
 
   return {
     subject: String(payload.sub || ""),
-    email: String(payload.email || "").toLowerCase(),
+    email,
     displayName: String(payload.name || payload.preferred_username || payload.email || ""),
     groups,
-    isPlatformAdmin: groups.includes(config.oidc.platformAdminGroup),
+    isPlatformAdmin: groups.includes(config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(email),
     claims: payload
   };
 }
@@ -66,13 +67,14 @@ function getDevIdentity(request) {
   if (!subject || !email) return null;
 
   const groups = normalizeGroupList(getHeaderValue(request, "x-dev-groups"));
+  const normalizedEmail = String(email).toLowerCase();
 
   return {
     subject: String(subject),
-    email: String(email).toLowerCase(),
+    email: normalizedEmail,
     displayName: String(getHeaderValue(request, "x-dev-name") || email),
     groups,
-    isPlatformAdmin: groups.includes(config.oidc.platformAdminGroup),
+    isPlatformAdmin: groups.includes(config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(normalizedEmail),
     claims: { dev: true }
   };
 }

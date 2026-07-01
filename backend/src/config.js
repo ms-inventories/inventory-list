@@ -12,6 +12,8 @@ export const config = {
   port: Number(process.env.PORT || 3000),
   databaseUrl: process.env.DATABASE_URL || "",
   baseDomain: String(process.env.BASE_DOMAIN || "876en.org").toLowerCase(),
+  publicAppUrl: String(process.env.PUBLIC_APP_URL || `https://${process.env.BASE_DOMAIN || "876en.org"}`).replace(/\/+$/, ""),
+  platformAdminEmails: splitCsv(process.env.PLATFORM_ADMIN_EMAILS).map(email => email.toLowerCase()),
   allowDevAuth: String(process.env.ALLOW_DEV_AUTH || "").toLowerCase() === "true",
   corsOrigins: splitCsv(process.env.CORS_ORIGINS),
   oidc: {

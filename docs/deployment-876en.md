@@ -141,6 +141,8 @@ Use Brevo SMTP for welcome and invite emails.
 Backend env:
 
 ```text
+PUBLIC_APP_URL=https://876en.org
+PLATFORM_ADMIN_EMAILS=<your root/admin email>
 SMTP_HOST=smtp-relay.brevo.com
 SMTP_PORT=587
 SMTP_SECURE=false

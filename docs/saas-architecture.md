@@ -19,6 +19,8 @@ Examples:
 
 The supply/main admin can create more tenants later.
 
+Initial platform/root access can come from either the Authentik `inventory-platform-admins` group or the backend `PLATFORM_ADMIN_EMAILS` allowlist. The email allowlist is the day-one escape hatch so one known account can create the first platoons before every Authentik group rule is polished.
+
 ## Identity
 
 Authentik is the source of accounts and login.
@@ -57,7 +59,7 @@ Usually the LT for a platoon.
 
 Can:
 
-- Add platoon members to the tenant.
+- Invite platoon members to the tenant.
 - Start inventory sessions.
 - Scan/import packet rows.
 - Assign or publish inventory tasks.
@@ -198,7 +200,7 @@ The app database remains the source of tenant membership and role inside a speci
 ## Next Build Steps
 
 1. Deploy `backend/` to Coolify with Postgres.
-2. Apply `backend/db/001_init.sql`.
+2. Apply `backend/db/001_init.sql` and `backend/db/002_tenant_admin_invites.sql` if the DB already exists.
 3. Create the Authentik OIDC provider and group.
 4. Wire React login to Authentik.
 5. Replace old S3 JSON reads with API calls.

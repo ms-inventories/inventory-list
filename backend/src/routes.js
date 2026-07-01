@@ -1,6 +1,9 @@
+import crypto from "node:crypto";
 import { z } from "zod";
 import { authContext } from "./auth.js";
+import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
+import { sendTenantInviteEmail } from "./email.js";
 import { hasTenantRole, tenantContext } from "./tenant.js";
 
 const tenantRoles = ["tenant_admin", "contributor", "viewer"];
@@ -32,6 +35,34 @@ function rowToTenant(row) {
   };
 }
 
+function rowToMember(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    userId: row.user_id,
+    role: row.role,
+    status: row.status,
+    email: row.email,
+    displayName: row.display_name,
+    createdAt: row.created_at
+  };
+}
+
+function rowToInvitation(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    invitedBy: row.invited_by,
+    expiresAt: row.expires_at,
+    acceptedAt: row.accepted_at,
+    revokedAt: row.revoked_at,
+    createdAt: row.created_at
+  };
+}
+
 function rowToInventoryItem(row) {
   return {
     id: row.id,
@@ -56,6 +87,26 @@ async function createAuditEvent(client, { tenantId, actorUserId, action, entityT
     `,
     [tenantId, actorUserId, action, entityType, entityId, JSON.stringify(metadata)]
   );
+}
+
+function createInviteToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function hashInviteToken(token) {
+  return crypto.createHash("sha256").update(String(token || ""), "utf8").digest("hex");
+}
+
+function tenantBaseUrl(tenant) {
+  const slug = String(tenant?.slug || "").toLowerCase();
+  if (slug) return `https://${slug}.${config.baseDomain}`;
+  return config.publicAppUrl;
+}
+
+function buildInviteUrl(tenant, token) {
+  const url = new URL(tenantBaseUrl(tenant));
+  url.hash = `/accept-invite?token=${encodeURIComponent(token)}`;
+  return url.toString();
 }
 
 async function requireContext(request, reply, roles = []) {
@@ -144,45 +195,103 @@ export function registerRoutes(app) {
     };
   });
 
+  route(app, "get", "/api/platform/tenants", async (request, reply) => {
+    await requirePlatformAdmin(request, reply);
+
+    const result = await query(
+      `
+        SELECT t.id, t.slug, t.name, t.status,
+          COUNT(m.id)::int AS member_count,
+          COUNT(m.id) FILTER (WHERE m.role = 'tenant_admin' AND m.status = 'active')::int AS admin_count
+        FROM tenants t
+        LEFT JOIN tenant_memberships m ON m.tenant_id = t.id
+        GROUP BY t.id
+        ORDER BY t.slug ASC
+      `
+    );
+
+    return {
+      tenants: result.rows.map(row => ({
+        ...rowToTenant(row),
+        memberCount: row.member_count,
+        adminCount: row.admin_count
+      }))
+    };
+  });
+
   route(app, "post", "/api/platform/tenants", async (request, reply) => {
     const auth = await requirePlatformAdmin(request, reply);
     const body = parseBody(
       z.object({
         name: z.string().min(2),
         slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
-        hostname: z.string().min(4).optional()
+        hostname: z.string().min(4).optional(),
+        adminEmail: z.string().email().optional(),
+        adminDisplayName: z.string().optional()
       }),
       request.body
     );
 
-    const tenant = await withTransaction(async client => {
+    const created = await withTransaction(async client => {
       const tenantResult = await client.query(
         "INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING id, slug, name, status",
         [body.slug, body.name]
       );
-      const created = tenantResult.rows[0];
+      const tenant = tenantResult.rows[0];
 
-      if (body.hostname) {
-        await client.query(
-          "INSERT INTO tenant_domains (tenant_id, hostname, is_primary) VALUES ($1, $2, true)",
-          [created.id, body.hostname.toLowerCase()]
+      const hostname = String(body.hostname || `${body.slug}.${config.baseDomain}`).toLowerCase();
+      await client.query(
+        "INSERT INTO tenant_domains (tenant_id, hostname, is_primary) VALUES ($1, $2, true)",
+        [tenant.id, hostname]
+      );
+
+      let adminMembership = null;
+      if (body.adminEmail) {
+        const userResult = await client.query(
+          `
+            INSERT INTO app_users (email, display_name)
+            VALUES ($1, $2)
+            ON CONFLICT (email) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, app_users.display_name)
+            RETURNING id, email, display_name
+          `,
+          [body.adminEmail.toLowerCase(), body.adminDisplayName || null]
         );
+        const adminUser = userResult.rows[0];
+
+        const membershipResult = await client.query(
+          `
+            INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
+            VALUES ($1, $2, 'tenant_admin', 'active', $3)
+            ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = 'tenant_admin', status = 'active'
+            RETURNING id, tenant_id, user_id, role, status, created_at
+          `,
+          [tenant.id, adminUser.id, auth.user.id]
+        );
+
+        adminMembership = {
+          ...membershipResult.rows[0],
+          email: adminUser.email,
+          display_name: adminUser.display_name
+        };
       }
 
       await createAuditEvent(client, {
-        tenantId: created.id,
+        tenantId: tenant.id,
         actorUserId: auth.user.id,
         action: "tenant.created",
         entityType: "tenant",
-        entityId: created.id,
-        metadata: { slug: body.slug, hostname: body.hostname || null }
+        entityId: tenant.id,
+        metadata: { slug: body.slug, hostname, adminEmail: body.adminEmail || null }
       });
 
-      return created;
+      return { tenant, adminMembership };
     });
 
     reply.code(201);
-    return { tenant: rowToTenant(tenant) };
+    return {
+      tenant: rowToTenant(created.tenant),
+      adminMembership: created.adminMembership ? rowToMember(created.adminMembership) : null
+    };
   });
 
   route(app, "get", "/api/tenant", async (request, reply) => {
@@ -191,6 +300,29 @@ export function registerRoutes(app) {
       tenant: rowToTenant(context.tenant),
       membership: context.membership
     };
+  });
+
+  route(app, "get", "/api/tenant/members", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const result = await query(
+      `
+        SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
+          u.email, u.display_name
+        FROM tenant_memberships m
+        JOIN app_users u ON u.id = m.user_id
+        WHERE m.tenant_id = $1
+        ORDER BY
+          CASE m.role
+            WHEN 'tenant_admin' THEN 1
+            WHEN 'contributor' THEN 2
+            ELSE 3
+          END,
+          u.email ASC
+      `,
+      [context.tenant.id]
+    );
+
+    return { members: result.rows.map(rowToMember) };
   });
 
   route(app, "post", "/api/tenant/members", async (request, reply) => {
@@ -240,6 +372,266 @@ export function registerRoutes(app) {
 
     reply.code(201);
     return { member };
+  });
+
+  route(app, "get", "/api/tenant/invitations", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const result = await query(
+      `
+        SELECT *
+        FROM tenant_invitations
+        WHERE tenant_id = $1
+        ORDER BY created_at DESC
+      `,
+      [context.tenant.id]
+    );
+
+    return { invitations: result.rows.map(rowToInvitation) };
+  });
+
+  route(app, "post", "/api/tenant/invitations", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({
+        email: z.string().email(),
+        displayName: z.string().optional(),
+        role: z.enum(tenantRoles).default("contributor"),
+        expiresInDays: z.number().int().min(1).max(60).default(14)
+      }),
+      request.body
+    );
+
+    const token = createInviteToken();
+    const tokenHash = hashInviteToken(token);
+    const email = body.email.toLowerCase();
+    const expiresAt = new Date(Date.now() + body.expiresInDays * 24 * 60 * 60 * 1000);
+
+    const invite = await withTransaction(async client => {
+      const userResult = await client.query(
+        `
+          INSERT INTO app_users (email, display_name)
+          VALUES ($1, $2)
+          ON CONFLICT (email) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, app_users.display_name)
+          RETURNING id, email, display_name
+        `,
+        [email, body.displayName || null]
+      );
+      const user = userResult.rows[0];
+
+      await client.query(
+        `
+          INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
+          VALUES ($1, $2, $3, 'invited', $4)
+          ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+            role = EXCLUDED.role,
+            status = CASE
+              WHEN tenant_memberships.status = 'active' THEN 'active'
+              ELSE 'invited'
+            END,
+            invited_by = EXCLUDED.invited_by
+        `,
+        [context.tenant.id, user.id, body.role, context.user.id]
+      );
+
+      const inviteResult = await client.query(
+        `
+          INSERT INTO tenant_invitations (tenant_id, email, role, token_hash, invited_by, expires_at)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          RETURNING *
+        `,
+        [context.tenant.id, email, body.role, tokenHash, context.user.id, expiresAt]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "invitation.created",
+        entityType: "tenant_invitation",
+        entityId: inviteResult.rows[0].id,
+        metadata: { email, role: body.role }
+      });
+
+      return inviteResult.rows[0];
+    });
+
+    const inviteUrl = buildInviteUrl(context.tenant, token);
+    let emailResult;
+    try {
+      emailResult = await sendTenantInviteEmail({
+        to: email,
+        tenantName: context.tenant.name,
+        role: body.role,
+        inviteUrl,
+        invitedByName: context.user.display_name || context.user.email
+      });
+    } catch (error) {
+      console.error("invite email failed", error);
+      emailResult = { sent: false, reason: "send_failed" };
+    }
+
+    reply.code(201);
+    return {
+      invitation: {
+        ...rowToInvitation(invite),
+        inviteUrl
+      },
+      email: emailResult
+    };
+  });
+
+  route(app, "post", "/api/tenant/invitations/:invitationId/revoke", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const revoked = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          UPDATE tenant_invitations
+          SET status = 'revoked', revoked_at = now()
+          WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+          RETURNING *
+        `,
+        [request.params.invitationId, context.tenant.id]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "invitation.revoked",
+        entityType: "tenant_invitation",
+        entityId: result.rows[0].id
+      });
+
+      return result.rows[0];
+    });
+
+    if (!revoked) {
+      reply.code(404);
+      throw new Error("Pending invitation not found");
+    }
+
+    return { invitation: rowToInvitation(revoked) };
+  });
+
+  route(app, "get", "/api/invitations/:token", async (request, reply) => {
+    const tokenHash = hashInviteToken(request.params.token);
+    const result = await query(
+      `
+        SELECT i.*, t.slug, t.name AS tenant_name, t.status AS tenant_status
+        FROM tenant_invitations i
+        JOIN tenants t ON t.id = i.tenant_id
+        WHERE i.token_hash = $1
+        LIMIT 1
+      `,
+      [tokenHash]
+    );
+
+    const invite = result.rows[0];
+    if (!invite || invite.status !== "pending" || new Date(invite.expires_at).getTime() <= Date.now()) {
+      reply.code(404);
+      throw new Error("Invitation not found or expired");
+    }
+
+    return {
+      invitation: {
+        id: invite.id,
+        email: invite.email,
+        role: invite.role,
+        expiresAt: invite.expires_at,
+        tenant: {
+          id: invite.tenant_id,
+          slug: invite.slug,
+          name: invite.tenant_name,
+          status: invite.tenant_status
+        }
+      }
+    };
+  });
+
+  route(app, "post", "/api/invitations/accept", async (request, reply) => {
+    const auth = await authContext(request, reply);
+    const body = parseBody(
+      z.object({
+        token: z.string().min(20)
+      }),
+      request.body
+    );
+    const tokenHash = hashInviteToken(body.token);
+
+    const accepted = await withTransaction(async client => {
+      const inviteResult = await client.query(
+        `
+          SELECT *
+          FROM tenant_invitations
+          WHERE token_hash = $1
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [tokenHash]
+      );
+      const invite = inviteResult.rows[0];
+
+      if (!invite || invite.status !== "pending" || new Date(invite.expires_at).getTime() <= Date.now()) {
+        return null;
+      }
+
+      if (invite.email !== auth.user.email && !auth.identity.isPlatformAdmin) {
+        return { forbidden: true };
+      }
+
+      const membershipResult = await client.query(
+        `
+          INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
+          VALUES ($1, $2, $3, 'active', $4)
+          ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
+          RETURNING id, tenant_id, user_id, role, status, created_at
+        `,
+        [invite.tenant_id, auth.user.id, invite.role, invite.invited_by]
+      );
+
+      const updatedInvite = await client.query(
+        `
+          UPDATE tenant_invitations
+          SET status = 'accepted', accepted_at = now()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [invite.id]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: invite.tenant_id,
+        actorUserId: auth.user.id,
+        action: "invitation.accepted",
+        entityType: "tenant_invitation",
+        entityId: invite.id,
+        metadata: { email: invite.email, role: invite.role }
+      });
+
+      return {
+        invitation: updatedInvite.rows[0],
+        membership: {
+          ...membershipResult.rows[0],
+          email: auth.user.email,
+          display_name: auth.user.display_name
+        }
+      };
+    });
+
+    if (!accepted) {
+      reply.code(404);
+      throw new Error("Invitation not found or expired");
+    }
+
+    if (accepted.forbidden) {
+      reply.code(403);
+      throw new Error("Invitation belongs to a different email address");
+    }
+
+    return {
+      invitation: rowToInvitation(accepted.invitation),
+      membership: rowToMember(accepted.membership)
+    };
   });
 
   route(app, "get", "/api/inventory/items", async (request, reply) => {
