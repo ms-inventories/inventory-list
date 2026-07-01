@@ -13,11 +13,12 @@ import {
   X
 } from "lucide-react";
 import { appConfig, getTenantSlugFromHostname } from "./config.js";
+import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
 import { getPacketCandidateDisplay, recognizePacketFile } from "./lib/ocr.js";
 
-const BUCKET_BASE_URL = appConfig.legacyBucketBaseUrl;
-const INDEX_URL = `${BUCKET_BASE_URL}/inventories/index.json`;
-const IMAGE_BASE_URL = `${BUCKET_BASE_URL}/`;
+const BUCKET_BASE_URL = String(appConfig.legacyBucketBaseUrl || "").replace(/\/+$/, "");
+const INDEX_URL = BUCKET_BASE_URL ? `${BUCKET_BASE_URL}/inventories/index.json` : "";
+const IMAGE_BASE_URL = BUCKET_BASE_URL ? `${BUCKET_BASE_URL}/` : "/";
 
 const SEARCH_NOISE_TERMS = new Set([
   "buom",
@@ -54,6 +55,57 @@ async function fetchJson(url) {
   const res = await fetch(url + (url.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" });
   if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
   return await res.json();
+}
+
+function cloneData(value) {
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
+}
+
+async function loadIndexData() {
+  let remoteError = null;
+
+  if (INDEX_URL) {
+    try {
+      return { data: await fetchJson(INDEX_URL), source: "remote" };
+    } catch (e) {
+      remoteError = e;
+    }
+  }
+
+  if (appConfig.enableDemoFallback) {
+    return { data: cloneData(demoIndexData), source: "demo", error: remoteError };
+  }
+
+  throw remoteError || new Error("No inventory index source configured");
+}
+
+async function loadInventoryData(file, dataSource) {
+  let remoteError = null;
+
+  if (dataSource !== "demo" && BUCKET_BASE_URL) {
+    try {
+      return { data: await fetchJson(`${BUCKET_BASE_URL}/${file}`), source: "remote" };
+    } catch (e) {
+      remoteError = e;
+    }
+  }
+
+  if (appConfig.enableDemoFallback && demoInventoriesByFile[file]) {
+    return { data: cloneData(demoInventoriesByFile[file]), source: "demo", error: remoteError };
+  }
+
+  throw remoteError || new Error("No inventory source configured for this platoon");
+}
+
+function getInitialPlatoonId(platoons, tenantSlug) {
+  const list = Array.isArray(platoons) ? platoons : [];
+  const tenantMatch = tenantSlug
+    ? list.find(platoon => String(platoon.id || "").toLowerCase() === tenantSlug.toLowerCase())
+    : null;
+
+  return (tenantMatch || list[0] || {}).id || "";
 }
 
 function isImageField(field) {
@@ -291,6 +343,7 @@ function LoginScreen({
   selectedPlatoonId,
   password,
   tenantSlug,
+  dataSource,
   loginStatus,
   onSelectedPlatoonIdChange,
   onPasswordChange,
@@ -301,7 +354,11 @@ function LoginScreen({
       <section className="auth-card" aria-labelledby="loginTitle">
         <p className="eyebrow">{tenantSlug ? `${tenantSlug} workspace` : "876 EN inventory"}</p>
         <h1 id="loginTitle">Equipment Inventory</h1>
-        <p className="auth-copy">Select your platoon and open the latest equipment list.</p>
+        <p className="auth-copy">
+          {dataSource === "demo"
+            ? "Demo data is loaded for local testing. Use password demo."
+            : "Select your platoon and open the latest equipment list."}
+        </p>
 
         <div className="form-stack">
           <label className="field-label" htmlFor="platoonSelect">Platoon</label>
@@ -309,6 +366,7 @@ function LoginScreen({
             id="platoonSelect"
             className="select"
             value={selectedPlatoonId}
+            disabled={!indexData}
             onChange={e => onSelectedPlatoonIdChange(e.target.value)}
           >
             {(indexData?.platoons || []).map(platoon => (
@@ -580,6 +638,7 @@ function Lightbox({ image, onClose }) {
 
 function ViewerApp() {
   const [indexData, setIndexData] = useState(null);
+  const [dataSource, setDataSource] = useState("remote");
   const [selectedPlatoonId, setSelectedPlatoonId] = useState("");
   const [password, setPassword] = useState("");
   const [loginStatus, setLoginStatus] = useState({ text: "Loading platoons...", isError: false });
@@ -599,15 +658,20 @@ function ViewerApp() {
 
     async function load() {
       try {
-        const data = await fetchJson(INDEX_URL);
+        const result = await loadIndexData();
+        const data = result.data;
         if (!data || !Array.isArray(data.platoons) || data.platoons.length === 0) {
           throw new Error("index.json has no platoons");
         }
 
         if (!ignore) {
+          setDataSource(result.source);
           setIndexData(data);
-          setSelectedPlatoonId(data.platoons[0].id);
-          setLoginStatus({ text: "", isError: false });
+          setSelectedPlatoonId(getInitialPlatoonId(data.platoons, tenantSlug));
+          setLoginStatus({
+            text: result.source === "demo" ? "Using bundled demo data until the live source is available." : "",
+            isError: false
+          });
         }
       } catch {
         if (!ignore) setLoginStatus({ text: "Failed to load index.json", isError: true });
@@ -618,7 +682,7 @@ function ViewerApp() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [tenantSlug]);
 
   useEffect(() => {
     const onKeyDown = e => {
@@ -663,16 +727,24 @@ function ViewerApp() {
     setLoginStatus({ text: "Loading inventory...", isError: false });
 
     try {
-      const data = await fetchJson(`${BUCKET_BASE_URL}/${currentPlatoon.file}`);
+      const result = await loadInventoryData(currentPlatoon.file, dataSource);
+      const data = result.data;
       if (password !== data.password) {
-        setLoginStatus({ text: "Incorrect password", isError: true });
+        setLoginStatus({
+          text: result.source === "demo" ? "Incorrect password. Demo password is demo." : "Incorrect password",
+          isError: true
+        });
         return;
       }
 
+      setDataSource(result.source);
       setInventory(data);
       setSelectedPlatoon(currentPlatoon);
       setSearchQuery("");
-      setScanStatus({ text: "", isError: false });
+      setScanStatus({
+        text: result.source === "demo" ? "Demo inventory loaded. Live backend data is not connected yet." : "",
+        isError: false
+      });
       setLoginStatus({ text: "", isError: false });
     } catch {
       setLoginStatus({ text: "Failed to load platoon inventory", isError: true });
@@ -721,6 +793,7 @@ function ViewerApp() {
         selectedPlatoonId={selectedPlatoonId}
         password={password}
         tenantSlug={tenantSlug}
+        dataSource={dataSource}
         loginStatus={loginStatus}
         onSelectedPlatoonIdChange={setSelectedPlatoonId}
         onPasswordChange={setPassword}

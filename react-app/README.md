@@ -33,4 +33,7 @@ Set these environment variables in Coolify if you need to override defaults:
 VITE_BASE_DOMAIN=876en.org
 VITE_API_BASE_URL=/api
 VITE_LEGACY_BUCKET_BASE_URL=https://ms-inventories.s3.us-east-1.amazonaws.com
+VITE_ENABLE_DEMO_FALLBACK=true
 ```
+
+`VITE_ENABLE_DEMO_FALLBACK` keeps localhost and first deploys usable even when the old static JSON source is unavailable from the browser. Set it to `false` after the backend is serving tenant inventory data.
