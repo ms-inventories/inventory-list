@@ -1122,6 +1122,11 @@ button {
   padding: 12px;
 }
 
+.session-item.needs-response {
+  border-color: #e3c58e;
+  background: #fffbf2;
+}
+
 .session-item-main {
   display: flex;
   min-width: 0;
@@ -1154,6 +1159,37 @@ button {
   font-size: 0.86rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.session-item-main .session-proof-state {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  margin-top: 6px;
+  padding: 0 8px;
+  text-transform: uppercase;
+}
+
+.session-item-main .session-proof-state.requested {
+  border-color: #e3c58e;
+  background: #fff8e9;
+  color: #765018;
+}
+
+.session-item-main .session-proof-request {
+  border-left: 3px solid #e3c58e;
+  background: #fff8e9;
+  color: #765018;
+  margin-top: 6px;
+  padding: 7px 9px;
 }
 
 .session-item-actions {
@@ -1242,6 +1278,29 @@ button {
   border-top: 1px solid var(--line);
   margin-top: 2px;
   padding-top: 12px;
+}
+
+.proof-request-context {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #e3c58e;
+  border-radius: var(--radius);
+  background: #fff8e9;
+  color: #765018;
+  padding: 10px;
+}
+
+.proof-request-context strong {
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.proof-request-context span {
+  font-size: 0.88rem;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .segmented-control {

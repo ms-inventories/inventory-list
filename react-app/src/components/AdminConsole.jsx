@@ -209,13 +209,16 @@ function sortSessionsByAttention(sessions) {
 }
 
 function sessionItemPriority(item) {
+  if (itemNeedsMoreProof(item)) return 0;
+  if (itemHasPendingProof(item)) return 1;
+
   const ranks = {
-    needs_review: 0,
-    unchecked: 1,
-    mismatch: 2,
-    not_found: 3,
-    found: 4,
-    approved: 5
+    needs_review: 2,
+    unchecked: 3,
+    mismatch: 4,
+    not_found: 5,
+    found: 6,
+    approved: 7
   };
 
   return ranks[item?.status] ?? 9;
@@ -234,6 +237,25 @@ function latestSubmission(item) {
   return (item.submissions || [])[0] || null;
 }
 
+function itemNeedsMoreProof(item) {
+  return latestSubmission(item)?.reviewState === "request_more_info";
+}
+
+function itemHasPendingProof(item) {
+  return latestSubmission(item)?.reviewState === "pending";
+}
+
+function formatReviewState(value) {
+  const labels = {
+    pending: "Pending review",
+    approved: "Approved",
+    request_more_info: "More proof requested",
+    rejected: "Rejected"
+  };
+
+  return labels[value] || value || "No proof";
+}
+
 const proofRequestOptions = [
   { value: "serial_photo", label: "Serial photo" },
   { value: "wide_photo", label: "Wide photo" },
@@ -250,7 +272,7 @@ function buildProofRequestMessage(fields) {
   return `Send ${labels.join(", ").toLowerCase()} when you can.`;
 }
 
-function ProofForm({ item, token, tenantSlug, onCancel, onSaved, onStatus }) {
+function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSaved, onStatus }) {
   const [form, setForm] = useState({
     status: "found",
     locationText: "",
@@ -313,6 +335,13 @@ function ProofForm({ item, token, tenantSlug, onCancel, onSaved, onStatus }) {
 
   return (
     <form className="proof-form" onSubmit={submitProof}>
+      {requestNote ? (
+        <div className="proof-request-context">
+          <strong>LT request</strong>
+          <span>{requestNote}</span>
+        </div>
+      ) : null}
+
       <div className="segmented-control">
         {[
           ["found", "Found"],
@@ -345,7 +374,7 @@ function ProofForm({ item, token, tenantSlug, onCancel, onSaved, onStatus }) {
       <textarea
         className="input proof-note"
         value={form.note}
-        placeholder="Note"
+        placeholder={requestNote ? "What this response shows" : "Note"}
         onChange={e => setForm(current => ({ ...current, note: e.target.value }))}
       />
       <label className="photo-picker">
@@ -362,7 +391,7 @@ function ProofForm({ item, token, tenantSlug, onCancel, onSaved, onStatus }) {
       <div className="button-row">
         <button className="btn btn-primary" type="submit" disabled={isSaving}>
           <Send aria-hidden="true" />
-          <span>{isSaving ? "Submitting..." : "Submit"}</span>
+          <span>{isSaving ? "Submitting..." : requestNote ? "Send response" : "Submit"}</span>
         </button>
         <button className="btn btn-secondary" type="button" onClick={onCancel}>
           <span>Cancel</span>
@@ -704,15 +733,24 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
               <div className="session-items">
                 {detailItems.length ? detailItems.map(item => {
                   const submission = latestSubmission(item);
+                  const needsMoreProof = submission?.reviewState === "request_more_info";
+                  const pendingProof = submission?.reviewState === "pending";
                   return (
-                    <article className="session-item" key={item.id}>
+                    <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} key={item.id}>
                       <div className="session-item-main">
                         <FileText aria-hidden="true" />
                         <div>
                           <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
                           <span>{item.packetLine || "No packet text"}</span>
                           {item.locationHint ? <small>Hint: {item.locationHint}</small> : null}
-                          {submission ? <small>Latest proof: {submission.reviewState}</small> : null}
+                          {submission ? (
+                            <small className={`session-proof-state ${needsMoreProof ? "requested" : ""}`}>
+                              {formatReviewState(submission.reviewState)}
+                            </small>
+                          ) : null}
+                          {needsMoreProof && submission.reviewNote ? (
+                            <small className="session-proof-request">Requested: {submission.reviewNote}</small>
+                          ) : null}
                         </div>
                       </div>
                       <div className="session-item-actions">
@@ -731,7 +769,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                         {canSubmit && selectedSession.status !== "closed" ? (
                           <button className="btn btn-primary btn-small" type="button" onClick={() => setProofItemId(item.id)}>
                             <Camera aria-hidden="true" />
-                            <span>Proof</span>
+                            <span>{needsMoreProof ? "Respond" : pendingProof ? "Add proof" : "Proof"}</span>
                           </button>
                         ) : null}
                       </div>
@@ -740,6 +778,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                           item={item}
                           token={token}
                           tenantSlug={tenantSlug}
+                          requestNote={needsMoreProof ? submission.reviewNote : ""}
                           onCancel={() => setProofItemId("")}
                           onSaved={() => {
                             setProofItemId("");
