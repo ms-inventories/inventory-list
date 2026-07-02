@@ -64,15 +64,39 @@ button {
   display: grid;
   min-height: 76vh;
   align-content: space-between;
+  isolation: isolate;
   overflow: hidden;
   padding: 22px;
   background:
-    linear-gradient(90deg, rgba(14, 24, 17, 0.9), rgba(14, 24, 17, 0.58), rgba(14, 24, 17, 0.2)),
-    url("assets/hmee.png") center / cover no-repeat;
+    linear-gradient(90deg, rgba(5, 5, 4, 0.98) 0%, rgba(5, 5, 4, 0.88) 42%, rgba(5, 5, 4, 0.66) 72%, rgba(5, 5, 4, 0.92) 100%),
+    #050504;
   color: #fff;
 }
 
+.public-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 1;
+  height: 6px;
+  background: linear-gradient(90deg, #b61f28, #d6a23a, #b61f28);
+}
+
+.public-hero-logo {
+  position: absolute;
+  top: 50%;
+  right: max(-68px, calc((100vw - 1180px) / 2));
+  z-index: 0;
+  width: min(62vw, 720px);
+  max-height: 88vh;
+  opacity: 0.64;
+  object-fit: contain;
+  transform: translateY(-48%);
+}
+
 .public-nav {
+  position: relative;
+  z-index: 2;
   display: flex;
   width: min(1120px, 100%);
   align-items: center;
@@ -173,12 +197,14 @@ button {
 }
 
 .public-hero-copy {
+  position: relative;
+  z-index: 2;
   display: grid;
-  width: min(720px, 100%);
+  width: min(650px, 100%);
   gap: 16px;
   align-self: end;
-  margin: 72px auto 26px;
-  justify-self: center;
+  margin: 72px auto 46px;
+  justify-self: start;
 }
 
 .public-hero-copy h1 {
@@ -189,7 +215,7 @@ button {
 }
 
 .public-hero-copy p:not(.eyebrow) {
-  max-width: 620px;
+  max-width: 560px;
   margin: 0;
   color: rgba(255, 255, 255, 0.88);
   font-size: 1.13rem;
@@ -2765,6 +2791,14 @@ button {
     min-height: 72vh;
   }
 
+  .public-hero-logo {
+    top: 44%;
+    right: 50%;
+    width: min(92vw, 580px);
+    opacity: 0.38;
+    transform: translate(50%, -48%);
+  }
+
   .public-hero-copy {
     margin-top: 56px;
   }
@@ -2870,6 +2904,12 @@ button {
     padding: 16px;
   }
 
+  .public-hero-logo {
+    top: 44%;
+    width: min(108vw, 460px);
+    opacity: 0.3;
+  }
+
   .public-nav {
     align-items: flex-start;
   }
@@ -2880,7 +2920,7 @@ button {
 
   .public-hero-copy {
     gap: 12px;
-    margin: 42px auto 14px;
+    margin: 42px auto 26px;
   }
 
   .public-hero-copy h1 {

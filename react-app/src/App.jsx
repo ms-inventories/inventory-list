@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import AcceptInvite from "./components/AcceptInvite.jsx";
 import AdminConsole from "./components/AdminConsole.jsx";
+import blackShadowLogo from "./assets/black-shadow-company.jpg";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "./config.js";
 import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
 import { getPacketCandidateDisplay, recognizePacketFile } from "./lib/ocr.js";
@@ -370,10 +371,11 @@ function PublicHome() {
   return (
     <main className="public-site">
       <section className="public-hero" aria-labelledby="publicTitle">
+        <img className="public-hero-logo" src={blackShadowLogo} alt="" aria-hidden="true" />
         <nav className="public-nav" aria-label="Public navigation">
           <a className="public-brand" href="/">
             <span>876 EN</span>
-            <strong>Family Readiness</strong>
+            <strong>Black Shadow Company</strong>
           </a>
 
           <details className="public-login-menu">
@@ -395,9 +397,9 @@ function PublicHome() {
 
         <div className="public-hero-copy">
           <p className="eyebrow">Family readiness group</p>
-          <h1 id="publicTitle">876 EN Family Readiness</h1>
+          <h1 id="publicTitle">Black Shadow Company</h1>
           <p>
-            Unit updates, event reminders, and family resources will live here as this site comes online.
+            Family updates, event reminders, and company resources will live here as this site comes online.
           </p>
           <div className="public-hero-actions">
             <a className="btn btn-primary" href="#newsletter">
@@ -434,7 +436,7 @@ function PublicHome() {
             <p className="eyebrow">Newsletter</p>
             <h2 id="newsletterTitle">Stay in the loop</h2>
             <p>
-              The newsletter form is ready to connect to Brevo when the public contact list is finalized.
+              The newsletter form is ready to connect to Brevo when the company contact list is finalized.
             </p>
           </div>
           <form
