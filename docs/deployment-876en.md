@@ -216,10 +216,11 @@ The first React tenant-admin session flow is live:
 - let the LT directly mark rows found or not found when working alone
 - let contributors/NCOs submit found/not-found/mismatch proof with location, serial, note, and photo
 - let the LT review proof from a queue and approve, reject, or request more proof
+- let the LT write a specific request note when asking for more proof
 - notify platoon admins by email when proof is submitted
 - notify the submitter by email when the LT requests more proof
 
-The next backend/frontend slice should tighten the session list around active work first, then add a better custom note field for "more proof" requests.
+The next backend/frontend slice should make repeated proof updates easier for contributors after a request is sent.
 
 ## QA Environment
 

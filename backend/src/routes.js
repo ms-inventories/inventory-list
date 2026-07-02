@@ -1571,8 +1571,15 @@ export function registerRoutes(app) {
       );
 
       await client.query(
-        "UPDATE item_submissions SET review_state = 'request_more_info' WHERE id = $1",
-        [request.params.submissionId]
+        `
+          UPDATE item_submissions
+          SET review_state = 'request_more_info',
+            review_note = $2,
+            reviewed_by = $3,
+            reviewed_at = now()
+          WHERE id = $1
+        `,
+        [request.params.submissionId, body.message, context.user.id]
       );
 
       await client.query(
@@ -1586,7 +1593,7 @@ export function registerRoutes(app) {
         action: "evidence_request.created",
         entityType: "evidence_request",
         entityId: result.rows[0].id,
-        metadata: { requestedFields: body.requestedFields }
+        metadata: { requestedFields: body.requestedFields, message: body.message }
       });
 
       return result.rows[0];

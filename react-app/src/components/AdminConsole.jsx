@@ -234,6 +234,22 @@ function latestSubmission(item) {
   return (item.submissions || [])[0] || null;
 }
 
+const proofRequestOptions = [
+  { value: "serial_photo", label: "Serial photo" },
+  { value: "wide_photo", label: "Wide photo" },
+  { value: "location", label: "Location" },
+  { value: "damage", label: "Damage" }
+];
+
+function buildProofRequestMessage(fields) {
+  const labels = fields
+    .map(field => proofRequestOptions.find(option => option.value === field)?.label)
+    .filter(Boolean);
+
+  if (!labels.length) return "Send another clear photo or more detail when you can.";
+  return `Send ${labels.join(", ").toLowerCase()} when you can.`;
+}
+
 function ProofForm({ item, token, tenantSlug, onCancel, onSaved, onStatus }) {
   const [form, setForm] = useState({
     status: "found",
@@ -753,6 +769,10 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
 function ReviewPanel({ token, tenantSlug }) {
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading review queue...", isError: false });
+  const [requestingSubmissionId, setRequestingSubmissionId] = useState("");
+  const [proofRequestMessage, setProofRequestMessage] = useState("");
+  const [proofRequestFields, setProofRequestFields] = useState(["serial_photo", "wide_photo"]);
+  const [isRequestingProof, setIsRequestingProof] = useState(false);
 
   async function loadQueue() {
     try {
@@ -784,6 +804,50 @@ function ReviewPanel({ token, tenantSlug }) {
     }
   }
 
+  function openProofRequest(submission) {
+    const defaultFields = submission.serialNumber ? ["wide_photo", "location"] : ["serial_photo", "wide_photo"];
+    setRequestingSubmissionId(submission.id);
+    setProofRequestFields(defaultFields);
+    setProofRequestMessage(buildProofRequestMessage(defaultFields));
+  }
+
+  function toggleProofRequestField(field) {
+    const next = proofRequestFields.includes(field)
+      ? proofRequestFields.filter(value => value !== field)
+      : [...proofRequestFields, field];
+    setProofRequestFields(next);
+    setProofRequestMessage(buildProofRequestMessage(next));
+  }
+
+  async function sendProofRequest(e) {
+    e.preventDefault();
+    const message = proofRequestMessage.trim();
+    if (!requestingSubmissionId || !message) {
+      setStatus({ text: "Add what proof you need first.", isError: true });
+      return;
+    }
+
+    try {
+      setIsRequestingProof(true);
+      setStatus({ text: "Sending proof request...", isError: false });
+      await apiRequest(`/submissions/${requestingSubmissionId}/evidence-requests`, {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { message, requestedFields: proofRequestFields }
+      });
+      setRequestingSubmissionId("");
+      setProofRequestMessage("");
+      setProofRequestFields(["serial_photo", "wide_photo"]);
+      await loadQueue();
+      setStatus({ text: "Proof request sent.", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsRequestingProof(false);
+    }
+  }
+
   return (
     <section className="admin-card review-panel">
       <div className="admin-card-heading">
@@ -805,6 +869,9 @@ function ReviewPanel({ token, tenantSlug }) {
               {submission.locationText ? <small>Location: {submission.locationText}</small> : null}
               {submission.serialNumber ? <small>Serial: {submission.serialNumber}</small> : null}
               {submission.note ? <small>{submission.note}</small> : null}
+              {submission.reviewState === "request_more_info" && submission.reviewNote ? (
+                <small className="review-request-note">Requested: {submission.reviewNote}</small>
+              ) : null}
             </div>
 
             {submission.photos?.length ? (
@@ -825,7 +892,7 @@ function ReviewPanel({ token, tenantSlug }) {
               <button
                 className="btn btn-secondary btn-small"
                 type="button"
-                onClick={() => review(submission.id, "request_more_info", "Send a clearer photo and serial number if available.")}
+                onClick={() => openProofRequest(submission)}
               >
                 <Camera aria-hidden="true" />
                 <span>More proof</span>
@@ -835,6 +902,46 @@ function ReviewPanel({ token, tenantSlug }) {
                 <span>Reject</span>
               </button>
             </div>
+
+            {requestingSubmissionId === submission.id ? (
+              <form className="proof-request-form" onSubmit={sendProofRequest}>
+                <div className="proof-request-chips" aria-label="Requested proof">
+                  {proofRequestOptions.map(option => (
+                    <button
+                      className={proofRequestFields.includes(option.value) ? "active" : ""}
+                      type="button"
+                      key={option.value}
+                      onClick={() => toggleProofRequestField(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <label className="field-label" htmlFor={`proofRequest-${submission.id}`}>Request note</label>
+                <textarea
+                  id={`proofRequest-${submission.id}`}
+                  className="input proof-request-note"
+                  value={proofRequestMessage}
+                  onChange={e => setProofRequestMessage(e.target.value)}
+                />
+                <div className="button-row">
+                  <button className="btn btn-primary btn-small" type="submit" disabled={isRequestingProof}>
+                    <Send aria-hidden="true" />
+                    <span>{isRequestingProof ? "Sending..." : "Send request"}</span>
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-small"
+                    type="button"
+                    onClick={() => {
+                      setRequestingSubmissionId("");
+                      setProofRequestMessage("");
+                    }}
+                  >
+                    <span>Cancel</span>
+                  </button>
+                </div>
+              </form>
+            ) : null}
           </article>
         )) : (
           <EmptyPanel title="Nothing to review" body="Submitted proof will appear here." />

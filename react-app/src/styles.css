@@ -1331,6 +1331,13 @@ button {
   overflow-wrap: anywhere;
 }
 
+.review-request-note {
+  border-left: 3px solid #e3c58e;
+  background: #fff8e9;
+  color: #765018 !important;
+  padding: 7px 9px;
+}
+
 .review-photo-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
@@ -1349,6 +1356,42 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.proof-request-form {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.proof-request-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.proof-request-chips button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 900;
+  padding: 0 11px;
+}
+
+.proof-request-chips button.active {
+  border-color: #b8c7b2;
+  background: #eef3eb;
+  color: var(--primary-strong);
+}
+
+.proof-request-note {
+  min-height: 78px;
+  resize: vertical;
 }
 
 .admin-toolbar {
