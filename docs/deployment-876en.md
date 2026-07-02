@@ -213,8 +213,51 @@ The first React tenant-admin session flow is live:
 - paste hand-receipt packet rows into the session
 - view session progress and row status
 - let the LT directly mark rows found or not found when working alone
+- let contributors/NCOs submit found/not-found/mismatch proof with location, serial, note, and photo
+- let the LT review proof from a queue and approve, reject, or request more proof
 
-The next backend/frontend slice should add contributor evidence submissions with photo upload to local NAS storage, then an LT review queue for approve/request-more-proof/reject.
+The next backend/frontend slice should add notification emails for new proof and proof requests, then tighten the session list around active work first.
+
+## QA Environment
+
+Use separate Coolify resources for QA when testing Authentik and inventory flows:
+
+```text
+qa.876en.org -> QA frontend
+qa-api.876en.org -> QA backend
+```
+
+QA frontend env:
+
+```text
+VITE_BASE_DOMAIN=876en.org
+VITE_API_BASE_URL=https://qa-api.876en.org/api
+VITE_ENABLE_QA_AUTH=true
+VITE_OIDC_CLIENT_ID=inventory-web
+VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory/.well-known/openid-configuration
+```
+
+QA backend env:
+
+```text
+NODE_ENV=development
+ALLOW_DEV_AUTH=true
+DATABASE_URL=<qa-postgres-url>
+BASE_DOMAIN=876en.org
+PUBLIC_APP_URL=https://qa.876en.org
+PUBLIC_MEDIA_BASE_URL=https://qa-api.876en.org/media
+STORAGE_ROOT=/data/inventory-uploads-qa
+```
+
+Keep QA on a separate database and storage folder. Never enable `ALLOW_DEV_AUTH` on the production backend.
+
+The QA frontend exposes root/LT/NCO persona buttons when `VITE_ENABLE_QA_AUTH=true`. A normal test pass should be:
+
+1. Root admin creates a platoon with `qa-lt@876en.test` as the LT.
+2. QA LT opens that platoon, creates a session, and pastes packet rows.
+3. QA LT invites or directly creates contributor access for `qa-nco@876en.test`.
+4. QA NCO opens Tasks, submits proof with a photo/location/serial.
+5. QA LT opens Review and approves, requests more proof, or rejects.
 
 ## GitHub Actions
 

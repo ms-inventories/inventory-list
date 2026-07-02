@@ -20,6 +20,7 @@ export const appConfig = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl(),
   legacyBucketBaseUrl: import.meta.env.VITE_LEGACY_BUCKET_BASE_URL || "https://ms-inventories.s3.us-east-1.amazonaws.com",
   enableDemoFallback: import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== "false",
+  enableQaAuth: import.meta.env.VITE_ENABLE_QA_AUTH === "true",
   oidc: {
     clientId: import.meta.env.VITE_OIDC_CLIENT_ID || "inventory-web",
     discoveryUrl: import.meta.env.VITE_OIDC_DISCOVERY_URL || "https://auth.876en.org/application/o/inventory/.well-known/openid-configuration",

@@ -23,6 +23,11 @@ function isAllowedCorsOrigin(origin) {
 }
 
 app.use(express.json({ limit: "20mb" }));
+app.use("/media", express.static(config.storage.root, {
+  fallthrough: false,
+  immutable: true,
+  maxAge: "7d"
+}));
 app.use(cors({
   origin(origin, callback) {
     if (isAllowedCorsOrigin(origin)) {

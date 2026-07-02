@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { authContext } from "./auth.js";
 import { config } from "./config.js";
@@ -10,6 +12,13 @@ const tenantRoles = ["tenant_admin", "contributor", "viewer"];
 const itemStatuses = ["unchecked", "found", "not_found", "mismatch", "needs_review", "approved"];
 const submissionStatuses = ["found", "not_found", "mismatch", "needs_review"];
 const reviewDecisions = ["approved", "request_more_info", "rejected"];
+const photoKinds = ["general", "serial", "location", "damage"];
+const imageMimeTypes = new Map([
+  ["image/jpeg", ".jpg"],
+  ["image/png", ".png"],
+  ["image/webp", ".webp"],
+  ["image/gif", ".gif"]
+]);
 
 function parseBody(schema, body) {
   return schema.parse(body || {});
@@ -87,9 +96,9 @@ function rowToSession(row) {
     name: row.name,
     status: row.status,
     packetSource: row.packet_source,
-    itemCount: row.item_count,
-    foundCount: row.found_count,
-    needsReviewCount: row.needs_review_count,
+    itemCount: row.item_count ?? 0,
+    foundCount: row.found_count ?? 0,
+    needsReviewCount: row.needs_review_count ?? 0,
     createdBy: row.created_by,
     createdAt: row.created_at,
     closedAt: row.closed_at
@@ -137,8 +146,90 @@ function rowToSubmission(row) {
     reviewNote: row.review_note,
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
+    createdAt: row.created_at,
+    photos: []
+  };
+}
+
+function rowToPhoto(row) {
+  return {
+    id: row.id,
+    submissionId: row.submission_id,
+    storageKey: row.storage_key,
+    url: buildMediaUrl(row.storage_key),
+    caption: row.caption,
+    kind: row.kind,
     createdAt: row.created_at
   };
+}
+
+function safeStorageKey(key) {
+  const normalized = String(key || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized || normalized.includes("..")) return "";
+  return normalized;
+}
+
+function buildMediaUrl(storageKey) {
+  const safeKey = safeStorageKey(storageKey);
+  if (!safeKey) return "";
+  const base = String(config.storage.publicMediaBaseUrl || "/media").replace(/\/+$/, "");
+  return `${base}/${safeKey}`;
+}
+
+function parseImagePayload(body) {
+  const mimeType = String(body.mimeType || "").toLowerCase();
+  const extension = imageMimeTypes.get(mimeType);
+  if (!extension) {
+    const error = new Error("Unsupported image type");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let base64 = String(body.base64 || "").trim();
+  const dataUrl = String(body.dataUrl || "").trim();
+  if (!base64 && dataUrl) {
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+      const error = new Error("Invalid image data URL");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (match[1].toLowerCase() !== mimeType) {
+      const error = new Error("Image data type does not match mimeType");
+      error.statusCode = 400;
+      throw error;
+    }
+    base64 = match[2];
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length || buffer.length > 12 * 1024 * 1024) {
+    const error = new Error("Image must be 12MB or smaller");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { buffer, extension };
+}
+
+async function saveUploadedImage(tenant, body) {
+  const { buffer, extension } = parseImagePayload(body);
+  const now = new Date();
+  const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const fileName = `${crypto.randomUUID()}${extension}`;
+  const storageKey = `tenants/${tenant.slug}/submissions/${month}/${fileName}`;
+  const absolutePath = path.resolve(config.storage.root, storageKey);
+  const rootPath = path.resolve(config.storage.root);
+
+  if (!absolutePath.startsWith(rootPath + path.sep)) {
+    const error = new Error("Invalid storage path");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, buffer);
+  return storageKey;
 }
 
 async function createAuditEvent(client, { tenantId, actorUserId, action, entityType, entityId, metadata = {} }) {
@@ -876,9 +967,29 @@ export function registerRoutes(app) {
 
     const items = itemsResult.rows.map(rowToSessionItem);
     const itemById = new Map(items.map(item => [item.id, item]));
-    submissionsResult.rows.forEach(row => {
-      const item = itemById.get(row.session_item_id);
-      if (item) item.submissions.push(rowToSubmission(row));
+    const submissions = submissionsResult.rows.map(rowToSubmission);
+    const submissionById = new Map(submissions.map(submission => [submission.id, submission]));
+
+    if (submissions.length) {
+      const photosResult = await query(
+        `
+          SELECT *
+          FROM submission_photos
+          WHERE submission_id = ANY($1::uuid[])
+          ORDER BY created_at ASC
+        `,
+        [submissions.map(submission => submission.id)]
+      );
+
+      photosResult.rows.forEach(row => {
+        const submission = submissionById.get(row.submission_id);
+        if (submission) submission.photos.push(rowToPhoto(row));
+      });
+    }
+
+    submissions.forEach(submission => {
+      const item = itemById.get(submission.sessionItemId);
+      if (item) item.submissions.push(submission);
     });
 
     return {
@@ -1032,6 +1143,32 @@ export function registerRoutes(app) {
     return { sessionItems: created };
   });
 
+  route(app, "post", "/api/uploads/photos", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor"]);
+    const body = parseBody(
+      z.object({
+        fileName: z.string().optional(),
+        mimeType: z.enum([...imageMimeTypes.keys()]),
+        dataUrl: z.string().optional(),
+        base64: z.string().optional(),
+        caption: z.string().optional(),
+        kind: z.enum(photoKinds).default("general")
+      }),
+      request.body
+    );
+
+    const storageKey = await saveUploadedImage(context.tenant, body);
+
+    return {
+      photo: {
+        storageKey,
+        url: buildMediaUrl(storageKey),
+        caption: body.caption || null,
+        kind: body.kind
+      }
+    };
+  });
+
   route(app, "patch", "/api/session-items/:sessionItemId/direct-check", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
@@ -1086,7 +1223,12 @@ export function registerRoutes(app) {
         locationText: z.string().optional(),
         note: z.string().optional(),
         serialNumber: z.string().optional(),
-        photoIds: z.array(z.string().uuid()).optional()
+        photoIds: z.array(z.string().uuid()).optional(),
+        photos: z.array(z.object({
+          storageKey: z.string().min(8),
+          caption: z.string().optional(),
+          kind: z.enum(photoKinds).default("general")
+        })).max(8).optional()
       }),
       request.body
     );
@@ -1121,6 +1263,24 @@ export function registerRoutes(app) {
         ]
       );
 
+      const photos = body.photos || [];
+      for (const photo of photos) {
+        const storageKey = safeStorageKey(photo.storageKey);
+        if (!storageKey.startsWith(`tenants/${context.tenant.slug}/`)) {
+          const error = new Error("Photo does not belong to this tenant");
+          error.statusCode = 400;
+          throw error;
+        }
+
+        await client.query(
+          `
+            INSERT INTO submission_photos (submission_id, storage_key, caption, kind)
+            VALUES ($1, $2, $3, $4)
+          `,
+          [result.rows[0].id, storageKey, photo.caption || null, photo.kind || "general"]
+        );
+      }
+
       await client.query(
         `
           UPDATE inventory_session_items
@@ -1136,7 +1296,7 @@ export function registerRoutes(app) {
         action: "submission.created",
         entityType: "item_submission",
         entityId: result.rows[0].id,
-        metadata: { status: body.status, photoIds: body.photoIds || [] }
+        metadata: { status: body.status, photoIds: body.photoIds || [], photoCount: photos.length }
       });
 
       return result.rows[0];
@@ -1149,6 +1309,61 @@ export function registerRoutes(app) {
 
     reply.code(201);
     return { submission };
+  });
+
+  route(app, "get", "/api/inventory/review-queue", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const result = await query(
+      `
+        SELECT sub.*, submitter.email AS submitted_by_email, submitter.display_name AS submitted_by_name,
+          si.id AS session_item_id,
+          si.packet_line,
+          si.status AS session_item_status,
+          s.id AS session_id,
+          s.name AS session_name
+        FROM item_submissions sub
+        JOIN inventory_session_items si ON si.id = sub.session_item_id
+        JOIN inventory_sessions s ON s.id = si.session_id
+        JOIN app_users submitter ON submitter.id = sub.submitted_by
+        WHERE s.tenant_id = $1
+          AND sub.review_state IN ('pending', 'request_more_info')
+          AND s.status <> 'closed'
+        ORDER BY sub.created_at DESC
+      `,
+      [context.tenant.id]
+    );
+
+    const submissions = result.rows.map(row => ({
+      ...rowToSubmission(row),
+      session: {
+        id: row.session_id,
+        name: row.session_name
+      },
+      sessionItem: {
+        id: row.session_item_id,
+        packetLine: row.packet_line,
+        status: row.session_item_status
+      }
+    }));
+
+    if (submissions.length) {
+      const photosResult = await query(
+        `
+          SELECT *
+          FROM submission_photos
+          WHERE submission_id = ANY($1::uuid[])
+          ORDER BY created_at ASC
+        `,
+        [submissions.map(submission => submission.id)]
+      );
+      const byId = new Map(submissions.map(submission => [submission.id, submission]));
+      photosResult.rows.forEach(row => {
+        const submission = byId.get(row.submission_id);
+        if (submission) submission.photos.push(rowToPhoto(row));
+      });
+    }
+
+    return { submissions };
   });
 
   route(app, "patch", "/api/submissions/:submissionId/review", async (request, reply) => {

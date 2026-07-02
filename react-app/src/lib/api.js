@@ -1,5 +1,7 @@
 import { appConfig } from "../config.js";
 
+const QA_IDENTITY_KEY = "inventory.qa.identity";
+
 export class ApiError extends Error {
   constructor(message, status, details) {
     super(message);
@@ -7,6 +9,25 @@ export class ApiError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+export function readQaIdentity() {
+  if (!appConfig.enableQaAuth) return null;
+  try {
+    const raw = localStorage.getItem(QA_IDENTITY_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveQaIdentity(identity) {
+  if (!appConfig.enableQaAuth) return;
+  localStorage.setItem(QA_IDENTITY_KEY, JSON.stringify(identity));
+}
+
+export function clearQaIdentity() {
+  localStorage.removeItem(QA_IDENTITY_KEY);
 }
 
 function buildApiUrl(path) {
@@ -23,6 +44,14 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
   if (token) headers.Authorization = `Bearer ${token}`;
   if (tenantSlug) headers["X-Tenant-Slug"] = tenantSlug;
   if (body !== undefined) headers["Content-Type"] = "application/json";
+
+  const qaIdentity = readQaIdentity();
+  if (qaIdentity) {
+    headers["X-Dev-Sub"] = qaIdentity.sub;
+    headers["X-Dev-Email"] = qaIdentity.email;
+    headers["X-Dev-Name"] = qaIdentity.name || qaIdentity.email;
+    headers["X-Dev-Groups"] = (qaIdentity.groups || []).join(",");
+  }
 
   const response = await fetch(buildApiUrl(path), {
     method,

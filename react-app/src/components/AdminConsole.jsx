@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Building2,
+  Camera,
   CheckCircle2,
   ClipboardList,
   ClipboardPlus,
@@ -9,15 +10,17 @@ import {
   LogIn,
   LogOut,
   MailPlus,
+  MessageSquare,
   Plus,
   RefreshCw,
   Send,
   ShieldCheck,
   UserPlus,
-  Users
+  Users,
+  XCircle
 } from "lucide-react";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "../config.js";
-import { apiRequest, getApiErrorMessage } from "../lib/api.js";
+import { apiRequest, clearQaIdentity, getApiErrorMessage, saveQaIdentity } from "../lib/api.js";
 import {
   beginOidcLogin,
   clearAuthSession,
@@ -89,7 +92,7 @@ function AdminHeader({ me, tenantSlug, onRefresh, onLogout }) {
   );
 }
 
-function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave, onSignIn }) {
+function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave, onSignIn, onUseQaIdentity }) {
   return (
     <section className="admin-card admin-auth-card">
       <div className="admin-card-heading">
@@ -108,6 +111,25 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
           <span>Continue with Authentik</span>
         </button>
       </div>
+
+      {appConfig.enableQaAuth ? (
+        <details className="disclosure">
+          <summary className="btn btn-secondary">
+            <span>QA users</span>
+          </summary>
+          <div className="disclosure-panel qa-persona-grid">
+            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("root")}>
+              <span>Root admin</span>
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("lt")}>
+              <span>LT admin</span>
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("nco")}>
+              <span>NCO</span>
+            </button>
+          </div>
+        </details>
+      ) : null}
 
       <details className="disclosure">
         <summary className="btn btn-secondary">
@@ -159,12 +181,148 @@ function sessionProgress(session) {
   return total ? Math.round((done / total) * 100) : 0;
 }
 
-function SessionPanel({ token, tenantSlug }) {
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Could not read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function latestSubmission(item) {
+  return (item.submissions || [])[0] || null;
+}
+
+function ProofForm({ item, token, tenantSlug, onCancel, onSaved, onStatus }) {
+  const [form, setForm] = useState({
+    status: "found",
+    locationText: "",
+    serialNumber: "",
+    note: "",
+    photoFile: null
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function submitProof(e) {
+    e.preventDefault();
+
+    if (form.status === "found" && !form.photoFile) {
+      onStatus({ text: "Add a photo for found items.", isError: true });
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      onStatus({ text: "Submitting proof...", isError: false });
+      const photos = [];
+
+      if (form.photoFile) {
+        const dataUrl = await fileToDataUrl(form.photoFile);
+        const uploaded = await apiRequest("/uploads/photos", {
+          method: "POST",
+          token,
+          tenantSlug,
+          body: {
+            fileName: form.photoFile.name,
+            mimeType: form.photoFile.type || "image/jpeg",
+            dataUrl,
+            kind: form.serialNumber ? "serial" : "general"
+          }
+        });
+        photos.push(uploaded.photo);
+      }
+
+      await apiRequest(`/session-items/${item.id}/submissions`, {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: {
+          status: form.status,
+          locationText: form.locationText.trim() || undefined,
+          note: form.note.trim() || undefined,
+          serialNumber: form.serialNumber.trim() || undefined,
+          photos
+        }
+      });
+
+      onStatus({ text: "Proof submitted.", isError: false });
+      onSaved();
+    } catch (error) {
+      onStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <form className="proof-form" onSubmit={submitProof}>
+      <div className="segmented-control">
+        {[
+          ["found", "Found"],
+          ["not_found", "Not found"],
+          ["mismatch", "Mismatch"]
+        ].map(([value, label]) => (
+          <button
+            className={form.status === value ? "active" : ""}
+            type="button"
+            key={value}
+            onClick={() => setForm(current => ({ ...current, status: value }))}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <input
+        className="input"
+        value={form.locationText}
+        placeholder="Location"
+        onChange={e => setForm(current => ({ ...current, locationText: e.target.value }))}
+      />
+      <input
+        className="input"
+        value={form.serialNumber}
+        placeholder="Serial number"
+        onChange={e => setForm(current => ({ ...current, serialNumber: e.target.value }))}
+      />
+      <textarea
+        className="input proof-note"
+        value={form.note}
+        placeholder="Note"
+        onChange={e => setForm(current => ({ ...current, note: e.target.value }))}
+      />
+      <label className="photo-picker">
+        <Camera aria-hidden="true" />
+        <span>{form.photoFile ? form.photoFile.name : "Add photo"}</span>
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={e => setForm(current => ({ ...current, photoFile: e.target.files?.[0] || null }))}
+        />
+      </label>
+
+      <div className="button-row">
+        <button className="btn btn-primary" type="submit" disabled={isSaving}>
+          <Send aria-hidden="true" />
+          <span>{isSaving ? "Submitting..." : "Submit"}</span>
+        </button>
+        <button className="btn btn-secondary" type="button" onClick={onCancel}>
+          <span>Cancel</span>
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [detail, setDetail] = useState(null);
   const [newSessionName, setNewSessionName] = useState("");
   const [packetRows, setPacketRows] = useState("");
+  const [proofItemId, setProofItemId] = useState("");
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
 
@@ -305,22 +463,24 @@ function SessionPanel({ token, tenantSlug }) {
 
       <div className="session-layout">
         <div className="session-sidebar">
-          <form className="admin-form" onSubmit={createSession}>
-            <label className="field-label" htmlFor="sessionName">New session</label>
-            <div className="inline-control">
-              <input
-                id="sessionName"
-                className="input"
-                value={newSessionName}
-                placeholder="July sensitive items"
-                onChange={e => setNewSessionName(e.target.value)}
-              />
-              <button className="btn btn-primary" type="submit" disabled={isSaving}>
-                <Plus aria-hidden="true" />
-                <span>Start</span>
-              </button>
-            </div>
-          </form>
+          {canManage ? (
+            <form className="admin-form" onSubmit={createSession}>
+              <label className="field-label" htmlFor="sessionName">New session</label>
+              <div className="inline-control">
+                <input
+                  id="sessionName"
+                  className="input"
+                  value={newSessionName}
+                  placeholder="July sensitive items"
+                  onChange={e => setNewSessionName(e.target.value)}
+                />
+                <button className="btn btn-primary" type="submit" disabled={isSaving}>
+                  <Plus aria-hidden="true" />
+                  <span>Start</span>
+                </button>
+              </div>
+            </form>
+          ) : null}
 
           <div className="session-list">
             {sessions.length ? sessions.map(session => (
@@ -356,56 +516,90 @@ function SessionPanel({ token, tenantSlug }) {
                 <div className="admin-row-meta">
                   <span className="badge">{selectedSession.foundCount || 0} found</span>
                   <span className="badge">{selectedSession.needsReviewCount || 0} needs review</span>
-                  {selectedSession.status !== "closed" ? (
-                    <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("closed")}>
-                      <span>Close</span>
-                    </button>
-                  ) : (
-                    <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("active")}>
-                      <span>Reopen</span>
-                    </button>
-                  )}
+                  {canManage ? (
+                    selectedSession.status !== "closed" ? (
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("closed")}>
+                        <span>Close</span>
+                      </button>
+                    ) : (
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("active")}>
+                        <span>Reopen</span>
+                      </button>
+                    )
+                  ) : null}
                 </div>
               </div>
 
-              <form className="packet-import" onSubmit={addPacketRows}>
-                <label className="field-label" htmlFor="packetRows">Paste packet rows</label>
-                <textarea
-                  id="packetRows"
-                  className="input packet-textarea"
-                  value={packetRows}
-                  placeholder="A90594 ARMAMENT SUBSYS: M153&#10;B67839 BINOCULAR: M24"
-                  onChange={e => setPacketRows(e.target.value)}
-                />
-                <button className="btn btn-secondary" type="submit" disabled={isSaving}>
-                  <ClipboardPlus aria-hidden="true" />
-                  <span>Add rows</span>
-                </button>
-              </form>
+              {canManage ? (
+                <details className="packet-import">
+                  <summary className="btn btn-secondary">
+                    <ClipboardPlus aria-hidden="true" />
+                    <span>Add packet rows</span>
+                  </summary>
+                  <form className="disclosure-panel packet-import-form" onSubmit={addPacketRows}>
+                    <textarea
+                      className="input packet-textarea"
+                      value={packetRows}
+                      placeholder="A90594 ARMAMENT SUBSYS: M153&#10;B67839 BINOCULAR: M24"
+                      onChange={e => setPacketRows(e.target.value)}
+                    />
+                    <button className="btn btn-secondary" type="submit" disabled={isSaving}>
+                      <span>Add rows</span>
+                    </button>
+                  </form>
+                </details>
+              ) : null}
 
               <div className="session-items">
-                {detailItems.length ? detailItems.map(item => (
-                  <article className="session-item" key={item.id}>
-                    <div className="session-item-main">
-                      <FileText aria-hidden="true" />
-                      <div>
-                        <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
-                        <span>{item.packetLine || "No packet text"}</span>
-                        {item.locationHint ? <small>Hint: {item.locationHint}</small> : null}
+                {detailItems.length ? detailItems.map(item => {
+                  const submission = latestSubmission(item);
+                  return (
+                    <article className="session-item" key={item.id}>
+                      <div className="session-item-main">
+                        <FileText aria-hidden="true" />
+                        <div>
+                          <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
+                          <span>{item.packetLine || "No packet text"}</span>
+                          {item.locationHint ? <small>Hint: {item.locationHint}</small> : null}
+                          {submission ? <small>Latest proof: {submission.reviewState}</small> : null}
+                        </div>
                       </div>
-                    </div>
-                    <div className="session-item-actions">
-                      <span className={`status-pill ${item.status}`}>{item.status}</span>
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "approved")}>
-                        <CheckCircle2 aria-hidden="true" />
-                        <span>Found</span>
-                      </button>
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "not_found")}>
-                        <span>Not found</span>
-                      </button>
-                    </div>
-                  </article>
-                )) : (
+                      <div className="session-item-actions">
+                        <span className={`status-pill ${item.status}`}>{item.status}</span>
+                        {canManage ? (
+                          <>
+                            <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "approved")}>
+                              <CheckCircle2 aria-hidden="true" />
+                              <span>Found</span>
+                            </button>
+                            <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "not_found")}>
+                              <span>Not found</span>
+                            </button>
+                          </>
+                        ) : null}
+                        {canSubmit && selectedSession.status !== "closed" ? (
+                          <button className="btn btn-primary btn-small" type="button" onClick={() => setProofItemId(item.id)}>
+                            <Camera aria-hidden="true" />
+                            <span>Proof</span>
+                          </button>
+                        ) : null}
+                      </div>
+                      {proofItemId === item.id ? (
+                        <ProofForm
+                          item={item}
+                          token={token}
+                          tenantSlug={tenantSlug}
+                          onCancel={() => setProofItemId("")}
+                          onSaved={() => {
+                            setProofItemId("");
+                            loadSessions(selectedSessionId);
+                          }}
+                          onStatus={setStatus}
+                        />
+                      ) : null}
+                    </article>
+                  );
+                }) : (
                   <EmptyPanel title="No packet rows yet" body="Paste rows from the hand receipt to build the checklist." />
                 )}
               </div>
@@ -414,6 +608,102 @@ function SessionPanel({ token, tenantSlug }) {
             <EmptyPanel title="Select a session" body="Session details and packet rows will appear here." />
           )}
         </div>
+      </div>
+
+      <StatusLine status={status} />
+    </section>
+  );
+}
+
+function ReviewPanel({ token, tenantSlug }) {
+  const [submissions, setSubmissions] = useState([]);
+  const [status, setStatus] = useState({ text: "Loading review queue...", isError: false });
+
+  async function loadQueue() {
+    try {
+      setStatus({ text: "Loading review queue...", isError: false });
+      const data = await apiRequest("/inventory/review-queue", { token, tenantSlug });
+      setSubmissions(data.submissions || []);
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  useEffect(() => {
+    loadQueue();
+  }, [tenantSlug, token]);
+
+  async function review(submissionId, decision, note = "") {
+    try {
+      setStatus({ text: "Updating review...", isError: false });
+      await apiRequest(`/submissions/${submissionId}/review`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { decision, note }
+      });
+      await loadQueue();
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  return (
+    <section className="admin-card review-panel">
+      <div className="admin-card-heading">
+        <span className="admin-icon">
+          <MessageSquare aria-hidden="true" />
+        </span>
+        <div>
+          <p className="eyebrow">LT review</p>
+          <h2>Proof Queue</h2>
+        </div>
+      </div>
+
+      <div className="review-list">
+        {submissions.length ? submissions.map(submission => (
+          <article className="review-card" key={submission.id}>
+            <div className="review-card-main">
+              <strong>{submission.sessionItem?.packetLine || "Packet row"}</strong>
+              <span>{submission.session?.name} - {submission.submittedByName || submission.submittedByEmail}</span>
+              {submission.locationText ? <small>Location: {submission.locationText}</small> : null}
+              {submission.serialNumber ? <small>Serial: {submission.serialNumber}</small> : null}
+              {submission.note ? <small>{submission.note}</small> : null}
+            </div>
+
+            {submission.photos?.length ? (
+              <div className="review-photo-grid">
+                {submission.photos.map(photo => (
+                  <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.storageKey}>
+                    <img src={photo.url} alt={photo.caption || photo.kind || "Proof"} loading="lazy" />
+                  </a>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="review-actions">
+              <button className="btn btn-primary btn-small" type="button" onClick={() => review(submission.id, "approved")}>
+                <CheckCircle2 aria-hidden="true" />
+                <span>Approve</span>
+              </button>
+              <button
+                className="btn btn-secondary btn-small"
+                type="button"
+                onClick={() => review(submission.id, "request_more_info", "Send a clearer photo and serial number if available.")}
+              >
+                <Camera aria-hidden="true" />
+                <span>More proof</span>
+              </button>
+              <button className="btn btn-danger-soft btn-small" type="button" onClick={() => review(submission.id, "rejected")}>
+                <XCircle aria-hidden="true" />
+                <span>Reject</span>
+              </button>
+            </div>
+          </article>
+        )) : (
+          <EmptyPanel title="Nothing to review" body="Submitted proof will appear here." />
+        )}
       </div>
 
       <StatusLine status={status} />
@@ -577,6 +867,16 @@ function PlatformPanel({ token }) {
 }
 
 function TenantPanel({ token, tenantSlug, me }) {
+  const isTenantAdmin = Boolean(me?.isPlatformAdmin || me?.membership?.role === "tenant_admin");
+  const canSubmitProof = Boolean(isTenantAdmin || me?.membership?.role === "contributor");
+  const tabs = isTenantAdmin
+    ? [
+        ["tasks", "Tasks"],
+        ["review", "Review"],
+        ["people", "People"]
+      ]
+    : [["tasks", "Tasks"]];
+  const [activeTab, setActiveTab] = useState("tasks");
   const [tenant, setTenant] = useState(null);
   const [members, setMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
@@ -648,9 +948,34 @@ function TenantPanel({ token, tenantSlug, me }) {
 
   return (
     <>
-      <SessionPanel token={token} tenantSlug={tenantSlug} />
+      <nav className="workspace-tabs" aria-label="Workspace views">
+        {tabs.map(([id, label]) => (
+          <button
+            className={activeTab === id ? "active" : ""}
+            type="button"
+            key={id}
+            onClick={() => setActiveTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-      <div className="admin-grid people-grid">
+      {activeTab === "tasks" ? (
+        <SessionPanel
+          token={token}
+          tenantSlug={tenantSlug}
+          canManage={isTenantAdmin}
+          canSubmit={canSubmitProof}
+        />
+      ) : null}
+
+      {activeTab === "review" && isTenantAdmin ? (
+        <ReviewPanel token={token} tenantSlug={tenantSlug} />
+      ) : null}
+
+      {activeTab === "people" && isTenantAdmin ? (
+        <div className="admin-grid people-grid">
         <section className="admin-card">
           <div className="admin-card-heading">
             <span className="admin-icon">
@@ -768,6 +1093,7 @@ function TenantPanel({ token, tenantSlug, me }) {
           </div>
         </section>
       </div>
+      ) : null}
     </>
   );
 }
@@ -824,6 +1150,7 @@ export default function AdminConsole() {
 
   function logout() {
     clearAuthSession();
+    clearQaIdentity();
     setSession(null);
     setMe(null);
     setStatus({ text: "", isError: false });
@@ -844,6 +1171,41 @@ export default function AdminConsole() {
     loadMe(accessToken);
   }
 
+  function useQaIdentity(kind) {
+    const identities = {
+      root: {
+        sub: "qa-root",
+        email: "qa-root@876en.test",
+        name: "QA Root Admin",
+        groups: ["inventory-platform-admins"]
+      },
+      lt: {
+        sub: "qa-lt",
+        email: "qa-lt@876en.test",
+        name: "QA LT",
+        groups: []
+      },
+      nco: {
+        sub: "qa-nco",
+        email: "qa-nco@876en.test",
+        name: "QA NCO",
+        groups: []
+      }
+    };
+    const identity = identities[kind] || identities.root;
+    saveQaIdentity(identity);
+    const nextSession = {
+      accessToken: "qa-dev",
+      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+      createdAt: Date.now(),
+      qa: true
+    };
+    saveAuthSession(nextSession);
+    setSession(nextSession);
+    setStatus({ text: `Using ${identity.name}`, isError: false });
+    loadMe(nextSession.accessToken);
+  }
+
   async function signIn() {
     try {
       setStatus({ text: "Redirecting to Authentik...", isError: false });
@@ -855,7 +1217,9 @@ export default function AdminConsole() {
 
   const isPlatformPage = isAdminHostname() || !tenantSlug;
   const canUsePlatform = Boolean(me?.isPlatformAdmin);
-  const canUseTenant = Boolean(tenantSlug && (me?.isPlatformAdmin || me?.membership?.role === "tenant_admin"));
+  const canUseTenant = Boolean(
+    tenantSlug && (me?.isPlatformAdmin || ["tenant_admin", "contributor", "viewer"].includes(me?.membership?.role))
+  );
 
   return (
     <div className="app-frame admin-frame">
@@ -868,6 +1232,7 @@ export default function AdminConsole() {
           onManualTokenChange={setManualToken}
           onManualTokenSave={saveManualToken}
           onSignIn={signIn}
+          onUseQaIdentity={useQaIdentity}
         />
       ) : (
         <>
