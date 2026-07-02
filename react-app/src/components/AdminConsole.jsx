@@ -181,6 +181,46 @@ function sessionProgress(session) {
   return total ? Math.round((done / total) * 100) : 0;
 }
 
+function sessionNeedsReview(session) {
+  return Number(session?.needsReviewCount || 0) > 0;
+}
+
+function sessionCreatedValue(session) {
+  const value = new Date(session?.createdAt || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sortSessionsByAttention(sessions) {
+  const statusRank = {
+    active: 0,
+    draft: 1,
+    closed: 2
+  };
+
+  return [...sessions].sort((a, b) => {
+    const reviewDelta = Number(b.needsReviewCount || 0) - Number(a.needsReviewCount || 0);
+    if (reviewDelta) return reviewDelta;
+
+    const statusDelta = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
+    if (statusDelta) return statusDelta;
+
+    return sessionCreatedValue(b) - sessionCreatedValue(a);
+  });
+}
+
+function sessionItemPriority(item) {
+  const ranks = {
+    needs_review: 0,
+    unchecked: 1,
+    mismatch: 2,
+    not_found: 3,
+    found: 4,
+    approved: 5
+  };
+
+  return ranks[item?.status] ?? 9;
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -330,9 +370,11 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     try {
       setStatus({ text: "Loading inventory sessions...", isError: false });
       const data = await apiRequest("/inventory/sessions", { token, tenantSlug });
-      const loaded = data.sessions || [];
+      const loaded = sortSessionsByAttention(data.sessions || []);
       setSessions(loaded);
-      const selected = nextSelectedId || loaded[0]?.id || "";
+      const selected = nextSelectedId && loaded.some(session => session.id === nextSelectedId)
+        ? nextSelectedId
+        : loaded[0]?.id || "";
       setSelectedSessionId(selected);
       if (selected) {
         await loadSessionDetail(selected, false);
@@ -447,7 +489,78 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   }
 
   const selectedSession = sessions.find(session => session.id === selectedSessionId) || detail?.session;
-  const detailItems = detail?.items || [];
+  const detailItems = useMemo(
+    () => [...(detail?.items || [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
+    [detail?.items]
+  );
+  const openSessions = useMemo(
+    () => sessions.filter(session => session.status !== "closed"),
+    [sessions]
+  );
+  const reviewSessions = useMemo(
+    () => openSessions.filter(session => sessionNeedsReview(session)),
+    [openSessions]
+  );
+  const activeSessions = useMemo(
+    () => openSessions.filter(session => session.status === "active" && !sessionNeedsReview(session)),
+    [openSessions]
+  );
+  const draftSessions = useMemo(
+    () => openSessions.filter(session => session.status === "draft" && !sessionNeedsReview(session)),
+    [openSessions]
+  );
+  const closedSessions = useMemo(
+    () => sessions.filter(session => session.status === "closed"),
+    [sessions]
+  );
+  const openCount = openSessions.length;
+  const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
+  const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
+  const foundRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
+  const overallProgress = totalRows ? Math.round((foundRows / totalRows) * 100) : 0;
+
+  function renderSessionButton(session) {
+    const progress = sessionProgress(session);
+    return (
+      <button
+        className={`session-row ${session.id === selectedSessionId ? "active" : ""}`}
+        type="button"
+        key={session.id}
+        onClick={() => {
+          setSelectedSessionId(session.id);
+          loadSessionDetail(session.id);
+        }}
+      >
+        <span className="session-row-copy">
+          <strong>{session.name}</strong>
+          <small>{session.itemCount || 0} rows - {progress}% done</small>
+          <span className="session-progress-track" aria-hidden="true">
+            <span style={{ width: `${progress}%` }} />
+          </span>
+        </span>
+        <span className="session-row-meta">
+          {sessionNeedsReview(session) ? (
+            <span className="session-alert">{session.needsReviewCount} review</span>
+          ) : null}
+          <span className={`status-pill ${session.status}`}>{session.status}</span>
+        </span>
+      </button>
+    );
+  }
+
+  function renderSessionGroup(label, items) {
+    if (!items.length) return null;
+
+    return (
+      <div className="session-group">
+        <div className="session-group-title">
+          <span>{label}</span>
+          <strong>{items.length}</strong>
+        </div>
+        {items.map(renderSessionButton)}
+      </div>
+    );
+  }
 
   return (
     <section className="admin-card session-panel">
@@ -463,43 +576,62 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
 
       <div className="session-layout">
         <div className="session-sidebar">
+          <div className="session-work-summary">
+            <div>
+              <strong>{openCount}</strong>
+              <span>Open</span>
+            </div>
+            <div>
+              <strong>{reviewRowCount}</strong>
+              <span>Review</span>
+            </div>
+            <div>
+              <strong>{overallProgress}%</strong>
+              <span>Done</span>
+            </div>
+          </div>
+
           {canManage ? (
-            <form className="admin-form" onSubmit={createSession}>
-              <label className="field-label" htmlFor="sessionName">New session</label>
-              <div className="inline-control">
-                <input
-                  id="sessionName"
-                  className="input"
-                  value={newSessionName}
-                  placeholder="July sensitive items"
-                  onChange={e => setNewSessionName(e.target.value)}
-                />
-                <button className="btn btn-primary" type="submit" disabled={isSaving}>
-                  <Plus aria-hidden="true" />
-                  <span>Start</span>
-                </button>
-              </div>
-            </form>
+            <details className="session-create" open={!sessions.length}>
+              <summary className="btn btn-secondary">
+                <Plus aria-hidden="true" />
+                <span>New session</span>
+              </summary>
+              <form className="disclosure-panel admin-form session-create-form" onSubmit={createSession}>
+                <label className="field-label" htmlFor="sessionName">Session name</label>
+                <div className="inline-control">
+                  <input
+                    id="sessionName"
+                    className="input"
+                    value={newSessionName}
+                    placeholder="July sensitive items"
+                    onChange={e => setNewSessionName(e.target.value)}
+                  />
+                  <button className="btn btn-primary" type="submit" disabled={isSaving}>
+                    <Plus aria-hidden="true" />
+                    <span>Start</span>
+                  </button>
+                </div>
+              </form>
+            </details>
           ) : null}
 
           <div className="session-list">
-            {sessions.length ? sessions.map(session => (
-              <button
-                className={`session-row ${session.id === selectedSessionId ? "active" : ""}`}
-                type="button"
-                key={session.id}
-                onClick={() => {
-                  setSelectedSessionId(session.id);
-                  loadSessionDetail(session.id);
-                }}
-              >
-                <span>
-                  <strong>{session.name}</strong>
-                  <small>{session.itemCount || 0} rows - {sessionProgress(session)}% found</small>
-                </span>
-                <span className={`status-pill ${session.status}`}>{session.status}</span>
-              </button>
-            )) : (
+            {sessions.length ? (
+              <>
+                {renderSessionGroup("Needs review", reviewSessions)}
+                {renderSessionGroup("Active", activeSessions)}
+                {renderSessionGroup("Drafts", draftSessions)}
+                {closedSessions.length ? (
+                  <details className="session-archive">
+                    <summary>Closed <span>{closedSessions.length}</span></summary>
+                    <div className="session-group">
+                      {closedSessions.map(renderSessionButton)}
+                    </div>
+                  </details>
+                ) : null}
+              </>
+            ) : (
               <EmptyPanel title="No sessions yet" body="Start one from the packet the LT receives." />
             )}
           </div>
@@ -512,6 +644,9 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                 <div>
                   <strong>{selectedSession.name}</strong>
                   <span>{selectedSession.itemCount || 0} packet rows</span>
+                  <span className="session-progress-track session-summary-progress" aria-hidden="true">
+                    <span style={{ width: `${sessionProgress(selectedSession)}%` }} />
+                  </span>
                 </div>
                 <div className="admin-row-meta">
                   <span className="badge">{selectedSession.foundCount || 0} found</span>

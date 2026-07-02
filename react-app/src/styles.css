@@ -873,7 +873,57 @@ button {
 .session-main,
 .session-list,
 .session-items,
-.packet-import {
+.packet-import,
+.session-create {
+  display: grid;
+  gap: 10px;
+}
+
+.session-work-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.session-work-summary div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  padding: 10px;
+}
+
+.session-work-summary strong,
+.session-work-summary span {
+  display: block;
+}
+
+.session-work-summary strong {
+  color: var(--ink);
+  font-size: 1.18rem;
+  line-height: 1.05;
+}
+
+.session-work-summary span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1.15;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+.session-create summary {
+  list-style: none;
+  width: fit-content;
+}
+
+.session-create summary::-webkit-details-marker,
+.packet-import summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-create-form {
   display: grid;
   gap: 10px;
 }
@@ -881,6 +931,69 @@ button {
 .session-list {
   max-height: 420px;
   overflow-y: auto;
+}
+
+.session-group {
+  display: grid;
+  gap: 8px;
+}
+
+.session-group + .session-group,
+.session-archive {
+  margin-top: 4px;
+}
+
+.session-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.session-group-title strong {
+  display: grid;
+  min-width: 24px;
+  min-height: 24px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary-strong);
+  font-size: 0.72rem;
+}
+
+.session-archive summary {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 0 10px;
+  text-transform: uppercase;
+}
+
+.session-archive summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-archive summary span {
+  color: var(--primary-strong);
+}
+
+.session-archive .session-group {
+  margin-top: 8px;
 }
 
 .session-row {
@@ -898,13 +1011,19 @@ button {
   text-align: left;
 }
 
+.session-row-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .session-row.active {
   border-color: #b8c7b2;
   background: #eef3eb;
 }
 
 .session-row strong,
-.session-row small {
+.session-row small,
+.session-row-copy {
   display: block;
 }
 
@@ -913,6 +1032,46 @@ button {
   font-weight: 700;
   line-height: 1.35;
   margin-top: 3px;
+}
+
+.session-progress-track {
+  display: block;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7ece3;
+  margin-top: 8px;
+}
+
+.session-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
+.session-row-meta {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.session-alert {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid #e3c58e;
+  border-radius: 999px;
+  background: #fff8e9;
+  color: #765018;
+  font-size: 0.68rem;
+  font-weight: 900;
+  padding: 0 8px;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .session-summary {
@@ -941,6 +1100,10 @@ button {
   font-size: 0.86rem;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.session-summary-progress {
+  width: min(260px, 100%);
 }
 
 .packet-textarea {
@@ -1591,6 +1754,17 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .session-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .session-row-meta {
+    align-items: flex-start;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
   .admin-list-row {
     align-items: stretch;
     flex-direction: column;
@@ -1711,7 +1885,8 @@ button {
   .toolbar-group .btn,
   .inline-control .btn,
   .button-row .btn,
-  .editor-card-header .btn {
+  .editor-card-header .btn,
+  .session-create summary {
     width: 100%;
   }
 
