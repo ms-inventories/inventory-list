@@ -9,14 +9,24 @@ function getHeaderValue(request, name) {
 }
 
 function normalizeGroupList(value) {
-  if (Array.isArray(value)) return value.map(String);
+  if (Array.isArray(value)) {
+    return value
+      .map(part => String(part).trim().toLowerCase())
+      .filter(Boolean);
+  }
+
   if (typeof value === "string") {
     return value
       .split(/[,\s]+/)
-      .map(part => part.trim())
+      .map(part => part.trim().toLowerCase())
       .filter(Boolean);
   }
+
   return [];
+}
+
+function includesGroup(groups, groupName) {
+  return groups.includes(String(groupName || "").toLowerCase());
 }
 
 function getDiscoveryUrl() {
@@ -48,13 +58,15 @@ async function verifyBearerToken(token) {
   const { payload } = await jwtVerify(token, jwks, verifyOptions);
   const groups = normalizeGroupList(payload[config.oidc.groupsClaim]);
   const email = String(payload.email || "").toLowerCase();
+  const isPlatformAdmin = includesGroup(groups, config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(email);
 
   return {
     subject: String(payload.sub || ""),
     email,
     displayName: String(payload.name || payload.preferred_username || payload.email || ""),
     groups,
-    isPlatformAdmin: groups.includes(config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(email),
+    isPlatformAdmin,
+    isFrgAdmin: isPlatformAdmin || includesGroup(groups, config.oidc.frgAdminGroup),
     claims: payload
   };
 }
@@ -74,7 +86,8 @@ function getDevIdentity(request) {
     email: normalizedEmail,
     displayName: String(getHeaderValue(request, "x-dev-name") || email),
     groups,
-    isPlatformAdmin: groups.includes(config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(normalizedEmail),
+    isPlatformAdmin: includesGroup(groups, config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(normalizedEmail),
+    isFrgAdmin: includesGroup(groups, config.oidc.platformAdminGroup) || includesGroup(groups, config.oidc.frgAdminGroup) || config.platformAdminEmails.includes(normalizedEmail),
     claims: { dev: true }
   };
 }

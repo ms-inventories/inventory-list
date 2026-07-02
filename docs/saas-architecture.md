@@ -19,7 +19,7 @@ Examples:
 
 The supply/main admin can create more tenants later.
 
-Initial platform/root access can come from either the Authentik `inventory-platform-admins` group or the backend `PLATFORM_ADMIN_EMAILS` allowlist. The email allowlist is the day-one escape hatch so one known account can create the first platoons before every Authentik group rule is polished.
+Initial platform/root access can come from either the Authentik `876en-admins` group or the backend `PLATFORM_ADMIN_EMAILS` allowlist. The email allowlist is the day-one escape hatch so one known account can create the first platoons before every Authentik group rule is polished.
 
 ## Identity
 
@@ -50,7 +50,7 @@ Can:
 Suggested Authentik group:
 
 ```text
-inventory-platform-admins
+876en-admins
 ```
 
 ### Tenant Admin
@@ -192,10 +192,12 @@ Recommended settings:
 
 Use Authentik groups for coarse access:
 
-- `inventory-platform-admins`
-- optional tenant groups such as `inventory-first-admins`, `inventory-first-contributors`
+- `876en-admins`: global support/superuser access to all tenants.
+- `876en-frg-admins`: FRG/newsletter content admin access.
+- `876en-<tenant>`: tenant membership, for example `876en-ms`.
+- `876en-platoon-admin`: tenant admin capability when combined with a tenant group.
 
-The app database remains the source of tenant membership and role inside a specific tenant. Authentik proves who the person is; the app decides what tenant role they have.
+The app can derive day-to-day access from these Authentik groups and still keep database memberships/invitations for app-created access. Authentik proves who the person is; the app decides the effective tenant role.
 
 ## Next Build Steps
 

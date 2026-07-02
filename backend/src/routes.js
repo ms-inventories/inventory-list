@@ -659,6 +659,7 @@ export function registerRoutes(app) {
       user: context.user,
       groups: context.identity.groups,
       isPlatformAdmin: context.identity.isPlatformAdmin,
+      isFrgAdmin: context.identity.isFrgAdmin,
       tenant: rowToTenant(context.tenant),
       membership: context.membership
     };

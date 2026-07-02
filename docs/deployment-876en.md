@@ -198,18 +198,24 @@ OIDC_ISSUER=https://auth.876en.org/application/o/inventory/
 OIDC_AUDIENCE=inventory-api
 OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory/.well-known/openid-configuration
 OIDC_GROUPS_CLAIM=groups
-PLATFORM_ADMIN_GROUP=inventory-platform-admins
+PLATFORM_ADMIN_GROUP=876en-admins
+FRG_ADMIN_GROUP=876en-frg-admins
+TENANT_ADMIN_GROUP=876en-platoon-admin
+TENANT_GROUP_PREFIX=876en-
 ```
 
-App group:
+App groups:
 
 ```text
-inventory-platform-admins
+876en-admins
+876en-frg-admins
+876en-platoon-admin
+876en-ms
 ```
 
-Tenant roles live in the app database. Authentik proves identity; the app decides tenant access.
+Tenant access can come from Authentik groups or app database memberships. A user in `876en-ms` can work the MS tenant. A user in both `876en-ms` and `876en-platoon-admin` can administer the MS tenant. A user in `876en-admins` can jump into every tenant for support.
 
-Production requires `PLATFORM_ADMIN_EMAILS` even if you also use the `inventory-platform-admins` group. Put your first supply/root admin email here, log in once, create the first platoons, then you can keep or narrow the allowlist after Authentik groups are verified.
+Production requires `PLATFORM_ADMIN_EMAILS` even if you also use the `876en-admins` group. Put your first supply/root admin email here, log in once, create the first platoons, then you can keep or narrow the allowlist after Authentik groups are verified.
 
 Frontend OIDC notes:
 

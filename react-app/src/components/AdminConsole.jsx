@@ -2080,14 +2080,21 @@ function TenantPanel({ token, tenantSlug, me }) {
   async function loadTenant() {
     try {
       setStatus({ text: "Loading tenant...", isError: false });
-      const [tenantData, memberData, inviteData] = await Promise.all([
-        apiRequest("/tenant", { token, tenantSlug }),
-        apiRequest("/tenant/members", { token, tenantSlug }),
-        apiRequest("/tenant/invitations", { token, tenantSlug })
-      ]);
+      const tenantData = await apiRequest("/tenant", { token, tenantSlug });
       setTenant(tenantData.tenant);
-      setMembers(memberData.members || []);
-      setInvitations(inviteData.invitations || []);
+
+      if (isTenantAdmin) {
+        const [memberData, inviteData] = await Promise.all([
+          apiRequest("/tenant/members", { token, tenantSlug }),
+          apiRequest("/tenant/invitations", { token, tenantSlug })
+        ]);
+        setMembers(memberData.members || []);
+        setInvitations(inviteData.invitations || []);
+      } else {
+        setMembers([]);
+        setInvitations([]);
+      }
+
       setStatus({ text: "", isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -2096,7 +2103,7 @@ function TenantPanel({ token, tenantSlug, me }) {
 
   useEffect(() => {
     if (tenantSlug) loadTenant();
-  }, [tenantSlug, token]);
+  }, [tenantSlug, token, isTenantAdmin]);
 
   async function createInvite(e) {
     e.preventDefault();
@@ -2369,19 +2376,19 @@ export default function AdminConsole() {
         sub: "qa-root",
         email: "qa-root@876en.test",
         name: "QA Root Admin",
-        groups: ["inventory-platform-admins"]
+        groups: ["876en-admins"]
       },
       lt: {
         sub: "qa-lt",
         email: "qa-lt@876en.test",
         name: "QA LT",
-        groups: []
+        groups: ["876en-ms", "876en-platoon-admin"]
       },
       nco: {
         sub: "qa-nco",
         email: "qa-nco@876en.test",
         name: "QA NCO",
-        groups: []
+        groups: ["876en-ms"]
       }
     };
     const identity = identities[kind] || identities.root;
@@ -2431,6 +2438,7 @@ export default function AdminConsole() {
           <section className="admin-profile-strip">
             <span className="badge strong">{me.user?.display_name || me.user?.email}</span>
             {me.isPlatformAdmin ? <span className="badge">Platform admin</span> : null}
+            {me.isFrgAdmin && !me.isPlatformAdmin ? <span className="badge">FRG admin</span> : null}
             {me.membership?.role ? <span className="badge">{formatRole(me.membership.role)}</span> : null}
           </section>
 

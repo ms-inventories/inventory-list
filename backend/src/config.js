@@ -21,7 +21,10 @@ export const config = {
     audience: process.env.OIDC_AUDIENCE || "",
     discoveryUrl: process.env.OIDC_DISCOVERY_URL || "",
     groupsClaim: process.env.OIDC_GROUPS_CLAIM || "groups",
-    platformAdminGroup: process.env.PLATFORM_ADMIN_GROUP || "inventory-platform-admins"
+    platformAdminGroup: String(process.env.PLATFORM_ADMIN_GROUP || "876en-admins").toLowerCase(),
+    frgAdminGroup: String(process.env.FRG_ADMIN_GROUP || "876en-frg-admins").toLowerCase(),
+    tenantAdminGroup: String(process.env.TENANT_ADMIN_GROUP || "876en-platoon-admin").toLowerCase(),
+    tenantGroupPrefix: String(process.env.TENANT_GROUP_PREFIX || "876en-").toLowerCase()
   },
   storage: {
     driver: process.env.STORAGE_DRIVER || "local",

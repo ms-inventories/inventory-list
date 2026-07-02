@@ -65,6 +65,55 @@ export async function getTenantMembership(tenantId, userId) {
   return result.rows[0] || null;
 }
 
+function roleRank(role) {
+  return {
+    viewer: 1,
+    contributor: 2,
+    tenant_admin: 3
+  }[role] || 0;
+}
+
+function groupMembershipForTenant(tenant, userId, identity) {
+  if (!tenant || !identity) return null;
+
+  if (identity.isPlatformAdmin) {
+    return {
+      id: `authentik:${tenant.slug}:platform-admin`,
+      tenant_id: tenant.id,
+      user_id: userId,
+      role: "tenant_admin",
+      status: "active",
+      source: "authentik"
+    };
+  }
+
+  const groups = identity.groups || [];
+  const tenantGroup = `${config.oidc.tenantGroupPrefix}${tenant.slug}`.toLowerCase();
+  if (!groups.includes(tenantGroup)) return null;
+
+  const role = groups.includes(config.oidc.tenantAdminGroup) ? "tenant_admin" : "contributor";
+  return {
+    id: `authentik:${tenant.slug}:${role}`,
+    tenant_id: tenant.id,
+    user_id: userId,
+    role,
+    status: "active",
+    source: "authentik"
+  };
+}
+
+function mergeMembership(databaseMembership, authentikMembership) {
+  if (!databaseMembership) return authentikMembership;
+  if (!authentikMembership) return databaseMembership;
+  if (roleRank(authentikMembership.role) <= roleRank(databaseMembership.role)) return databaseMembership;
+
+  return {
+    ...databaseMembership,
+    role: authentikMembership.role,
+    source: "authentik"
+  };
+}
+
 export function hasTenantRole(context, roles) {
   if (context.identity?.isPlatformAdmin) return true;
   if (!context.membership) return false;
@@ -73,7 +122,9 @@ export function hasTenantRole(context, roles) {
 
 export async function tenantContext(request, auth) {
   const tenant = await resolveTenant(request);
-  const membership = tenant ? await getTenantMembership(tenant.id, auth.user.id) : null;
+  const databaseMembership = tenant ? await getTenantMembership(tenant.id, auth.user.id) : null;
+  const authentikMembership = groupMembershipForTenant(tenant, auth.user.id, auth.identity);
+  const membership = mergeMembership(databaseMembership, authentikMembership);
 
   return {
     ...auth,

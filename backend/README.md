@@ -17,6 +17,11 @@ It is intentionally separate from the static GitHub Pages app in the repository 
 - Bootstrap platform access with either an Authentik admin group or `PLATFORM_ADMIN_EMAILS`.
 - Let platform admins create platoons and assign the first platoon admin.
 - Let platoon admins invite contributors, viewers, or additional platoon admins.
+- Derive day-to-day tenant access from Authentik groups:
+  - `876en-admins`: global support/superuser access to every tenant.
+  - `876en-frg-admins`: public FRG site editor access.
+  - `876en-<tenant>`: access to that tenant, for example `876en-ms`.
+  - `876en-platoon-admin`: admin capability inside any tenant group the user also belongs to.
 
 ## Local Development
 
@@ -38,7 +43,7 @@ When `ALLOW_DEV_AUTH=true`, you can simulate a user with headers:
 x-dev-sub: dev-user-1
 x-dev-email: lt@example.com
 x-dev-name: Demo LT
-x-dev-groups: inventory-platform-admins
+x-dev-groups: 876en-ms,876en-platoon-admin
 ```
 
 Disable `ALLOW_DEV_AUTH` in production.
@@ -66,8 +71,10 @@ That creates `1st.876en.org` as the primary tenant hostname and makes the LT a `
 
 Platform admin access is granted when either condition is true:
 
-- The Authentik token includes the `inventory-platform-admins` group.
+- The Authentik token includes the `876en-admins` group.
 - The authenticated email is listed in `PLATFORM_ADMIN_EMAILS`.
+
+Tenant access can also come directly from Authentik. A user in `876en-ms` can work the MS tenant as a contributor. A user in both `876en-ms` and `876en-platoon-admin` can administer the MS tenant. A user in `876en-admins` can jump into every tenant for support.
 
 Tenant admins can invite helpers with:
 
