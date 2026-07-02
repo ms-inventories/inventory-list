@@ -229,10 +229,11 @@ The first React tenant-admin session flow is live:
 - import packet rows from pasted text, text/CSV files, PDFs, or photos through an LT review step before saving
 - persist packet import batches with source files, extracted text, source links, and retry actions for platoon admins
 - search and filter session rows by text, status, proof requests, review work, problems, and completed items
+- auto-match imported session rows to known inventory items by LIN, NSN, title, and common-name signals
 - notify platoon admins by email when proof is submitted
 - notify the submitter by email when the LT requests more proof
 
-The next backend/frontend slice should auto-match imported session rows to existing inventory items so known photos, descriptions, and location hints appear in the task list.
+The next backend/frontend slice should add a manual match/override control for session rows the automatic matcher misses or gets wrong.
 
 ## QA Environment
 

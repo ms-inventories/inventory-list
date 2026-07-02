@@ -304,6 +304,49 @@ function formatFileSize(bytes) {
   return `${Math.max(1, Math.round(value / 1024))} KB`;
 }
 
+function normalizeMetadataValue(value) {
+  if (Array.isArray(value)) return value.flatMap(normalizeMetadataValue);
+  if (value && typeof value === "object") {
+    return normalizeMetadataValue(value.url || value.src || value.href || value.value);
+  }
+  return value ? [String(value)] : [];
+}
+
+function getInventoryItemImages(item) {
+  const metadata = item?.metadata || {};
+  const values = [
+    metadata.image,
+    metadata.images,
+    metadata.imageUrl,
+    metadata.imageUrls,
+    metadata.photo,
+    metadata.photos,
+    metadata.thumbnail,
+    metadata.thumbnailUrl
+  ].flatMap(normalizeMetadataValue);
+
+  if (Array.isArray(metadata.fields)) {
+    metadata.fields.forEach(field => {
+      const label = String(field?.label || "").toLowerCase();
+      if (label.includes("image") || label.includes("photo")) {
+        values.push(...normalizeMetadataValue(field.value));
+      }
+    });
+  }
+
+  return [...new Set(values)]
+    .filter(value => /^(https?:\/\/|data:image\/|\/media\/|\/assets\/|images\/|assets\/)/i.test(value))
+    .slice(0, 3);
+}
+
+function metadataSearchText(metadata) {
+  try {
+    return JSON.stringify(metadata || {});
+  } catch {
+    return "";
+  }
+}
+
 function sessionProgress(session) {
   const total = Number(session?.itemCount || 0);
   const done = Number(session?.foundCount || 0);
@@ -412,7 +455,9 @@ function getSessionItemSearchText(item) {
     item?.inventoryItem?.armyName,
     item?.inventoryItem?.lin,
     item?.inventoryItem?.nsn,
+    item?.inventoryItem?.description,
     item?.inventoryItem?.currentLocation,
+    metadataSearchText(item?.inventoryItem?.metadata),
     latest?.status,
     latest?.locationText,
     latest?.serialNumber,
@@ -1537,14 +1582,35 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                   const submission = latestSubmission(item);
                   const needsMoreProof = submission?.reviewState === "request_more_info";
                   const pendingProof = submission?.reviewState === "pending";
+                  const knownLocation = item.inventoryItem?.currentLocation || "";
+                  const knownDescription = item.inventoryItem?.description || "";
+                  const imageUrls = getInventoryItemImages(item.inventoryItem);
                   return (
                     <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} key={item.id}>
                       <div className="session-item-main">
                         <FileText aria-hidden="true" />
                         <div>
                           <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
+                          {item.inventoryItem ? (
+                            <small className="session-known-item">
+                              Matched known item
+                              {item.inventoryItem.lin ? ` - LIN ${item.inventoryItem.lin}` : ""}
+                              {item.inventoryItem.nsn ? ` - NSN ${item.inventoryItem.nsn}` : ""}
+                            </small>
+                          ) : null}
                           <span>{item.packetLine || "No packet text"}</span>
                           {item.locationHint ? <small>Hint: {item.locationHint}</small> : null}
+                          {knownLocation && knownLocation !== item.locationHint ? <small>Known location: {knownLocation}</small> : null}
+                          {knownDescription ? <small>Description: {knownDescription}</small> : null}
+                          {imageUrls.length ? (
+                            <div className="session-item-thumbs">
+                              {imageUrls.map(url => (
+                                <a href={url} target="_blank" rel="noreferrer" key={url}>
+                                  <img src={url} alt={item.inventoryItem?.commonName || item.inventoryItem?.title || "Matched item"} loading="lazy" />
+                                </a>
+                              ))}
+                            </div>
+                          ) : null}
                           {submission ? (
                             <small className={`session-proof-state ${needsMoreProof ? "requested" : ""}`}>
                               {formatReviewState(submission.reviewState)}

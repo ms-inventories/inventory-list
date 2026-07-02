@@ -132,7 +132,9 @@ function rowToSessionItem(row) {
       armyName: row.army_name,
       lin: row.lin,
       nsn: row.nsn,
-      currentLocation: row.current_location
+      description: row.description,
+      currentLocation: row.current_location,
+      metadata: row.item_metadata || {}
     } : null,
     submissions: []
   };
@@ -346,6 +348,144 @@ function buildTenantAdminUrl(tenant) {
 
 function buildTenantTaskUrl(tenant) {
   return tenantBaseUrl(tenant);
+}
+
+function normalizeMatchText(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeIdentifier(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function textTokens(value) {
+  const stopWords = new Set(["THE", "AND", "FOR", "WITH", "TYPE", "SET", "KIT", "GROUP", "SYSTEM"]);
+  return normalizeMatchText(value)
+    .split(" ")
+    .filter(token => token.length >= 3 && !stopWords.has(token));
+}
+
+function extractLinValues(text) {
+  const values = new Set();
+  const normalized = normalizeMatchText(text);
+  const matches = normalized.match(/\b[A-Z][0-9]{5}\b/g) || [];
+  matches.forEach(value => values.add(value));
+  return values;
+}
+
+function extractNsnValues(text) {
+  const values = new Set();
+  const matches = String(text || "").match(/\b\d[\d\s-]{10,}\d\b/g) || [];
+  matches.forEach(value => {
+    const digits = normalizeDigits(value);
+    if (digits.length === 13) values.add(digits);
+  });
+  return values;
+}
+
+function itemMatchProfile(item) {
+  const sourceText = [
+    item.title,
+    item.common_name,
+    item.army_name,
+    item.description,
+    item.current_location
+  ].filter(Boolean).join(" ");
+  const lins = extractLinValues(sourceText);
+  const nsns = extractNsnValues(sourceText);
+  const explicitLin = normalizeIdentifier(item.lin);
+  const explicitNsn = normalizeDigits(item.nsn);
+
+  if (explicitLin) lins.add(explicitLin);
+  if (explicitNsn.length === 13) nsns.add(explicitNsn);
+
+  return {
+    ...item,
+    lins,
+    nsns,
+    normalizedTitle: normalizeMatchText(item.title),
+    normalizedCommonName: normalizeMatchText(item.common_name),
+    normalizedArmyName: normalizeMatchText(item.army_name),
+    tokens: new Set(textTokens(sourceText))
+  };
+}
+
+function scoreInventoryItemMatch(packetLine, item) {
+  const packetText = normalizeMatchText(packetLine);
+  const packetLinValues = extractLinValues(packetLine);
+  const packetNsnValues = extractNsnValues(packetLine);
+  let score = 0;
+  const reasons = [];
+
+  for (const nsn of packetNsnValues) {
+    if (item.nsns.has(nsn)) {
+      score += 1000;
+      reasons.push("nsn");
+    }
+  }
+
+  for (const lin of packetLinValues) {
+    if (item.lins.has(lin)) {
+      score += 900;
+      reasons.push("lin");
+    }
+  }
+
+  if (item.normalizedCommonName && item.normalizedCommonName.length >= 4 && packetText.includes(item.normalizedCommonName)) {
+    score += 260;
+    reasons.push("common_name");
+  }
+
+  if (item.normalizedArmyName && item.normalizedArmyName.length >= 10) {
+    if (packetText.includes(item.normalizedArmyName) || item.normalizedArmyName.includes(packetText)) {
+      score += 240;
+      reasons.push("army_name");
+    }
+  }
+
+  if (item.normalizedTitle && item.normalizedTitle.length >= 10) {
+    if (packetText.includes(item.normalizedTitle) || item.normalizedTitle.includes(packetText)) {
+      score += 220;
+      reasons.push("title");
+    }
+  }
+
+  const packetTokens = textTokens(packetText);
+  const overlap = packetTokens.filter(token => item.tokens.has(token));
+  if (overlap.length >= 2) {
+    score += overlap.length * 45;
+    reasons.push("tokens");
+  }
+
+  return { score, reasons };
+}
+
+function findInventoryItemMatch(packetLine, inventoryItems) {
+  let best = null;
+  let runnerUp = null;
+
+  for (const item of inventoryItems) {
+    const scored = scoreInventoryItemMatch(packetLine, item);
+    if (!best || scored.score > best.score) {
+      runnerUp = best;
+      best = { item, ...scored };
+    } else if (!runnerUp || scored.score > runnerUp.score) {
+      runnerUp = { item, ...scored };
+    }
+  }
+
+  if (!best || best.score < 180) return null;
+  if (!best.reasons.includes("lin") && !best.reasons.includes("nsn") && best.score < 260) return null;
+  if (runnerUp && runnerUp.score > 0 && best.score - runnerUp.score < 80) return null;
+  return best;
 }
 
 function displayNameFor(user) {
@@ -1118,7 +1258,9 @@ export function registerRoutes(app) {
           ii.army_name,
           ii.lin,
           ii.nsn,
+          ii.description,
           ii.current_location,
+          ii.metadata AS item_metadata,
           verifier.email AS direct_verified_by_email
         FROM inventory_session_items si
         LEFT JOIN inventory_items ii ON ii.id = si.inventory_item_id
@@ -1250,6 +1392,19 @@ export function registerRoutes(app) {
       request.body
     );
 
+    let matchedItem = null;
+    if (!body.inventoryItemId && body.packetLine) {
+      const inventoryResult = await query(
+        `
+          SELECT id, title, common_name, army_name, lin, nsn, description, current_location
+          FROM inventory_items
+          WHERE tenant_id = $1
+        `,
+        [context.tenant.id]
+      );
+      matchedItem = findInventoryItemMatch(body.packetLine, inventoryResult.rows.map(itemMatchProfile))?.item || null;
+    }
+
     const result = await query(
       `
         INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint)
@@ -1260,10 +1415,10 @@ export function registerRoutes(app) {
       `,
       [
         request.params.sessionId,
-        body.inventoryItemId || null,
+        body.inventoryItemId || matchedItem?.id || null,
         body.packetLine || null,
         body.expectedQty ?? null,
-        body.locationHint || null,
+        body.locationHint || matchedItem?.current_location || null,
         context.tenant.id
       ]
     );
@@ -1283,6 +1438,7 @@ export function registerRoutes(app) {
       z.object({
         items: z.array(z.object({
           packetLine: z.string().min(2),
+          inventoryItemId: z.string().uuid().optional(),
           expectedQty: z.number().int().nonnegative().optional(),
           locationHint: z.string().optional()
         })).min(1).max(250),
@@ -1323,6 +1479,15 @@ export function registerRoutes(app) {
 
       if (!sessionResult.rows[0]) return null;
 
+      const inventoryResult = await client.query(
+        `
+          SELECT id, title, common_name, army_name, lin, nsn, description, current_location
+          FROM inventory_items
+          WHERE tenant_id = $1
+        `,
+        [context.tenant.id]
+      );
+      const matchableInventoryItems = inventoryResult.rows.map(itemMatchProfile);
       let importBatch = null;
       if (hasImportBatch) {
         const sourceStorageKey = body.importBatch?.sourceFile
@@ -1358,33 +1523,43 @@ export function registerRoutes(app) {
       }
 
       const rows = [];
+      let matchedCount = 0;
       for (const item of body.items) {
+        const matchedItem = item.inventoryItemId
+          ? null
+          : findInventoryItemMatch(item.packetLine, matchableInventoryItems)?.item || null;
+        const inventoryItemId = item.inventoryItemId || matchedItem?.id || null;
+        const locationHint = item.locationHint || matchedItem?.current_location || null;
+        if (inventoryItemId) matchedCount += 1;
+
         const result = importBatch
           ? await client.query(
             `
-              INSERT INTO inventory_session_items (session_id, packet_line, expected_qty, location_hint, import_batch_id)
-              VALUES ($1, $2, $3, $4, $5)
+              INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint, import_batch_id)
+              VALUES ($1, $2, $3, $4, $5, $6)
               RETURNING *
             `,
             [
               request.params.sessionId,
+              inventoryItemId,
               item.packetLine.trim(),
               item.expectedQty ?? null,
-              item.locationHint || null,
+              locationHint,
               importBatch.id
             ]
           )
           : await client.query(
             `
-              INSERT INTO inventory_session_items (session_id, packet_line, expected_qty, location_hint)
-              VALUES ($1, $2, $3, $4)
+              INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint)
+              VALUES ($1, $2, $3, $4, $5)
               RETURNING *
             `,
             [
               request.params.sessionId,
+              inventoryItemId,
               item.packetLine.trim(),
               item.expectedQty ?? null,
-              item.locationHint || null
+              locationHint
             ]
           );
         rows.push(result.rows[0]);
@@ -1398,6 +1573,7 @@ export function registerRoutes(app) {
         entityId: request.params.sessionId,
         metadata: {
           count: rows.length,
+          matchedCount,
           importBatchId: importBatch?.id || null,
           sourceName: body.importBatch?.sourceName || null
         }
