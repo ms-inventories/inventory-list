@@ -200,7 +200,7 @@ The app database remains the source of tenant membership and role inside a speci
 ## Next Build Steps
 
 1. Deploy `backend/` to Coolify with Postgres.
-2. Apply `backend/db/001_init.sql` and `backend/db/002_tenant_admin_invites.sql` if the DB already exists.
+2. Run `npm run migrate` in the backend resource so every file in `backend/db/` is applied or baselined.
 3. Create the Authentik OIDC provider and group.
 4. Wire React login to Authentik.
 5. Replace old S3 JSON reads with API calls.

@@ -8,7 +8,8 @@ Suggested public routes:
 
 | Hostname | Service | Purpose |
 | --- | --- | --- |
-| `876en.org` | future marketing/newsletter site | Public homepage, announcements, newsletter signup |
+| `876en.org` | React app now, future marketing/newsletter site later | Public landing page until the marketing site exists |
+| `admin.876en.org` | React app | Platform admin console for creating platoons |
 | `<tenant>.876en.org` | React app | Tenant-specific platoon workspaces, such as `1st.876en.org` or `ms.876en.org` |
 | `api.876en.org` | Express API | Backend API, media URLs, platform endpoints |
 | `auth.876en.org` | Authentik | Identity provider and account login |
@@ -24,6 +25,7 @@ Create the exact service routes first:
 | --- | --- | --- |
 | `876en.org` | empty | homepage/newsletter service |
 | `www.876en.org` | empty | homepage/newsletter service |
+| `admin.876en.org` | empty | React frontend service |
 | `auth.876en.org` | empty | Authentik service |
 | `coolify.876en.org` | empty | Coolify service |
 | `api.876en.org` | empty | backend API service |
@@ -85,6 +87,7 @@ VITE_OIDC_SCOPE=openid profile email groups
 Published routes:
 
 ```text
+admin.876en.org -> frontend service
 *.876en.org -> frontend service
 ```
 
@@ -110,15 +113,13 @@ api.876en.org -> backend service on port 3000
 
 Use Postgres in Coolify.
 
-Apply migrations in order:
+Run migrations from the backend resource terminal after `DATABASE_URL` is set:
 
 ```text
-backend/db/001_init.sql
-backend/db/002_tenant_admin_invites.sql
-backend/db/003_packet_import_batches.sql
+npm run migrate
 ```
 
-`003_packet_import_batches.sql` is required before saving packet imports with source files. Until it is applied, existing session views still work, but the new import archive flow will return a migration-needed error.
+The migration runner records applied files in `schema_migrations`. If the early schema files were already applied manually, it baselines those files and continues with anything missing.
 
 ## Local NAS Storage
 
@@ -202,6 +203,8 @@ inventory-platform-admins
 
 Tenant roles live in the app database. Authentik proves identity; the app decides tenant access.
 
+Production requires `PLATFORM_ADMIN_EMAILS` even if you also use the `inventory-platform-admins` group. Put your first supply/root admin email here, log in once, create the first platoons, then you can keep or narrow the allowlist after Authentik groups are verified.
+
 Frontend OIDC notes:
 
 - Configure the Authentik application as a public/OIDC client with PKCE.
@@ -234,6 +237,21 @@ The first React tenant-admin session flow is live:
 - notify the submitter by email when the LT requests more proof
 
 The next backend/frontend slice should add a manual match/override control for session rows the automatic matcher misses or gets wrong.
+
+## Production Cutover
+
+Use this as the first real go-live pass.
+
+1. Backend Coolify env is set from `backend/.env.example`, with `NODE_ENV=production`, `ALLOW_DEV_AUTH=false`, the production `DATABASE_URL`, and `PLATFORM_ADMIN_EMAILS` containing your root admin email.
+2. Backend terminal runs `npm run migrate` and ends with `migration complete: database is current`.
+3. Backend `https://api.876en.org/health` returns `{ "ok": true }`.
+4. Frontend Coolify env has `VITE_BASE_DOMAIN=876en.org`, `VITE_API_BASE_URL=https://api.876en.org/api`, and the Authentik discovery/client values.
+5. Cloudflare routes include `admin.876en.org`, `876en.org`, `api.876en.org`, and the tenant wildcard or explicit tenant hostnames.
+6. Authentik has redirect URIs for `https://admin.876en.org/`, `https://876en.org/`, and each first tenant host such as `https://1st.876en.org/` and `https://ms.876en.org/`.
+7. Open `https://admin.876en.org/#/admin`, sign in with the email listed in `PLATFORM_ADMIN_EMAILS`, and confirm the header shows `Platform admin`.
+8. Create the first tenants, for example `1st` and `ms`, assigning each LT email as the first platoon admin.
+9. Open each tenant admin link, create a test inventory session, import a couple packet rows, invite one contributor, and submit/approve one proof item.
+10. After the test pass, leave the root static GitHub Pages site online until you are comfortable moving the public homepage to the Coolify app.
 
 ## QA Environment
 

@@ -46,6 +46,7 @@ export function assertProductionConfig() {
   if (!config.databaseUrl) missing.push("DATABASE_URL");
   if (!config.oidc.issuer) missing.push("OIDC_ISSUER");
   if (!config.oidc.audience) missing.push("OIDC_AUDIENCE");
+  if (!config.platformAdminEmails.length) missing.push("PLATFORM_ADMIN_EMAILS");
 
   if (missing.length) {
     throw new Error(`Missing required production config: ${missing.join(", ")}`);

@@ -24,10 +24,11 @@ It is intentionally separate from the static GitHub Pages app in the repository 
 cp .env.example .env
 npm install
 npm run check
+npm run migrate
 npm run dev
 ```
 
-Apply the database schema in `db/001_init.sql` to a Postgres database before using the API. If `001_init.sql` was already applied, run `db/002_tenant_admin_invites.sql` next.
+Run `npm run migrate` before using the API. The migration runner applies every SQL file in `db/` once and can safely baseline a database where the first schema files were already applied manually.
 
 When `ALLOW_DEV_AUTH=true`, you can simulate a user with headers:
 
