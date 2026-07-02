@@ -274,9 +274,7 @@ async function extractImageText(file, onStatus) {
 
 async function recognizePacketFile(file, onStatus) {
   if (!file) throw new Error("Choose a packet file first");
-  const text = isPdfFile(file)
-    ? await extractPdfText(file, onStatus)
-    : await extractImageText(file, onStatus);
+  const text = await readPacketFileText(file, onStatus);
 
   const parsed = parsePacketLine(text);
   parsed.candidates = getPacketLineCandidates(text, 12);
@@ -292,10 +290,24 @@ async function recognizePacketImage(file, onStatus) {
   return recognizePacketFile(file, onStatus);
 }
 
+async function readPacketFileText(file, onStatus) {
+  if (!file) throw new Error("Choose a packet file first");
+
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+  if (isPdfFile(file)) return extractPdfText(file, onStatus);
+  if (type.startsWith("text/") || name.endsWith(".txt") || name.endsWith(".csv")) {
+    onStatus?.("Reading text file...");
+    return file.text();
+  }
+  return extractImageText(file, onStatus);
+}
+
 export {
   getPacketCandidateDisplay,
   getPacketLineCandidates,
   parsePacketLine,
+  readPacketFileText,
   recognizePacketFile,
   recognizePacketImage
 };

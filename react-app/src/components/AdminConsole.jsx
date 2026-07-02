@@ -8,6 +8,7 @@ import {
   ClipboardPlus,
   Download,
   FileText,
+  FileUp,
   ListChecks,
   LogIn,
   LogOut,
@@ -18,6 +19,7 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  Trash2,
   UserPlus,
   Users,
   XCircle
@@ -32,6 +34,7 @@ import {
   readAuthSession,
   saveAuthSession
 } from "../lib/auth.js";
+import { readPacketFileText } from "../lib/ocr.js";
 
 const roleLabels = {
   tenant_admin: "Platoon admin",
@@ -162,20 +165,121 @@ function StatusLine({ status }) {
   return <div className={`admin-status ${status.isError ? "error" : ""}`}>{status.text}</div>;
 }
 
+function normalizePacketImportLine(line) {
+  return String(line || "")
+    .replace(/[|]/g, " ")
+    .replace(/\bMPO\s+Description\b/gi, "")
+    .replace(/\bNSN\s+Description\b/gi, "")
+    .replace(/\bSerNo\/RegNo\/LotNo\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPacketImportNoiseLine(line) {
+  const value = normalizePacketImportLine(line).toLowerCase();
+  if (!value || value.length < 4) return true;
+  if (/^(from|to|fe|uic|date|time|page|sysno|nsn|ui|ciic|dla|buom|oh qty)\b/.test(value)) return true;
+  if (/(sub hand receipt|responsible officer|national guard|department of the army)/.test(value)) return true;
+  if (/^(mpo|serno|regno|lotno)\b/.test(value)) return true;
+  if (/^\d+$/.test(value.replace(/\s+/g, ""))) return true;
+  if (/^[a-z]{1,3}$/i.test(value)) return true;
+  return false;
+}
+
+function scorePacketImportLine(line) {
+  const value = normalizePacketImportLine(line);
+  if (isPacketImportNoiseLine(value)) return -999;
+
+  let score = 0;
+  if (/^\d{6,10}\s+[a-z0-9]{5,8}\b/i.test(value)) score += 120;
+  if (/^[a-z]\d{5}\b/i.test(value)) score += 110;
+  if (/^[a-z0-9]{5,8}\s+.+/i.test(value) && /\d/.test(value.split(/\s+/)[0] || "")) score += 80;
+  if (/\b[a-z]\d{5}\b/i.test(value)) score += 55;
+  if (/\b(armament|antenna|battlefield|binocular|chemical|cutting|detector|device|group|kit|load|machine|navigation|radiac|radio|set|subsys|system|tamper|tool|trailer|training)\b/i.test(value)) score += 35;
+  if (/:/.test(value)) score += 15;
+  if (value.length >= 16) score += 10;
+  if (/\b(ea|u|j|7|0)\s+\d{3,5}\s+ea\s+\d+\b/i.test(value)) score += 10;
+  if (/^(nsn|na|ncm|sca|228-|01901|10tdc|1007|6665|3805|5985|6350|1240|3433|5825|5865|6660|6902)\b/i.test(value)) score -= 80;
+
+  return score;
+}
+
+function confidenceFromPacketScore(score) {
+  if (score >= 120) return "high";
+  if (score >= 70) return "medium";
+  return "low";
+}
+
+function parseDelimitedPacketLine(line) {
+  const parts = String(line || "")
+    .split(/\t|\s+\|\s+/)
+    .map(part => normalizePacketImportLine(part))
+    .filter(Boolean);
+
+  if (parts.length < 2) return null;
+
+  const maybeQty = Number(parts[1]);
+  return {
+    packetLine: parts[0],
+    expectedQty: Number.isInteger(maybeQty) && maybeQty >= 0 ? maybeQty : undefined,
+    locationHint: parts.length > 2 ? parts.slice(2).join(" ") : undefined,
+    confidence: "high"
+  };
+}
+
 function parsePacketRows(text) {
+  const seen = new Set();
+
   return String(text || "")
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean)
-    .map(line => {
-      const parts = line.split(/\t|\s+\|\s+/).map(part => part.trim()).filter(Boolean);
-      const maybeQty = Number(parts[1]);
-      return {
-        packetLine: parts[0] || line,
-        expectedQty: Number.isInteger(maybeQty) && maybeQty >= 0 ? maybeQty : undefined,
-        locationHint: parts.length > 2 ? parts.slice(2).join(" ") : undefined
+    .map(line => parseDelimitedPacketLine(line) || {
+      packetLine: normalizePacketImportLine(line),
+      confidence: confidenceFromPacketScore(scorePacketImportLine(line))
+    })
+    .map(row => ({
+      ...row,
+      packetLine: normalizePacketImportLine(row.packetLine)
+    }))
+    .filter(row => {
+      if (!row.packetLine || isPacketImportNoiseLine(row.packetLine)) return false;
+      if (scorePacketImportLine(row.packetLine) < 55 && !row.expectedQty && !row.locationHint) return false;
+
+      const key = row.packetLine.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 250);
+}
+
+function createPacketDraftRows(rows) {
+  return rows.map((row, index) => ({
+    id: globalThis.crypto?.randomUUID?.() || `packet-row-${Date.now()}-${index}`,
+    packetLine: row.packetLine || "",
+    expectedQty: row.expectedQty ?? "",
+    locationHint: row.locationHint || "",
+    confidence: row.confidence || "low"
+  }));
+}
+
+function sanitizePacketDraftRows(rows) {
+  return rows
+    .map(row => {
+      const expectedQty = Number(row.expectedQty);
+      const item = {
+        packetLine: String(row.packetLine || "").trim(),
+        locationHint: String(row.locationHint || "").trim() || undefined
       };
-    });
+
+      if (String(row.expectedQty ?? "").trim() && Number.isInteger(expectedQty) && expectedQty >= 0) {
+        item.expectedQty = expectedQty;
+      }
+
+      return item;
+    })
+    .filter(row => row.packetLine.length >= 2);
 }
 
 function sessionProgress(session) {
@@ -683,9 +787,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [detail, setDetail] = useState(null);
   const [newSessionName, setNewSessionName] = useState("");
   const [packetRows, setPacketRows] = useState("");
+  const [packetDraftRows, setPacketDraftRows] = useState([]);
+  const [packetSourceName, setPacketSourceName] = useState("");
   const [proofItemId, setProofItemId] = useState("");
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
+  const [isReadingPacket, setIsReadingPacket] = useState(false);
   const [printReportId, setPrintReportId] = useState("");
 
   async function loadSessions(nextSelectedId = selectedSessionId) {
@@ -748,6 +855,55 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     }
   }
 
+  function reviewPacketRows(sourceText = packetRows, sourceName = packetSourceName) {
+    if (!selectedSessionId) {
+      setStatus({ text: "Create or select a session first.", isError: true });
+      return [];
+    }
+
+    const rows = createPacketDraftRows(parsePacketRows(sourceText));
+    setPacketDraftRows(rows);
+    setPacketSourceName(sourceName || "");
+
+    if (!rows.length) {
+      setStatus({ text: "No packet rows found. Try pasting one item per line.", isError: true });
+      return [];
+    }
+
+    setStatus({ text: `Found ${rows.length} packet rows. Review them before importing.`, isError: false });
+    return rows;
+  }
+
+  async function readPacketUpload(file) {
+    if (!file) return;
+
+    try {
+      setIsReadingPacket(true);
+      setStatus({ text: "Reading packet file...", isError: false });
+      const text = await readPacketFileText(file, message => setStatus({ text: message, isError: false }));
+      setPacketRows(text);
+      reviewPacketRows(text, file.name);
+    } catch (error) {
+      setStatus({ text: error.message || "Could not read packet file.", isError: true });
+    } finally {
+      setIsReadingPacket(false);
+    }
+  }
+
+  function updatePacketDraftRow(rowId, field, value) {
+    setPacketDraftRows(rows => rows.map(row => row.id === rowId ? { ...row, [field]: value } : row));
+  }
+
+  function removePacketDraftRow(rowId) {
+    setPacketDraftRows(rows => rows.filter(row => row.id !== rowId));
+  }
+
+  function clearPacketImport() {
+    setPacketRows("");
+    setPacketDraftRows([]);
+    setPacketSourceName("");
+  }
+
   async function addPacketRows(e) {
     e.preventDefault();
     if (!selectedSessionId) {
@@ -755,9 +911,10 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
       return;
     }
 
-    const items = parsePacketRows(packetRows);
+    const reviewedRows = packetDraftRows.length ? packetDraftRows : reviewPacketRows();
+    const items = sanitizePacketDraftRows(reviewedRows);
     if (!items.length) {
-      setStatus({ text: "Paste at least one packet row.", isError: true });
+      setStatus({ text: "Review at least one valid packet row first.", isError: true });
       return;
     }
 
@@ -770,6 +927,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
         body: { items }
       });
       setPacketRows("");
+      setPacketDraftRows([]);
+      setPacketSourceName("");
       setStatus({ text: `Added ${items.length} packet rows.`, isError: false });
       await loadSessions(selectedSessionId);
     } catch (error) {
@@ -1039,18 +1198,110 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                 <details className="packet-import">
                   <summary className="btn btn-secondary">
                     <ClipboardPlus aria-hidden="true" />
-                    <span>Add packet rows</span>
+                    <span>Import packet</span>
                   </summary>
                   <form className="disclosure-panel packet-import-form" onSubmit={addPacketRows}>
+                    <div className="packet-import-actions">
+                      <label className="btn btn-secondary btn-small packet-file-button">
+                        <FileUp aria-hidden="true" />
+                        <span>{isReadingPacket ? "Reading..." : "Upload PDF/text/photo"}</span>
+                        <input
+                          type="file"
+                          accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
+                          disabled={isReadingPacket || isSaving}
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            readPacketUpload(file);
+                          }}
+                        />
+                      </label>
+                      <button
+                        className="btn btn-secondary btn-small"
+                        type="button"
+                        disabled={!packetRows.trim() || isReadingPacket || isSaving}
+                        onClick={() => reviewPacketRows()}
+                      >
+                        <ClipboardList aria-hidden="true" />
+                        <span>Review rows</span>
+                      </button>
+                      {packetRows || packetDraftRows.length ? (
+                        <button className="btn btn-secondary btn-small" type="button" onClick={clearPacketImport}>
+                          <Trash2 aria-hidden="true" />
+                          <span>Clear</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {packetSourceName ? <span className="packet-import-note">Source: {packetSourceName}</span> : null}
                     <textarea
                       className="input packet-textarea"
                       value={packetRows}
-                      placeholder="A90594 ARMAMENT SUBSYS: M153&#10;B67839 BINOCULAR: M24"
-                      onChange={e => setPacketRows(e.target.value)}
+                      placeholder="Paste hand-receipt text or one item per line. Example:&#10;000009148 R20684 RADIAC SET: AN/VDR-2&#10;B67839 BINOCULAR: M24"
+                      onChange={e => {
+                        setPacketRows(e.target.value);
+                        setPacketDraftRows([]);
+                        setPacketSourceName("");
+                      }}
                     />
-                    <button className="btn btn-secondary" type="submit" disabled={isSaving}>
-                      <span>Add rows</span>
-                    </button>
+                    {packetDraftRows.length ? (
+                      <div className="packet-review">
+                        <div className="packet-review-heading">
+                          <strong>Review before saving</strong>
+                          <span>{packetDraftRows.length} rows</span>
+                        </div>
+                        <div className="packet-review-list">
+                          {packetDraftRows.map((row, index) => (
+                            <div className="packet-review-row" key={row.id}>
+                              <div className="packet-review-row-top">
+                                <span className="packet-row-number">{index + 1}</span>
+                                <span className={`packet-confidence ${row.confidence}`}>{row.confidence}</span>
+                                <button
+                                  className="icon-button"
+                                  type="button"
+                                  aria-label="Remove row"
+                                  onClick={() => removePacketDraftRow(row.id)}
+                                >
+                                  <Trash2 aria-hidden="true" />
+                                </button>
+                              </div>
+                              <label className="field-label" htmlFor={`packetLine-${row.id}`}>Packet row</label>
+                              <textarea
+                                id={`packetLine-${row.id}`}
+                                className="input packet-review-line"
+                                value={row.packetLine}
+                                onChange={e => updatePacketDraftRow(row.id, "packetLine", e.target.value)}
+                              />
+                              <div className="packet-review-fields">
+                                <label>
+                                  <span className="field-label">Qty</span>
+                                  <input
+                                    className="input"
+                                    inputMode="numeric"
+                                    value={row.expectedQty}
+                                    onChange={e => updatePacketDraftRow(row.id, "expectedQty", e.target.value)}
+                                  />
+                                </label>
+                                <label>
+                                  <span className="field-label">Location hint</span>
+                                  <input
+                                    className="input"
+                                    value={row.locationHint}
+                                    placeholder="Optional"
+                                    onChange={e => updatePacketDraftRow(row.id, "locationHint", e.target.value)}
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="button-row">
+                          <button className="btn btn-primary" type="submit" disabled={isSaving || isReadingPacket}>
+                            <ClipboardPlus aria-hidden="true" />
+                            <span>{isSaving ? "Importing..." : `Import ${sanitizePacketDraftRows(packetDraftRows).length} rows`}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </form>
                 </details>
               ) : null}
