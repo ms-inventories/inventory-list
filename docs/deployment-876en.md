@@ -218,10 +218,11 @@ The first React tenant-admin session flow is live:
 - show contributors the LT's request note and move those response items to the top
 - let the LT review proof from a queue and approve, reject, or request more proof
 - let the LT write a specific request note when asking for more proof
+- show a proof history timeline in the LT review queue when an item has follow-up submissions
 - notify platoon admins by email when proof is submitted
 - notify the submitter by email when the LT requests more proof
 
-The next backend/frontend slice should add a proof history timeline so LTs can compare the original submission and the follow-up response without opening old emails.
+The next backend/frontend slice should add close-out reporting for completed inventory sessions.
 
 ## QA Environment
 

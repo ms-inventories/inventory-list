@@ -256,6 +256,10 @@ function formatReviewState(value) {
   return labels[value] || value || "No proof";
 }
 
+function submissionPerson(submission) {
+  return submission?.submittedByName || submission?.submittedByEmail || "Unknown";
+}
+
 const proofRequestOptions = [
   { value: "serial_photo", label: "Serial photo" },
   { value: "wide_photo", label: "Wide photo" },
@@ -920,6 +924,47 @@ function ReviewPanel({ token, tenantSlug }) {
                     <img src={photo.url} alt={photo.caption || photo.kind || "Proof"} loading="lazy" />
                   </a>
                 ))}
+              </div>
+            ) : null}
+
+            {(submission.history || []).length > 1 ? (
+              <div className="proof-timeline">
+                <div className="proof-timeline-heading">
+                  <strong>Proof history</strong>
+                  <span>{submission.history.length} submissions</span>
+                </div>
+                <div className="proof-timeline-list">
+                  {submission.history.map(historyItem => (
+                    <div className={`proof-timeline-entry ${historyItem.id === submission.id ? "current" : ""}`} key={historyItem.id}>
+                      <div className="proof-timeline-dot" aria-hidden="true" />
+                      <div className="proof-timeline-body">
+                        <div className="proof-timeline-top">
+                          <strong>{formatReviewState(historyItem.reviewState)}</strong>
+                          <span>{formatDate(historyItem.createdAt)}</span>
+                        </div>
+                        <small>{submissionPerson(historyItem)}</small>
+                        <div className="proof-timeline-facts">
+                          <span>{historyItem.status}</span>
+                          {historyItem.locationText ? <span>{historyItem.locationText}</span> : null}
+                          {historyItem.serialNumber ? <span>SN {historyItem.serialNumber}</span> : null}
+                        </div>
+                        {historyItem.note ? <small className="proof-timeline-note">{historyItem.note}</small> : null}
+                        {historyItem.reviewState === "request_more_info" && historyItem.reviewNote ? (
+                          <small className="proof-timeline-request">Requested: {historyItem.reviewNote}</small>
+                        ) : null}
+                        {historyItem.photos?.length ? (
+                          <div className="proof-timeline-photos">
+                            {historyItem.photos.map(photo => (
+                              <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.storageKey}>
+                                <img src={photo.url} alt={photo.caption || photo.kind || "Proof"} loading="lazy" />
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
 

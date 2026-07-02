@@ -1423,20 +1423,33 @@ export function registerRoutes(app) {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const result = await query(
       `
-        SELECT sub.*, submitter.email AS submitted_by_email, submitter.display_name AS submitted_by_name,
-          si.id AS session_item_id,
-          si.packet_line,
-          si.status AS session_item_status,
-          s.id AS session_id,
-          s.name AS session_name
-        FROM item_submissions sub
-        JOIN inventory_session_items si ON si.id = sub.session_item_id
-        JOIN inventory_sessions s ON s.id = si.session_id
-        JOIN app_users submitter ON submitter.id = sub.submitted_by
-        WHERE s.tenant_id = $1
-          AND sub.review_state IN ('pending', 'request_more_info')
-          AND s.status <> 'closed'
-        ORDER BY sub.created_at DESC
+        WITH actionable AS (
+          SELECT sub.*, submitter.email AS submitted_by_email, submitter.display_name AS submitted_by_name,
+            si.id AS session_item_id,
+            si.packet_line,
+            si.status AS session_item_status,
+            s.id AS session_id,
+            s.name AS session_name,
+            row_number() OVER (
+              PARTITION BY si.id
+              ORDER BY
+                CASE WHEN sub.review_state = 'pending' THEN 0 ELSE 1 END,
+                sub.created_at DESC
+            ) AS queue_rank
+          FROM item_submissions sub
+          JOIN inventory_session_items si ON si.id = sub.session_item_id
+          JOIN inventory_sessions s ON s.id = si.session_id
+          JOIN app_users submitter ON submitter.id = sub.submitted_by
+          WHERE s.tenant_id = $1
+            AND sub.review_state IN ('pending', 'request_more_info')
+            AND s.status <> 'closed'
+        )
+        SELECT *
+        FROM actionable
+        WHERE queue_rank = 1
+        ORDER BY
+          CASE WHEN review_state = 'pending' THEN 0 ELSE 1 END,
+          created_at DESC
       `,
       [context.tenant.id]
     );
@@ -1455,6 +1468,23 @@ export function registerRoutes(app) {
     }));
 
     if (submissions.length) {
+      const sessionItemIds = submissions.map(submission => submission.sessionItem.id);
+      const historyResult = await query(
+        `
+          SELECT sub.*, submitter.email AS submitted_by_email, submitter.display_name AS submitted_by_name
+          FROM item_submissions sub
+          JOIN inventory_session_items si ON si.id = sub.session_item_id
+          JOIN inventory_sessions s ON s.id = si.session_id
+          JOIN app_users submitter ON submitter.id = sub.submitted_by
+          WHERE s.tenant_id = $1
+            AND si.id = ANY($2::uuid[])
+          ORDER BY sub.created_at DESC
+        `,
+        [context.tenant.id, sessionItemIds]
+      );
+
+      const history = historyResult.rows.map(rowToSubmission);
+      const historyById = new Map(history.map(submission => [submission.id, submission]));
       const photosResult = await query(
         `
           SELECT *
@@ -1462,12 +1492,26 @@ export function registerRoutes(app) {
           WHERE submission_id = ANY($1::uuid[])
           ORDER BY created_at ASC
         `,
-        [submissions.map(submission => submission.id)]
+        [history.map(submission => submission.id)]
       );
-      const byId = new Map(submissions.map(submission => [submission.id, submission]));
+
       photosResult.rows.forEach(row => {
-        const submission = byId.get(row.submission_id);
+        const submission = historyById.get(row.submission_id);
         if (submission) submission.photos.push(rowToPhoto(row));
+      });
+
+      const historyBySessionItemId = new Map();
+      history.forEach(historySubmission => {
+        const list = historyBySessionItemId.get(historySubmission.sessionItemId) || [];
+        list.push(historySubmission);
+        historyBySessionItemId.set(historySubmission.sessionItemId, list);
+      });
+
+      submissions.forEach(submission => {
+        const itemHistory = historyBySessionItemId.get(submission.sessionItem.id) || [];
+        const primary = itemHistory.find(historySubmission => historySubmission.id === submission.id);
+        submission.photos = primary?.photos || [];
+        submission.history = itemHistory;
       });
     }
 
