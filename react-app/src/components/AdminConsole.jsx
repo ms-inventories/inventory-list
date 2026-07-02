@@ -3,6 +3,7 @@ import {
   Building2,
   Camera,
   CheckCircle2,
+  Copy,
   ClipboardList,
   ClipboardPlus,
   FileText,
@@ -256,8 +257,113 @@ function formatReviewState(value) {
   return labels[value] || value || "No proof";
 }
 
+function formatItemStatus(value) {
+  const labels = {
+    unchecked: "Unchecked",
+    found: "Found",
+    not_found: "Not found",
+    mismatch: "Mismatch",
+    needs_review: "Needs review",
+    approved: "Approved",
+    draft: "Draft",
+    active: "Active",
+    closed: "Closed"
+  };
+
+  return labels[value] || value || "Unknown";
+}
+
 function submissionPerson(submission) {
   return submission?.submittedByName || submission?.submittedByEmail || "Unknown";
+}
+
+function itemDisplayName(item) {
+  return item?.inventoryItem?.commonName || item?.inventoryItem?.title || item?.packetLine || "Untitled row";
+}
+
+function buildSessionReport(session, items) {
+  const rows = items || [];
+  const counts = {
+    total: rows.length,
+    approved: 0,
+    found: 0,
+    notFound: 0,
+    mismatch: 0,
+    needsReview: 0,
+    unchecked: 0,
+    pendingProof: 0,
+    requestedProof: 0,
+    rejectedProof: 0
+  };
+
+  rows.forEach(item => {
+    if (item.status === "approved") counts.approved += 1;
+    else if (item.status === "found") counts.found += 1;
+    else if (item.status === "not_found") counts.notFound += 1;
+    else if (item.status === "mismatch") counts.mismatch += 1;
+    else if (item.status === "needs_review") counts.needsReview += 1;
+    else counts.unchecked += 1;
+
+    const submission = latestSubmission(item);
+    if (submission?.reviewState === "pending") counts.pendingProof += 1;
+    if (submission?.reviewState === "request_more_info") counts.requestedProof += 1;
+    if (submission?.reviewState === "rejected") counts.rejectedProof += 1;
+  });
+
+  const resolved = counts.approved + counts.found;
+  const issueRows = rows.filter(item => {
+    const latest = latestSubmission(item);
+    return !["approved", "found"].includes(item.status) || ["pending", "request_more_info", "rejected"].includes(latest?.reviewState);
+  });
+
+  return {
+    session,
+    counts,
+    issueRows,
+    resolved,
+    completion: counts.total ? Math.round((resolved / counts.total) * 100) : 0
+  };
+}
+
+function buildSessionReportText(report) {
+  const session = report.session || {};
+  const counts = report.counts;
+  const lines = [
+    `${session.name || "Inventory session"} close-out report`,
+    `Status: ${formatItemStatus(session.status)}`,
+    `Generated: ${formatDate(new Date())}`,
+    "",
+    `Rows: ${counts.total}`,
+    `Resolved: ${report.resolved} (${report.completion}%)`,
+    `Approved/found: ${counts.approved + counts.found}`,
+    `Needs review: ${counts.needsReview}`,
+    `Unchecked: ${counts.unchecked}`,
+    `Not found: ${counts.notFound}`,
+    `Mismatch: ${counts.mismatch}`,
+    `Pending proof: ${counts.pendingProof}`,
+    `More proof requested: ${counts.requestedProof}`,
+    ""
+  ];
+
+  if (report.issueRows.length) {
+    lines.push("Rows to reconcile:");
+    report.issueRows.forEach(item => {
+      const latest = latestSubmission(item);
+      const parts = [
+        itemDisplayName(item),
+        formatItemStatus(item.status),
+        latest?.reviewState ? formatReviewState(latest.reviewState) : "",
+        latest?.reviewNote ? `Request: ${latest.reviewNote}` : "",
+        latest?.serialNumber ? `SN: ${latest.serialNumber}` : "",
+        latest?.locationText ? `Location: ${latest.locationText}` : ""
+      ].filter(Boolean);
+      lines.push(`- ${parts.join(" | ")}`);
+    });
+  } else {
+    lines.push("Rows to reconcile: none");
+  }
+
+  return lines.join("\n");
 }
 
 const proofRequestOptions = [
@@ -405,6 +511,85 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
   );
 }
 
+function SessionCloseoutReport({ report, onCopy }) {
+  if (!report?.counts?.total) return null;
+
+  const counts = report.counts;
+  const issueRows = report.issueRows.slice(0, 8);
+  const hiddenIssueCount = report.issueRows.length - issueRows.length;
+
+  return (
+    <details className="closeout-report" open={report.session?.status === "closed"}>
+      <summary>
+        <span>
+          <strong>Close-out report</strong>
+          <small>{report.completion}% resolved</small>
+        </span>
+        <span className={`status-pill ${report.session?.status}`}>{report.session?.status}</span>
+      </summary>
+
+      <div className="closeout-report-body">
+        <div className="closeout-metrics">
+          <div>
+            <strong>{counts.total}</strong>
+            <span>Rows</span>
+          </div>
+          <div>
+            <strong>{report.resolved}</strong>
+            <span>Resolved</span>
+          </div>
+          <div>
+            <strong>{counts.pendingProof + counts.requestedProof}</strong>
+            <span>Proof work</span>
+          </div>
+          <div>
+            <strong>{counts.notFound + counts.mismatch + counts.unchecked}</strong>
+            <span>Problems</span>
+          </div>
+        </div>
+
+        <div className="closeout-breakdown">
+          <span>{counts.approved + counts.found} found/approved</span>
+          <span>{counts.needsReview} needs review</span>
+          <span>{counts.notFound} not found</span>
+          <span>{counts.mismatch} mismatch</span>
+          <span>{counts.unchecked} unchecked</span>
+        </div>
+
+        <div className="closeout-report-heading">
+          <strong>Rows to reconcile</strong>
+          <button className="btn btn-secondary btn-small" type="button" onClick={() => onCopy(report)}>
+            <Copy aria-hidden="true" />
+            <span>Copy</span>
+          </button>
+        </div>
+
+        {issueRows.length ? (
+          <div className="closeout-issues">
+            {issueRows.map(item => {
+              const latest = latestSubmission(item);
+              return (
+                <div className="closeout-issue" key={item.id}>
+                  <strong>{itemDisplayName(item)}</strong>
+                  <span>{item.packetLine || "No packet text"}</span>
+                  <div>
+                    <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
+                    {latest?.reviewState ? <span>{formatReviewState(latest.reviewState)}</span> : null}
+                  </div>
+                  {latest?.reviewNote ? <small>Request: {latest.reviewNote}</small> : null}
+                </div>
+              );
+            })}
+            {hiddenIssueCount > 0 ? <small className="closeout-overflow">+{hiddenIssueCount} more rows in copied report</small> : null}
+          </div>
+        ) : (
+          <div className="closeout-empty">No unresolved rows.</div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
@@ -537,10 +722,23 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     }
   }
 
+  async function copyCloseoutReport(report) {
+    try {
+      await navigator.clipboard.writeText(buildSessionReportText(report));
+      setStatus({ text: "Close-out report copied.", isError: false });
+    } catch {
+      setStatus({ text: "Could not copy report from this browser.", isError: true });
+    }
+  }
+
   const selectedSession = sessions.find(session => session.id === selectedSessionId) || detail?.session;
   const detailItems = useMemo(
     () => [...(detail?.items || [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
     [detail?.items]
+  );
+  const sessionReport = useMemo(
+    () => selectedSession ? buildSessionReport(selectedSession, detail?.items || []) : null,
+    [selectedSession, detail?.items]
   );
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
@@ -713,6 +911,10 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                   ) : null}
                 </div>
               </div>
+
+              {canManage ? (
+                <SessionCloseoutReport report={sessionReport} onCopy={copyCloseoutReport} />
+              ) : null}
 
               {canManage ? (
                 <details className="packet-import">
