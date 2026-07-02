@@ -221,10 +221,11 @@ The first React tenant-admin session flow is live:
 - show a proof history timeline in the LT review queue when an item has follow-up submissions
 - show a close-out report on session detail with counts, unresolved rows, and a copyable text summary
 - export complete close-out report rows as CSV
+- print a clean close-out report that hides the admin console and includes the full reconciliation list
 - notify platoon admins by email when proof is submitted
 - notify the submitter by email when the LT requests more proof
 
-The next backend/frontend slice should add a print-friendly close-out report view.
+The next backend/frontend slice should add packet/PDF import review so an LT can turn clean hand-receipt docs into session rows before saving.
 
 ## QA Environment
 

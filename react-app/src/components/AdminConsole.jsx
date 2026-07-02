@@ -14,6 +14,7 @@ import {
   MailPlus,
   MessageSquare,
   Plus,
+  Printer,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -581,15 +582,15 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
   );
 }
 
-function SessionCloseoutReport({ report, onCopy, onExportCsv }) {
+function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTarget = false }) {
   if (!report?.counts?.total) return null;
 
   const counts = report.counts;
-  const issueRows = report.issueRows.slice(0, 8);
-  const hiddenIssueCount = report.issueRows.length - issueRows.length;
+  const issueRows = isPrintTarget ? report.issueRows : report.issueRows.slice(0, 8);
+  const hiddenIssueCount = isPrintTarget ? 0 : report.issueRows.length - issueRows.length;
 
   return (
-    <details className="closeout-report" open={report.session?.status === "closed"}>
+    <details className={`closeout-report ${isPrintTarget ? "print-target" : ""}`} open={report.session?.status === "closed" || isPrintTarget}>
       <summary>
         <span>
           <strong>Close-out report</strong>
@@ -599,6 +600,12 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv }) {
       </summary>
 
       <div className="closeout-report-body">
+        <div className="closeout-print-header">
+          <strong>{report.session?.name || "Inventory session"}</strong>
+          <span>Close-out report - {formatItemStatus(report.session?.status)} - {formatDate(new Date().toISOString())}</span>
+          <span>{counts.total} rows - {report.completion}% resolved</span>
+        </div>
+
         <div className="closeout-metrics">
           <div>
             <strong>{counts.total}</strong>
@@ -629,6 +636,10 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv }) {
         <div className="closeout-report-heading">
           <strong>Rows to reconcile</strong>
           <div className="closeout-report-actions">
+            <button className="btn btn-secondary btn-small" type="button" onClick={() => onPrint(report)}>
+              <Printer aria-hidden="true" />
+              <span>Print</span>
+            </button>
             <button className="btn btn-secondary btn-small" type="button" onClick={() => onCopy(report)}>
               <Copy aria-hidden="true" />
               <span>Copy</span>
@@ -675,6 +686,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [proofItemId, setProofItemId] = useState("");
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
+  const [printReportId, setPrintReportId] = useState("");
 
   async function loadSessions(nextSelectedId = selectedSessionId) {
     try {
@@ -815,6 +827,21 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     } catch {
       setStatus({ text: "Could not export CSV from this browser.", isError: true });
     }
+  }
+
+  function printCloseoutReport(report) {
+    const reportId = report.session?.id || selectedSessionId;
+    if (!reportId) return;
+
+    setPrintReportId(reportId);
+    setStatus({ text: "Preparing report for print...", isError: false });
+    window.setTimeout(() => {
+      window.print();
+      window.setTimeout(() => {
+        setPrintReportId(current => current === reportId ? "" : current);
+        setStatus(current => current.text === "Preparing report for print..." ? { text: "", isError: false } : current);
+      }, 500);
+    }, 0);
   }
 
   const selectedSession = sessions.find(session => session.id === selectedSessionId) || detail?.session;
@@ -999,7 +1026,13 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
               </div>
 
               {canManage ? (
-                <SessionCloseoutReport report={sessionReport} onCopy={copyCloseoutReport} onExportCsv={exportCloseoutCsv} />
+                <SessionCloseoutReport
+                  report={sessionReport}
+                  isPrintTarget={printReportId === sessionReport?.session?.id}
+                  onCopy={copyCloseoutReport}
+                  onExportCsv={exportCloseoutCsv}
+                  onPrint={printCloseoutReport}
+                />
               ) : null}
 
               {canManage ? (
