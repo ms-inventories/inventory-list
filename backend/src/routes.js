@@ -5,7 +5,7 @@ import { z } from "zod";
 import { authContext } from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
-import { sendTenantInviteEmail } from "./email.js";
+import { sendProofRequestEmail, sendProofSubmittedEmail, sendTenantInviteEmail } from "./email.js";
 import { hasTenantRole, tenantContext } from "./tenant.js";
 
 const tenantRoles = ["tenant_admin", "contributor", "viewer"];
@@ -260,6 +260,106 @@ function buildInviteUrl(tenant, token) {
   const url = new URL(tenantBaseUrl(tenant));
   url.hash = `/accept-invite?token=${encodeURIComponent(token)}`;
   return url.toString();
+}
+
+function buildTenantAdminUrl(tenant) {
+  const url = new URL(tenantBaseUrl(tenant));
+  url.hash = "/admin";
+  return url.toString();
+}
+
+function buildTenantTaskUrl(tenant) {
+  return tenantBaseUrl(tenant);
+}
+
+function displayNameFor(user) {
+  return user?.displayName || user?.display_name || user?.email || null;
+}
+
+function runNotification(label, task) {
+  Promise.resolve()
+    .then(task)
+    .catch(error => {
+      console.error(`${label} notification failed`, error);
+    });
+}
+
+async function getTenantAdminRecipients(tenantId, excludeUserId = null) {
+  const result = await query(
+    `
+      SELECT DISTINCT u.id, u.email, u.display_name
+      FROM tenant_memberships tm
+      JOIN app_users u ON u.id = tm.user_id
+      WHERE tm.tenant_id = $1
+        AND tm.role = 'tenant_admin'
+        AND tm.status = 'active'
+        AND u.email IS NOT NULL
+        AND u.email <> ''
+        AND ($2::uuid IS NULL OR u.id <> $2::uuid)
+      ORDER BY u.email ASC
+    `,
+    [tenantId, excludeUserId]
+  );
+
+  return result.rows;
+}
+
+async function notifyTenantAdminsOfSubmission(context, submission, { photoCount = 0 } = {}) {
+  const recipients = await getTenantAdminRecipients(context.tenant.id, context.user.id);
+  if (!recipients.length) return;
+
+  const results = await Promise.allSettled(
+    recipients.map(recipient => sendProofSubmittedEmail({
+      to: recipient.email,
+      tenantName: context.tenant.name,
+      sessionName: submission.session_name,
+      packetLine: submission.packet_line,
+      submittedByName: displayNameFor(context.user),
+      status: submission.status,
+      locationText: submission.location_text,
+      serialNumber: submission.serial_number,
+      note: submission.note,
+      photoCount,
+      reviewUrl: buildTenantAdminUrl(context.tenant)
+    }))
+  );
+
+  results
+    .filter(result => result.status === "rejected")
+    .forEach(result => console.error("Proof submission email failed", result.reason));
+}
+
+async function notifySubmitterOfProofRequest(context, submissionId, decisionNote) {
+  const result = await query(
+    `
+      SELECT sub.id,
+        sub.review_note,
+        submitter.email AS submitted_by_email,
+        submitter.display_name AS submitted_by_name,
+        si.packet_line,
+        s.name AS session_name
+      FROM item_submissions sub
+      JOIN inventory_session_items si ON si.id = sub.session_item_id
+      JOIN inventory_sessions s ON s.id = si.session_id
+      JOIN app_users submitter ON submitter.id = sub.submitted_by
+      WHERE sub.id = $1
+        AND s.tenant_id = $2
+    `,
+    [submissionId, context.tenant.id]
+  );
+
+  const row = result.rows[0];
+  if (!row?.submitted_by_email) return;
+
+  await sendProofRequestEmail({
+    to: row.submitted_by_email,
+    tenantName: context.tenant.name,
+    sessionName: row.session_name,
+    packetLine: row.packet_line,
+    requestedByName: displayNameFor(context.user),
+    decisionNote: decisionNote || row.review_note,
+    taskUrl: buildTenantTaskUrl(context.tenant)
+  });
 }
 
 async function requireContext(request, reply, roles = []) {
@@ -1236,7 +1336,7 @@ export function registerRoutes(app) {
     const submission = await withTransaction(async client => {
       const sessionItemResult = await client.query(
         `
-          SELECT si.id
+          SELECT si.id, si.packet_line, s.name AS session_name
           FROM inventory_session_items si
           JOIN inventory_sessions s ON s.id = si.session_id
           WHERE si.id = $1 AND s.tenant_id = $2
@@ -1299,13 +1399,21 @@ export function registerRoutes(app) {
         metadata: { status: body.status, photoIds: body.photoIds || [], photoCount: photos.length }
       });
 
-      return result.rows[0];
+      return {
+        ...result.rows[0],
+        packet_line: sessionItemResult.rows[0].packet_line,
+        session_name: sessionItemResult.rows[0].session_name
+      };
     });
 
     if (!submission) {
       reply.code(404);
       throw new Error("Session item not found");
     }
+
+    runNotification("Proof submission", () => notifyTenantAdminsOfSubmission(context, submission, {
+      photoCount: (body.photos || []).length
+    }));
 
     reply.code(201);
     return { submission };
@@ -1422,6 +1530,10 @@ export function registerRoutes(app) {
       throw new Error("Submission not found");
     }
 
+    if (body.decision === "request_more_info") {
+      runNotification("Proof request", () => notifySubmitterOfProofRequest(context, submission.id, body.note));
+    }
+
     return { submission };
   });
 
@@ -1438,7 +1550,7 @@ export function registerRoutes(app) {
     const evidenceRequest = await withTransaction(async client => {
       const submissionResult = await client.query(
         `
-          SELECT sub.id
+          SELECT sub.id, si.id AS session_item_id
           FROM item_submissions sub
           JOIN inventory_session_items si ON si.id = sub.session_item_id
           JOIN inventory_sessions s ON s.id = si.session_id
@@ -1463,6 +1575,11 @@ export function registerRoutes(app) {
         [request.params.submissionId]
       );
 
+      await client.query(
+        "UPDATE inventory_session_items SET status = 'needs_review', updated_at = now() WHERE id = $1",
+        [submissionResult.rows[0].session_item_id]
+      );
+
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
@@ -1479,6 +1596,8 @@ export function registerRoutes(app) {
       reply.code(404);
       throw new Error("Submission not found");
     }
+
+    runNotification("Evidence request", () => notifySubmitterOfProofRequest(context, request.params.submissionId, body.message));
 
     reply.code(201);
     return { evidenceRequest };

@@ -90,6 +90,13 @@ Invite roles:
 - `contributor`: NCO/soldier who can submit findings and proof.
 - `viewer`: read-only access.
 
+The same SMTP settings also power best-effort inventory workflow notifications:
+
+- platoon admins get an email when proof is submitted for review
+- the submitter gets an email when a platoon admin requests more proof
+
+The API saves the inventory change before sending these messages, so SMTP downtime does not block submissions or reviews.
+
 ## Coolify
 
 Use `backend` as the base directory.

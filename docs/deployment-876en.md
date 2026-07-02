@@ -146,7 +146,7 @@ Later backend work should add:
 
 ## Brevo Email
 
-Use Brevo SMTP for welcome and invite emails.
+Use Brevo SMTP for tenant invites and inventory workflow notifications.
 
 Backend env:
 
@@ -162,12 +162,13 @@ EMAIL_FROM_NAME=876 EN Inventory
 EMAIL_FROM_ADDRESS=no-reply@876en.org
 ```
 
-Later backend work should add:
+Implemented email events:
 
-- welcome email
 - tenant invite email
-- LT notification when an NCO submits a finding
+- LT/platoon-admin notification when an NCO submits a finding
 - NCO notification when the LT requests more proof
+
+The proof emails are best-effort. The API saves the inventory action first, then sends mail in the background so SMTP downtime does not block field work.
 
 ## Authentik
 
@@ -215,8 +216,10 @@ The first React tenant-admin session flow is live:
 - let the LT directly mark rows found or not found when working alone
 - let contributors/NCOs submit found/not-found/mismatch proof with location, serial, note, and photo
 - let the LT review proof from a queue and approve, reject, or request more proof
+- notify platoon admins by email when proof is submitted
+- notify the submitter by email when the LT requests more proof
 
-The next backend/frontend slice should add notification emails for new proof and proof requests, then tighten the session list around active work first.
+The next backend/frontend slice should tighten the session list around active work first, then add a better custom note field for "more proof" requests.
 
 ## QA Environment
 
