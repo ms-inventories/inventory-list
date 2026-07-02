@@ -19,6 +19,7 @@ export const appConfig = {
   baseDomain: import.meta.env.VITE_BASE_DOMAIN || "876en.org",
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl(),
   legacyBucketBaseUrl: import.meta.env.VITE_LEGACY_BUCKET_BASE_URL || "https://ms-inventories.s3.us-east-1.amazonaws.com",
+  newsletterActionUrl: import.meta.env.VITE_NEWSLETTER_ACTION_URL || "",
   enableDemoFallback: import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== "false",
   enableQaAuth: import.meta.env.VITE_ENABLE_QA_AUTH === "true",
   oidc: {

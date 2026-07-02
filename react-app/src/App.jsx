@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  CalendarDays,
   Copy,
   CornerDownRight,
   FileUp,
   ImageOff,
   LogIn,
+  Mail,
+  Megaphone,
   Repeat2,
   ScanText,
   Search,
   Settings,
+  ShieldCheck,
   X
 } from "lucide-react";
 import AcceptInvite from "./components/AcceptInvite.jsx";
@@ -336,6 +340,131 @@ function StatusText({ status, className = "" }) {
     <div className={`status-text ${className} ${status?.isError ? "error" : ""}`} role="status" aria-live="polite">
       {status?.text || ""}
     </div>
+  );
+}
+
+function isBaseHostname(hostname = window.location.hostname) {
+  const cleanHost = String(hostname || "").split(":")[0].toLowerCase();
+  return cleanHost === appConfig.baseDomain.toLowerCase();
+}
+
+function getAdminUrl() {
+  return `https://admin.${appConfig.baseDomain}/#/admin`;
+}
+
+function PublicHome() {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState({ text: "", isError: false });
+  const newsletterActionUrl = String(appConfig.newsletterActionUrl || "").trim();
+  const canSubmit = Boolean(newsletterActionUrl);
+
+  function submitNewsletter(event) {
+    if (canSubmit) return;
+    event.preventDefault();
+    setStatus({
+      text: "Newsletter signup is being connected. Check back here for the first update link.",
+      isError: false
+    });
+  }
+
+  return (
+    <main className="public-site">
+      <section className="public-hero" aria-labelledby="publicTitle">
+        <nav className="public-nav" aria-label="Public navigation">
+          <a className="public-brand" href="/">
+            <span>876 EN</span>
+            <strong>Family Readiness</strong>
+          </a>
+
+          <details className="public-login-menu">
+            <summary className="btn btn-secondary public-nav-action">
+              <LogIn aria-hidden="true" />
+              <span>Login</span>
+            </summary>
+            <div className="public-login-panel">
+              <a href={getAdminUrl()}>
+                <Settings aria-hidden="true" />
+                <span>
+                  <strong>Inventory login</strong>
+                  <small>For approved inventory group members</small>
+                </span>
+              </a>
+            </div>
+          </details>
+        </nav>
+
+        <div className="public-hero-copy">
+          <p className="eyebrow">Family readiness group</p>
+          <h1 id="publicTitle">876 EN Family Readiness</h1>
+          <p>
+            Unit updates, event reminders, and family resources will live here as this site comes online.
+          </p>
+          <div className="public-hero-actions">
+            <a className="btn btn-primary" href="#newsletter">
+              <Mail aria-hidden="true" />
+              <span>Get updates</span>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className="public-info-band" aria-label="Site sections">
+        <div className="public-info-grid">
+          <article className="public-info-item">
+            <span><Megaphone aria-hidden="true" /></span>
+            <strong>Announcements</strong>
+            <p>Public unit and family updates without exposing internal inventory work.</p>
+          </article>
+          <article className="public-info-item">
+            <span><CalendarDays aria-hidden="true" /></span>
+            <strong>Events</strong>
+            <p>Upcoming FRG reminders, drill weekend notes, and family support dates.</p>
+          </article>
+          <article className="public-info-item">
+            <span><ShieldCheck aria-hidden="true" /></span>
+            <strong>Resources</strong>
+            <p>Helpful links and points of contact for the 876 EN community.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="public-newsletter-band" id="newsletter" aria-labelledby="newsletterTitle">
+        <div className="public-newsletter-wrap">
+          <div>
+            <p className="eyebrow">Newsletter</p>
+            <h2 id="newsletterTitle">Stay in the loop</h2>
+            <p>
+              The newsletter form is ready to connect to Brevo when the public contact list is finalized.
+            </p>
+          </div>
+          <form
+            className="public-newsletter-form"
+            action={newsletterActionUrl || undefined}
+            method="post"
+            onSubmit={submitNewsletter}
+          >
+            <label className="field-label" htmlFor="newsletterEmail">Email address</label>
+            <div className="public-newsletter-row">
+              <input
+                id="newsletterEmail"
+                className="input"
+                name="EMAIL"
+                type="email"
+                value={email}
+                placeholder="name@example.com"
+                onChange={event => setEmail(event.target.value)}
+                required
+              />
+              <button className="btn btn-primary" type="submit" disabled={!email.trim()}>
+                <Mail aria-hidden="true" />
+                <span>{canSubmit ? "Sign up" : "Coming soon"}</span>
+              </button>
+            </div>
+            <StatusText status={status} />
+          </form>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -955,7 +1084,10 @@ export default function App() {
   const path = route.path;
   const hash = route.hash;
   const normalizedHash = hash.toLowerCase();
+  const tenantSlug = getTenantSlugFromHostname();
   if (normalizedHash.startsWith("#/accept-invite")) return <AcceptInvite />;
   if (isAdminHostname() || path.startsWith("/admin") || normalizedHash === "#/admin") return <AdminConsole />;
+  if (isBaseHostname()) return <PublicHome />;
+  if (tenantSlug && normalizedHash !== "#/lookup" && !path.startsWith("/lookup")) return <AdminConsole />;
   return <ViewerApp />;
 }
