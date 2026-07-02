@@ -79,6 +79,68 @@ function rowToInventoryItem(row) {
   };
 }
 
+function rowToSession(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    name: row.name,
+    status: row.status,
+    packetSource: row.packet_source,
+    itemCount: row.item_count,
+    foundCount: row.found_count,
+    needsReviewCount: row.needs_review_count,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    closedAt: row.closed_at
+  };
+}
+
+function rowToSessionItem(row) {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    inventoryItemId: row.inventory_item_id,
+    packetLine: row.packet_line,
+    expectedQty: row.expected_qty,
+    locationHint: row.location_hint,
+    status: row.status,
+    directVerifiedBy: row.direct_verified_by,
+    directVerifiedByEmail: row.direct_verified_by_email,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    inventoryItem: row.inventory_item_id ? {
+      id: row.inventory_item_id,
+      title: row.item_title,
+      commonName: row.common_name,
+      armyName: row.army_name,
+      lin: row.lin,
+      nsn: row.nsn,
+      currentLocation: row.current_location
+    } : null,
+    submissions: []
+  };
+}
+
+function rowToSubmission(row) {
+  return {
+    id: row.id,
+    sessionItemId: row.session_item_id,
+    submittedBy: row.submitted_by,
+    submittedByEmail: row.submitted_by_email,
+    submittedByName: row.submitted_by_name,
+    status: row.status,
+    locationText: row.location_text,
+    note: row.note,
+    serialNumber: row.serial_number,
+    reviewState: row.review_state,
+    reviewNote: row.review_note,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    createdAt: row.created_at
+  };
+}
+
 async function createAuditEvent(client, { tenantId, actorUserId, action, entityType, entityId, metadata = {} }) {
   await client.query(
     `
@@ -719,7 +781,7 @@ export function registerRoutes(app) {
       [context.tenant.id]
     );
 
-    return { sessions: result.rows };
+    return { sessions: result.rows.map(rowToSession) };
   });
 
   route(app, "post", "/api/inventory/sessions", async (request, reply) => {
@@ -755,7 +817,120 @@ export function registerRoutes(app) {
     });
 
     reply.code(201);
-    return { session };
+    return { session: rowToSession(session) };
+  });
+
+  route(app, "get", "/api/inventory/sessions/:sessionId", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
+    const sessionResult = await query(
+      `
+        SELECT s.*,
+          COUNT(si.id)::int AS item_count,
+          COUNT(si.id) FILTER (WHERE si.status IN ('found', 'approved'))::int AS found_count,
+          COUNT(si.id) FILTER (WHERE si.status = 'needs_review')::int AS needs_review_count
+        FROM inventory_sessions s
+        LEFT JOIN inventory_session_items si ON si.session_id = s.id
+        WHERE s.id = $1 AND s.tenant_id = $2
+        GROUP BY s.id
+        LIMIT 1
+      `,
+      [request.params.sessionId, context.tenant.id]
+    );
+
+    const session = sessionResult.rows[0];
+    if (!session) {
+      reply.code(404);
+      throw new Error("Session not found");
+    }
+
+    const itemsResult = await query(
+      `
+        SELECT si.*,
+          ii.title AS item_title,
+          ii.common_name,
+          ii.army_name,
+          ii.lin,
+          ii.nsn,
+          ii.current_location,
+          verifier.email AS direct_verified_by_email
+        FROM inventory_session_items si
+        LEFT JOIN inventory_items ii ON ii.id = si.inventory_item_id
+        LEFT JOIN app_users verifier ON verifier.id = si.direct_verified_by
+        WHERE si.session_id = $1
+        ORDER BY si.created_at ASC
+      `,
+      [session.id]
+    );
+
+    const submissionsResult = await query(
+      `
+        SELECT sub.*, submitter.email AS submitted_by_email, submitter.display_name AS submitted_by_name
+        FROM item_submissions sub
+        JOIN inventory_session_items si ON si.id = sub.session_item_id
+        JOIN app_users submitter ON submitter.id = sub.submitted_by
+        WHERE si.session_id = $1
+        ORDER BY sub.created_at DESC
+      `,
+      [session.id]
+    );
+
+    const items = itemsResult.rows.map(rowToSessionItem);
+    const itemById = new Map(items.map(item => [item.id, item]));
+    submissionsResult.rows.forEach(row => {
+      const item = itemById.get(row.session_item_id);
+      if (item) item.submissions.push(rowToSubmission(row));
+    });
+
+    return {
+      session: rowToSession(session),
+      items
+    };
+  });
+
+  route(app, "patch", "/api/inventory/sessions/:sessionId", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({
+        name: z.string().min(2).optional(),
+        status: z.enum(["draft", "active", "closed"]).optional()
+      }),
+      request.body
+    );
+
+    const updated = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          UPDATE inventory_sessions
+          SET
+            name = COALESCE($1, name),
+            status = COALESCE($2, status),
+            closed_at = CASE WHEN $2 = 'closed' THEN now() ELSE closed_at END
+          WHERE id = $3 AND tenant_id = $4
+          RETURNING *
+        `,
+        [body.name || null, body.status || null, request.params.sessionId, context.tenant.id]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "inventory_session.updated",
+        entityType: "inventory_session",
+        entityId: result.rows[0].id,
+        metadata: { status: body.status || null }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!updated) {
+      reply.code(404);
+      throw new Error("Session not found");
+    }
+
+    return { session: rowToSession(updated) };
   });
 
   route(app, "post", "/api/inventory/sessions/:sessionId/items", async (request, reply) => {
@@ -795,6 +970,66 @@ export function registerRoutes(app) {
 
     reply.code(201);
     return { sessionItem: result.rows[0] };
+  });
+
+  route(app, "post", "/api/inventory/sessions/:sessionId/items/bulk", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({
+        items: z.array(z.object({
+          packetLine: z.string().min(2),
+          expectedQty: z.number().int().nonnegative().optional(),
+          locationHint: z.string().optional()
+        })).min(1).max(250)
+      }),
+      request.body
+    );
+
+    const created = await withTransaction(async client => {
+      const sessionResult = await client.query(
+        "SELECT id FROM inventory_sessions WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+        [request.params.sessionId, context.tenant.id]
+      );
+
+      if (!sessionResult.rows[0]) return null;
+
+      const rows = [];
+      for (const item of body.items) {
+        const result = await client.query(
+          `
+            INSERT INTO inventory_session_items (session_id, packet_line, expected_qty, location_hint)
+            VALUES ($1, $2, $3, $4)
+            RETURNING *
+          `,
+          [
+            request.params.sessionId,
+            item.packetLine.trim(),
+            item.expectedQty ?? null,
+            item.locationHint || null
+          ]
+        );
+        rows.push(result.rows[0]);
+      }
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "session_items.bulk_created",
+        entityType: "inventory_session",
+        entityId: request.params.sessionId,
+        metadata: { count: rows.length }
+      });
+
+      return rows;
+    });
+
+    if (!created) {
+      reply.code(404);
+      throw new Error("Session not found");
+    }
+
+    reply.code(201);
+    return { sessionItems: created };
   });
 
   route(app, "patch", "/api/session-items/:sessionItemId/direct-check", async (request, reply) => {

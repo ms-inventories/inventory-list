@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Building2,
+  CheckCircle2,
   ClipboardList,
+  ClipboardPlus,
+  FileText,
+  ListChecks,
   LogIn,
   LogOut,
   MailPlus,
@@ -131,6 +135,290 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
 function StatusLine({ status }) {
   if (!status?.text) return null;
   return <div className={`admin-status ${status.isError ? "error" : ""}`}>{status.text}</div>;
+}
+
+function parsePacketRows(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const parts = line.split(/\t|\s+\|\s+/).map(part => part.trim()).filter(Boolean);
+      const maybeQty = Number(parts[1]);
+      return {
+        packetLine: parts[0] || line,
+        expectedQty: Number.isInteger(maybeQty) && maybeQty >= 0 ? maybeQty : undefined,
+        locationHint: parts.length > 2 ? parts.slice(2).join(" ") : undefined
+      };
+    });
+}
+
+function sessionProgress(session) {
+  const total = Number(session?.itemCount || 0);
+  const done = Number(session?.foundCount || 0);
+  return total ? Math.round((done / total) * 100) : 0;
+}
+
+function SessionPanel({ token, tenantSlug }) {
+  const [sessions, setSessions] = useState([]);
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [newSessionName, setNewSessionName] = useState("");
+  const [packetRows, setPacketRows] = useState("");
+  const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function loadSessions(nextSelectedId = selectedSessionId) {
+    try {
+      setStatus({ text: "Loading inventory sessions...", isError: false });
+      const data = await apiRequest("/inventory/sessions", { token, tenantSlug });
+      const loaded = data.sessions || [];
+      setSessions(loaded);
+      const selected = nextSelectedId || loaded[0]?.id || "";
+      setSelectedSessionId(selected);
+      if (selected) {
+        await loadSessionDetail(selected, false);
+      } else {
+        setDetail(null);
+      }
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  async function loadSessionDetail(sessionId = selectedSessionId, showStatus = true) {
+    if (!sessionId) return;
+    try {
+      if (showStatus) setStatus({ text: "Loading session...", isError: false });
+      const data = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
+      setDetail(data);
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  useEffect(() => {
+    loadSessions();
+  }, [tenantSlug, token]);
+
+  async function createSession(e) {
+    e.preventDefault();
+    const name = newSessionName.trim();
+    if (!name) return;
+
+    try {
+      setIsSaving(true);
+      const data = await apiRequest("/inventory/sessions", {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { name, status: "active" }
+      });
+      setNewSessionName("");
+      setStatus({ text: `Started ${data.session.name}`, isError: false });
+      await loadSessions(data.session.id);
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function addPacketRows(e) {
+    e.preventDefault();
+    if (!selectedSessionId) {
+      setStatus({ text: "Create or select a session first.", isError: true });
+      return;
+    }
+
+    const items = parsePacketRows(packetRows);
+    if (!items.length) {
+      setStatus({ text: "Paste at least one packet row.", isError: true });
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      await apiRequest(`/inventory/sessions/${selectedSessionId}/items/bulk`, {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { items }
+      });
+      setPacketRows("");
+      setStatus({ text: `Added ${items.length} packet rows.`, isError: false });
+      await loadSessions(selectedSessionId);
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function updateDirectCheck(sessionItemId, nextStatus) {
+    try {
+      await apiRequest(`/session-items/${sessionItemId}/direct-check`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { status: nextStatus }
+      });
+      setStatus({ text: "Session item updated.", isError: false });
+      await loadSessions(selectedSessionId);
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  async function updateSessionStatus(nextStatus) {
+    if (!selectedSessionId) return;
+    try {
+      await apiRequest(`/inventory/sessions/${selectedSessionId}`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { status: nextStatus }
+      });
+      setStatus({ text: `Session marked ${nextStatus}.`, isError: false });
+      await loadSessions(selectedSessionId);
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  const selectedSession = sessions.find(session => session.id === selectedSessionId) || detail?.session;
+  const detailItems = detail?.items || [];
+
+  return (
+    <section className="admin-card session-panel">
+      <div className="admin-card-heading">
+        <span className="admin-icon">
+          <ListChecks aria-hidden="true" />
+        </span>
+        <div>
+          <p className="eyebrow">Inventory tasking</p>
+          <h2>Sessions</h2>
+        </div>
+      </div>
+
+      <div className="session-layout">
+        <div className="session-sidebar">
+          <form className="admin-form" onSubmit={createSession}>
+            <label className="field-label" htmlFor="sessionName">New session</label>
+            <div className="inline-control">
+              <input
+                id="sessionName"
+                className="input"
+                value={newSessionName}
+                placeholder="July sensitive items"
+                onChange={e => setNewSessionName(e.target.value)}
+              />
+              <button className="btn btn-primary" type="submit" disabled={isSaving}>
+                <Plus aria-hidden="true" />
+                <span>Start</span>
+              </button>
+            </div>
+          </form>
+
+          <div className="session-list">
+            {sessions.length ? sessions.map(session => (
+              <button
+                className={`session-row ${session.id === selectedSessionId ? "active" : ""}`}
+                type="button"
+                key={session.id}
+                onClick={() => {
+                  setSelectedSessionId(session.id);
+                  loadSessionDetail(session.id);
+                }}
+              >
+                <span>
+                  <strong>{session.name}</strong>
+                  <small>{session.itemCount || 0} rows - {sessionProgress(session)}% found</small>
+                </span>
+                <span className={`status-pill ${session.status}`}>{session.status}</span>
+              </button>
+            )) : (
+              <EmptyPanel title="No sessions yet" body="Start one from the packet the LT receives." />
+            )}
+          </div>
+        </div>
+
+        <div className="session-main">
+          {selectedSession ? (
+            <>
+              <div className="session-summary">
+                <div>
+                  <strong>{selectedSession.name}</strong>
+                  <span>{selectedSession.itemCount || 0} packet rows</span>
+                </div>
+                <div className="admin-row-meta">
+                  <span className="badge">{selectedSession.foundCount || 0} found</span>
+                  <span className="badge">{selectedSession.needsReviewCount || 0} needs review</span>
+                  {selectedSession.status !== "closed" ? (
+                    <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("closed")}>
+                      <span>Close</span>
+                    </button>
+                  ) : (
+                    <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("active")}>
+                      <span>Reopen</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <form className="packet-import" onSubmit={addPacketRows}>
+                <label className="field-label" htmlFor="packetRows">Paste packet rows</label>
+                <textarea
+                  id="packetRows"
+                  className="input packet-textarea"
+                  value={packetRows}
+                  placeholder="A90594 ARMAMENT SUBSYS: M153&#10;B67839 BINOCULAR: M24"
+                  onChange={e => setPacketRows(e.target.value)}
+                />
+                <button className="btn btn-secondary" type="submit" disabled={isSaving}>
+                  <ClipboardPlus aria-hidden="true" />
+                  <span>Add rows</span>
+                </button>
+              </form>
+
+              <div className="session-items">
+                {detailItems.length ? detailItems.map(item => (
+                  <article className="session-item" key={item.id}>
+                    <div className="session-item-main">
+                      <FileText aria-hidden="true" />
+                      <div>
+                        <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
+                        <span>{item.packetLine || "No packet text"}</span>
+                        {item.locationHint ? <small>Hint: {item.locationHint}</small> : null}
+                      </div>
+                    </div>
+                    <div className="session-item-actions">
+                      <span className={`status-pill ${item.status}`}>{item.status}</span>
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "approved")}>
+                        <CheckCircle2 aria-hidden="true" />
+                        <span>Found</span>
+                      </button>
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "not_found")}>
+                        <span>Not found</span>
+                      </button>
+                    </div>
+                  </article>
+                )) : (
+                  <EmptyPanel title="No packet rows yet" body="Paste rows from the hand receipt to build the checklist." />
+                )}
+              </div>
+            </>
+          ) : (
+            <EmptyPanel title="Select a session" body="Session details and packet rows will appear here." />
+          )}
+        </div>
+      </div>
+
+      <StatusLine status={status} />
+    </section>
+  );
 }
 
 function PlatformPanel({ token }) {
@@ -359,124 +647,128 @@ function TenantPanel({ token, tenantSlug, me }) {
   }
 
   return (
-    <div className="admin-grid">
-      <section className="admin-card">
-        <div className="admin-card-heading">
-          <span className="admin-icon">
-            <MailPlus aria-hidden="true" />
-          </span>
-          <div>
-            <p className="eyebrow">{tenant?.name || `${tenantSlug} platoon`}</p>
-            <h2>Invite helper</h2>
+    <>
+      <SessionPanel token={token} tenantSlug={tenantSlug} />
+
+      <div className="admin-grid people-grid">
+        <section className="admin-card">
+          <div className="admin-card-heading">
+            <span className="admin-icon">
+              <MailPlus aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow">{tenant?.name || `${tenantSlug} platoon`}</p>
+              <h2>Invite helper</h2>
+            </div>
           </div>
-        </div>
 
-        <form className="admin-form" onSubmit={createInvite}>
-          <label className="field-label" htmlFor="inviteEmail">Email</label>
-          <input
-            id="inviteEmail"
-            className="input"
-            type="email"
-            required
-            value={inviteForm.email}
-            placeholder="nco@example.com"
-            onChange={e => setInviteForm(current => ({ ...current, email: e.target.value }))}
-          />
+          <form className="admin-form" onSubmit={createInvite}>
+            <label className="field-label" htmlFor="inviteEmail">Email</label>
+            <input
+              id="inviteEmail"
+              className="input"
+              type="email"
+              required
+              value={inviteForm.email}
+              placeholder="nco@example.com"
+              onChange={e => setInviteForm(current => ({ ...current, email: e.target.value }))}
+            />
 
-          <label className="field-label" htmlFor="inviteName">Name</label>
-          <input
-            id="inviteName"
-            className="input"
-            value={inviteForm.displayName}
-            placeholder="SSG Jones"
-            onChange={e => setInviteForm(current => ({ ...current, displayName: e.target.value }))}
-          />
+            <label className="field-label" htmlFor="inviteName">Name</label>
+            <input
+              id="inviteName"
+              className="input"
+              value={inviteForm.displayName}
+              placeholder="SSG Jones"
+              onChange={e => setInviteForm(current => ({ ...current, displayName: e.target.value }))}
+            />
 
-          <label className="field-label" htmlFor="inviteRole">Role</label>
-          <select
-            id="inviteRole"
-            className="select"
-            value={inviteForm.role}
-            onChange={e => setInviteForm(current => ({ ...current, role: e.target.value }))}
-          >
-            <option value="contributor">Contributor</option>
-            <option value="viewer">Viewer</option>
-            <option value="tenant_admin">Platoon admin</option>
-          </select>
+            <label className="field-label" htmlFor="inviteRole">Role</label>
+            <select
+              id="inviteRole"
+              className="select"
+              value={inviteForm.role}
+              onChange={e => setInviteForm(current => ({ ...current, role: e.target.value }))}
+            >
+              <option value="contributor">Contributor</option>
+              <option value="viewer">Viewer</option>
+              <option value="tenant_admin">Platoon admin</option>
+            </select>
 
-          <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
-            <Send aria-hidden="true" />
-            <span>{isSaving ? "Sending..." : "Send invite"}</span>
-          </button>
-        </form>
+            <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
+              <Send aria-hidden="true" />
+              <span>{isSaving ? "Sending..." : "Send invite"}</span>
+            </button>
+          </form>
 
-        {lastInviteUrl ? (
-          <div className="admin-copy-box">
-            <span>Invite link</span>
-            <a href={lastInviteUrl}>{lastInviteUrl}</a>
+          {lastInviteUrl ? (
+            <div className="admin-copy-box">
+              <span>Invite link</span>
+              <a href={lastInviteUrl}>{lastInviteUrl}</a>
+            </div>
+          ) : null}
+
+          <StatusLine status={status} />
+        </section>
+
+        <section className="admin-card admin-card-wide">
+          <div className="admin-card-heading">
+            <span className="admin-icon">
+              <UserPlus aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow">People</p>
+              <h2>Members</h2>
+            </div>
           </div>
-        ) : null}
 
-        <StatusLine status={status} />
-      </section>
-
-      <section className="admin-card admin-card-wide">
-        <div className="admin-card-heading">
-          <span className="admin-icon">
-            <UserPlus aria-hidden="true" />
-          </span>
-          <div>
-            <p className="eyebrow">People</p>
-            <h2>Members</h2>
-          </div>
-        </div>
-
-        {members.length ? (
-          <div className="admin-list">
-            {members.map(member => (
-              <article className="admin-list-row" key={member.id}>
-                <div>
-                  <strong>{member.displayName || member.email}</strong>
-                  <span>{member.email}</span>
-                </div>
-                <div className="admin-row-meta">
-                  <span className="badge">{formatRole(member.role)}</span>
-                  <span className="badge">{member.status}</span>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptyPanel title="No members loaded" body="Invite helpers once the platoon admin account is active." />
-        )}
-
-        <div className="admin-subsection">
-          <h3>Pending invites</h3>
-          {invitations.length ? (
-            <div className="admin-list compact">
-              {invitations.map(invite => (
-                <article className="admin-list-row" key={invite.id}>
+          {members.length ? (
+            <div className="admin-list">
+              {members.map(member => (
+                <article className="admin-list-row" key={member.id}>
                   <div>
-                    <strong>{invite.email}</strong>
-                    <span>{formatRole(invite.role)} - expires {formatDate(invite.expiresAt)}</span>
+                    <strong>{member.displayName || member.email}</strong>
+                    <span>{member.email}</span>
                   </div>
                   <div className="admin-row-meta">
-                    <span className="badge">{invite.status}</span>
-                    {invite.status === "pending" ? (
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => revokeInvitation(invite.id)}>
-                        <span>Revoke</span>
-                      </button>
-                    ) : null}
+                    <span className="badge">{formatRole(member.role)}</span>
+                    <span className="badge">{member.status}</span>
                   </div>
                 </article>
               ))}
             </div>
           ) : (
-            <EmptyPanel title="No pending invites" body="New invitations will appear here." />
+            <EmptyPanel title="No members loaded" body="Invite helpers once the platoon admin account is active." />
           )}
-        </div>
-      </section>
-    </div>
+
+          <div className="admin-subsection">
+            <h3>Pending invites</h3>
+            {invitations.length ? (
+              <div className="admin-list compact">
+                {invitations.map(invite => (
+                  <article className="admin-list-row" key={invite.id}>
+                    <div>
+                      <strong>{invite.email}</strong>
+                      <span>{formatRole(invite.role)} - expires {formatDate(invite.expiresAt)}</span>
+                    </div>
+                    <div className="admin-row-meta">
+                      <span className="badge">{invite.status}</span>
+                      {invite.status === "pending" ? (
+                        <button className="btn btn-secondary btn-small" type="button" onClick={() => revokeInvitation(invite.id)}>
+                          <span>Revoke</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <EmptyPanel title="No pending invites" body="New invitations will appear here." />
+            )}
+          </div>
+        </section>
+      </div>
+    </>
   );
 }
 

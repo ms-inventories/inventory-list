@@ -612,6 +612,10 @@ button {
   align-items: start;
 }
 
+.people-grid {
+  margin-top: 14px;
+}
+
 .admin-card,
 .admin-profile-strip {
   border: 1px solid var(--line);
@@ -846,6 +850,186 @@ button {
 .admin-subsection h3 {
   margin: 0;
   font-size: 1.05rem;
+}
+
+.session-panel {
+  margin-bottom: 14px;
+}
+
+.session-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.34fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.session-sidebar,
+.session-main,
+.session-list,
+.session-items,
+.packet-import {
+  display: grid;
+  gap: 10px;
+}
+
+.session-list {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--ink);
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.session-row.active {
+  border-color: #b8c7b2;
+  background: #eef3eb;
+}
+
+.session-row strong,
+.session-row small {
+  display: block;
+}
+
+.session-row small {
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+
+.session-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.session-summary strong,
+.session-summary span {
+  display: block;
+}
+
+.session-summary strong {
+  color: var(--ink);
+  font-size: 1.08rem;
+}
+
+.session-summary span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.packet-textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 12px;
+}
+
+.session-item-main {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.session-item-main svg {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.session-item-main strong,
+.session-item-main span,
+.session-item-main small {
+  display: block;
+}
+
+.session-item-main strong {
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.session-item-main span,
+.session-item-main small {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.session-item-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.status-pill {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0 9px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-pill.active,
+.status-pill.approved,
+.status-pill.found {
+  border-color: #b8d0b5;
+  background: #eef7ed;
+  color: #2d5d34;
+}
+
+.status-pill.needs_review,
+.status-pill.mismatch {
+  border-color: #e3c58e;
+  background: #fff8e9;
+  color: #765018;
+}
+
+.status-pill.closed,
+.status-pill.not_found {
+  border-color: #e4b3ae;
+  background: #fff0ed;
+  color: var(--danger);
 }
 
 .admin-toolbar {
@@ -1247,12 +1431,26 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .session-layout {
+    grid-template-columns: 1fr;
+  }
+
   .admin-list-row {
     align-items: stretch;
     flex-direction: column;
   }
 
   .admin-row-meta {
+    justify-content: flex-start;
+  }
+
+  .session-summary,
+  .session-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .session-item-actions {
     justify-content: flex-start;
   }
 }

@@ -205,6 +205,17 @@ Frontend OIDC notes:
 - Until Authentik is fully wired, the admin UI includes an access-token field so a valid bearer token can be pasted for testing.
 - Tenant invitation links use `https://<tenant>.876en.org/#/accept-invite?token=...`. Authentik only sees the origin/path portion of that redirect URI, so the allowed redirect entry is the tenant root such as `https://1st.876en.org/`; the app restores the invite hash after login.
 
+## Inventory Session Flow
+
+The first React tenant-admin session flow is live:
+
+- create an active inventory session from the platoon admin page
+- paste hand-receipt packet rows into the session
+- view session progress and row status
+- let the LT directly mark rows found or not found when working alone
+
+The next backend/frontend slice should add contributor evidence submissions with photo upload to local NAS storage, then an LT review queue for approve/request-more-proof/reject.
+
 ## GitHub Actions
 
 The Coolify deploy workflow is active:
