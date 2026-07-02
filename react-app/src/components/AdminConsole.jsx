@@ -17,6 +17,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Trash2,
@@ -371,6 +372,63 @@ function itemNeedsMoreProof(item) {
 
 function itemHasPendingProof(item) {
   return latestSubmission(item)?.reviewState === "pending";
+}
+
+function sessionItemNeedsAction(item) {
+  const latest = latestSubmission(item);
+  return !["approved", "found"].includes(item?.status) || ["pending", "request_more_info", "rejected"].includes(latest?.reviewState);
+}
+
+function sessionItemNeedsReview(item) {
+  return item?.status === "needs_review" || latestSubmission(item)?.reviewState === "pending";
+}
+
+function sessionItemHasProblem(item) {
+  const latest = latestSubmission(item);
+  return ["not_found", "mismatch"].includes(item?.status) || latest?.reviewState === "rejected";
+}
+
+function sessionItemIsComplete(item) {
+  return ["approved", "found"].includes(item?.status) && !["pending", "request_more_info", "rejected"].includes(latestSubmission(item)?.reviewState);
+}
+
+function sessionItemMatchesFilter(item, filter) {
+  if (filter === "action") return sessionItemNeedsAction(item);
+  if (filter === "review") return sessionItemNeedsReview(item);
+  if (filter === "requests") return itemNeedsMoreProof(item);
+  if (filter === "problems") return sessionItemHasProblem(item);
+  if (filter === "complete") return sessionItemIsComplete(item);
+  return true;
+}
+
+function getSessionItemSearchText(item) {
+  const latest = latestSubmission(item);
+  return [
+    item?.packetLine,
+    item?.locationHint,
+    item?.status,
+    item?.inventoryItem?.title,
+    item?.inventoryItem?.commonName,
+    item?.inventoryItem?.armyName,
+    item?.inventoryItem?.lin,
+    item?.inventoryItem?.nsn,
+    item?.inventoryItem?.currentLocation,
+    latest?.status,
+    latest?.locationText,
+    latest?.serialNumber,
+    latest?.note,
+    latest?.reviewNote,
+    latest?.submittedByEmail,
+    latest?.submittedByName
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function sessionItemMatchesQuery(item, query) {
+  const terms = String(query || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+
+  const haystack = getSessionItemSearchText(item);
+  return terms.every(term => haystack.includes(term));
 }
 
 function formatReviewState(value) {
@@ -811,6 +869,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [packetDraftRows, setPacketDraftRows] = useState([]);
   const [packetSourceName, setPacketSourceName] = useState("");
   const [packetSourceFile, setPacketSourceFile] = useState(null);
+  const [sessionItemQuery, setSessionItemQuery] = useState("");
+  const [sessionItemFilter, setSessionItemFilter] = useState("all");
   const [proofItemId, setProofItemId] = useState("");
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
@@ -853,6 +913,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   useEffect(() => {
     loadSessions();
   }, [tenantSlug, token]);
+
+  useEffect(() => {
+    setSessionItemQuery("");
+    setSessionItemFilter("all");
+    setProofItemId("");
+  }, [selectedSessionId]);
 
   async function createSession(e) {
     e.preventDefault();
@@ -1069,6 +1135,26 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     () => [...(detail?.items || [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
     [detail?.items]
   );
+  const sessionItemFilterCounts = useMemo(() => ({
+    all: detailItems.length,
+    action: detailItems.filter(sessionItemNeedsAction).length,
+    review: detailItems.filter(sessionItemNeedsReview).length,
+    requests: detailItems.filter(itemNeedsMoreProof).length,
+    problems: detailItems.filter(sessionItemHasProblem).length,
+    complete: detailItems.filter(sessionItemIsComplete).length
+  }), [detailItems]);
+  const visibleDetailItems = useMemo(
+    () => detailItems.filter(item => sessionItemMatchesFilter(item, sessionItemFilter) && sessionItemMatchesQuery(item, sessionItemQuery)),
+    [detailItems, sessionItemFilter, sessionItemQuery]
+  );
+  const sessionItemFilterOptions = [
+    ["all", "All"],
+    ["action", "Action"],
+    ["review", "Review"],
+    ["requests", "Requests"],
+    ["problems", "Problems"],
+    ["complete", "Complete"]
+  ];
   const sessionReport = useMemo(
     () => selectedSession ? buildSessionReport(selectedSession, detail?.items || []) : null,
     [selectedSession, detail?.items]
@@ -1404,8 +1490,50 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                 </details>
               ) : null}
 
+              {detailItems.length ? (
+                <div className="session-item-toolbar">
+                  <label className="session-item-search">
+                    <Search aria-hidden="true" />
+                    <input
+                      value={sessionItemQuery}
+                      placeholder="Search rows, serial, location..."
+                      onChange={e => setSessionItemQuery(e.target.value)}
+                    />
+                  </label>
+                  <div className="session-filter-strip" aria-label="Session row filters">
+                    {sessionItemFilterOptions.map(([value, label]) => (
+                      <button
+                        className={sessionItemFilter === value ? "active" : ""}
+                        type="button"
+                        key={value}
+                        onClick={() => setSessionItemFilter(value)}
+                      >
+                        <span>{label}</span>
+                        <strong>{sessionItemFilterCounts[value] || 0}</strong>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="session-filter-meta">
+                    <span>{visibleDetailItems.length} of {detailItems.length} shown</span>
+                    {(sessionItemQuery.trim() || sessionItemFilter !== "all") ? (
+                      <button
+                        className="btn btn-secondary btn-small"
+                        type="button"
+                        onClick={() => {
+                          setSessionItemQuery("");
+                          setSessionItemFilter("all");
+                        }}
+                      >
+                        <RefreshCw aria-hidden="true" />
+                        <span>Reset</span>
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="session-items">
-                {detailItems.length ? detailItems.map(item => {
+                {visibleDetailItems.length ? visibleDetailItems.map(item => {
                   const submission = latestSubmission(item);
                   const needsMoreProof = submission?.reviewState === "request_more_info";
                   const pendingProof = submission?.reviewState === "pending";
@@ -1463,7 +1591,9 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                       ) : null}
                     </article>
                   );
-                }) : (
+                }) : detailItems.length ? (
+                  <EmptyPanel title="No matching rows" body="Clear the search or choose another filter." />
+                ) : (
                   <EmptyPanel title="No packet rows yet" body="Paste rows from the hand receipt to build the checklist." />
                 )}
               </div>

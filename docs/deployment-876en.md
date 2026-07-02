@@ -228,10 +228,11 @@ The first React tenant-admin session flow is live:
 - print a clean close-out report that hides the admin console and includes the full reconciliation list
 - import packet rows from pasted text, text/CSV files, PDFs, or photos through an LT review step before saving
 - persist packet import batches with source files, extracted text, source links, and retry actions for platoon admins
+- search and filter session rows by text, status, proof requests, review work, problems, and completed items
 - notify platoon admins by email when proof is submitted
 - notify the submitter by email when the LT requests more proof
 
-The next backend/frontend slice should add session item search/filter controls so large imported hand receipts stay usable on mobile.
+The next backend/frontend slice should auto-match imported session rows to existing inventory items so known photos, descriptions, and location hints appear in the task list.
 
 ## QA Environment
 

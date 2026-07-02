@@ -1129,6 +1129,107 @@ button {
   width: min(260px, 100%);
 }
 
+.session-item-toolbar {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 10px;
+}
+
+.session-item-search {
+  position: relative;
+  display: block;
+}
+
+.session-item-search svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  transform: translateY(-50%);
+}
+
+.session-item-search input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 750;
+  outline: none;
+  padding: 0 12px 0 40px;
+}
+
+.session-item-search input:focus {
+  border-color: var(--line-strong);
+  background: #fff;
+}
+
+.session-filter-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.session-filter-strip button {
+  display: inline-flex;
+  min-height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 900;
+  padding: 0 10px;
+  text-transform: uppercase;
+}
+
+.session-filter-strip button.active {
+  border-color: #b8c7b2;
+  background: #eef3eb;
+  color: var(--primary-strong);
+}
+
+.session-filter-strip strong {
+  display: grid;
+  min-width: 22px;
+  min-height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-size: 0.68rem;
+}
+
+.session-filter-strip button.active strong {
+  background: #fff;
+  color: var(--primary-strong);
+}
+
+.session-filter-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-filter-meta span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
 .closeout-report {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2595,11 +2696,17 @@ button {
     flex-direction: column;
   }
 
+  .session-filter-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .admin-actions-row .btn,
   .admin-profile-strip .badge,
   .qa-persona-grid .btn,
   .review-actions .btn,
-  .closeout-report-actions .btn {
+  .closeout-report-actions .btn,
+  .session-filter-meta .btn {
     width: 100%;
   }
 
