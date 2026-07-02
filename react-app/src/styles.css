@@ -1217,6 +1217,12 @@ button {
   font-size: 0.95rem;
 }
 
+.closeout-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .closeout-issues {
   display: grid;
   gap: 8px;
@@ -2335,11 +2341,16 @@ button {
     flex-direction: column;
   }
 
+  .closeout-report-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .admin-actions-row .btn,
   .admin-profile-strip .badge,
   .qa-persona-grid .btn,
   .review-actions .btn,
-  .closeout-report-heading .btn {
+  .closeout-report-actions .btn {
     width: 100%;
   }
 

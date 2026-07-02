@@ -6,6 +6,7 @@ import {
   Copy,
   ClipboardList,
   ClipboardPlus,
+  Download,
   FileText,
   ListChecks,
   LogIn,
@@ -318,6 +319,7 @@ function buildSessionReport(session, items) {
 
   return {
     session,
+    rows,
     counts,
     issueRows,
     resolved,
@@ -364,6 +366,74 @@ function buildSessionReportText(report) {
   }
 
   return lines.join("\n");
+}
+
+function csvCell(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function buildSessionReportCsv(report) {
+  const headers = [
+    "Session",
+    "Item",
+    "Packet Line",
+    "Expected Qty",
+    "Location Hint",
+    "Item Status",
+    "Latest Proof Review",
+    "Latest Proof Status",
+    "Latest Location",
+    "Latest Serial",
+    "Latest Note",
+    "Latest Request",
+    "Submitted By",
+    "Submitted At"
+  ];
+
+  const rows = (report.rows || []).map(item => {
+    const latest = latestSubmission(item);
+    return [
+      report.session?.name || "",
+      itemDisplayName(item),
+      item.packetLine || "",
+      item.expectedQty ?? "",
+      item.locationHint || "",
+      formatItemStatus(item.status),
+      latest?.reviewState ? formatReviewState(latest.reviewState) : "",
+      latest?.status ? formatItemStatus(latest.status) : "",
+      latest?.locationText || "",
+      latest?.serialNumber || "",
+      latest?.note || "",
+      latest?.reviewNote || "",
+      latest ? submissionPerson(latest) : "",
+      latest?.createdAt ? formatDate(latest.createdAt) : ""
+    ];
+  });
+
+  return [headers, ...rows]
+    .map(row => row.map(csvCell).join(","))
+    .join("\r\n");
+}
+
+function safeFileNamePart(value) {
+  return String(value || "inventory-session")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "inventory-session";
+}
+
+function downloadTextFile(fileName, text, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 const proofRequestOptions = [
@@ -511,7 +581,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
   );
 }
 
-function SessionCloseoutReport({ report, onCopy }) {
+function SessionCloseoutReport({ report, onCopy, onExportCsv }) {
   if (!report?.counts?.total) return null;
 
   const counts = report.counts;
@@ -558,10 +628,16 @@ function SessionCloseoutReport({ report, onCopy }) {
 
         <div className="closeout-report-heading">
           <strong>Rows to reconcile</strong>
-          <button className="btn btn-secondary btn-small" type="button" onClick={() => onCopy(report)}>
-            <Copy aria-hidden="true" />
-            <span>Copy</span>
-          </button>
+          <div className="closeout-report-actions">
+            <button className="btn btn-secondary btn-small" type="button" onClick={() => onCopy(report)}>
+              <Copy aria-hidden="true" />
+              <span>Copy</span>
+            </button>
+            <button className="btn btn-secondary btn-small" type="button" onClick={() => onExportCsv(report)}>
+              <Download aria-hidden="true" />
+              <span>CSV</span>
+            </button>
+          </div>
         </div>
 
         {issueRows.length ? (
@@ -728,6 +804,16 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
       setStatus({ text: "Close-out report copied.", isError: false });
     } catch {
       setStatus({ text: "Could not copy report from this browser.", isError: true });
+    }
+  }
+
+  function exportCloseoutCsv(report) {
+    try {
+      const fileName = `${safeFileNamePart(report.session?.name)}-closeout.csv`;
+      downloadTextFile(fileName, buildSessionReportCsv(report), "text/csv;charset=utf-8");
+      setStatus({ text: "Close-out CSV exported.", isError: false });
+    } catch {
+      setStatus({ text: "Could not export CSV from this browser.", isError: true });
     }
   }
 
@@ -913,7 +999,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
               </div>
 
               {canManage ? (
-                <SessionCloseoutReport report={sessionReport} onCopy={copyCloseoutReport} />
+                <SessionCloseoutReport report={sessionReport} onCopy={copyCloseoutReport} onExportCsv={exportCloseoutCsv} />
               ) : null}
 
               {canManage ? (
