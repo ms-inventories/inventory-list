@@ -340,6 +340,29 @@ button {
   width: min(100%, 520px);
 }
 
+.launch-screen {
+  background:
+    linear-gradient(90deg, rgba(18, 27, 20, 0.9), rgba(18, 27, 20, 0.52)),
+    url("assets/black-shadow-company.jpg") center / cover no-repeat;
+}
+
+.launch-card {
+  width: min(100%, 520px);
+}
+
+.launch-profile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.launch-workspace-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
 .auth-card h1,
 .app-header h1 {
   margin: 0;

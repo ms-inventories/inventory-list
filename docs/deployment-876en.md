@@ -81,8 +81,8 @@ VITE_BASE_DOMAIN=876en.org
 VITE_API_BASE_URL=https://api.876en.org/api
 VITE_NEWSLETTER_ACTION_URL=<optional brevo form action url>
 VITE_AUTHENTIK_LAUNCH_URL=https://auth.876en.org/if/user/
-VITE_OIDC_CLIENT_ID=inventory-web
-VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory/.well-known/openid-configuration
+VITE_OIDC_CLIENT_ID=<authentik inventory client id>
+VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
 VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
 VITE_OIDC_SCOPE=openid profile email groups
@@ -194,9 +194,9 @@ Create an OAuth2/OpenID Connect provider for Inventory List.
 Backend env:
 
 ```text
-OIDC_ISSUER=https://auth.876en.org/application/o/inventory/
-OIDC_AUDIENCE=inventory-api
-OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory/.well-known/openid-configuration
+OIDC_ISSUER=https://auth.876en.org/application/o/inventory-web/
+OIDC_AUDIENCE=<authentik inventory client id>
+OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 OIDC_GROUPS_CLAIM=groups
 PLATFORM_ADMIN_GROUP=876en-admins
 FRG_ADMIN_GROUP=876en-frg-admins
@@ -221,6 +221,7 @@ Frontend OIDC notes:
 
 - Configure the Authentik application as a public/OIDC client with PKCE.
 - The frontend client ID should match `VITE_OIDC_CLIENT_ID`.
+- Set the Authentik inventory application's Launch URL to `https://876en.org/#/launch`; the app decides whether the user should land in platform admin, a tenant workspace, or a workspace chooser.
 - Add redirect URIs for the public app/admin hosts you use, starting with `https://admin.876en.org/`. Tenant admin login on platoon subdomains will also need allowed redirect URIs such as `https://1st.876en.org/` and `https://ms.876en.org/`, or an Authentik wildcard/regex redirect rule if you choose to allow tenant-wide callback URLs.
 - The public `876en.org` nav login dropdown should point to the Authentik application portal, `https://auth.876en.org/if/user/`. Authentik can show the FRG content-management app, inventory app, and any future tools based on user access.
 - The frontend can use explicit Authentik OAuth endpoints (`/application/o/authorize/` and `/application/o/token/`) so the browser does not need to fetch the discovery document from `auth.876en.org`.
@@ -262,7 +263,7 @@ Use this as the first real go-live pass.
 4. Frontend Coolify env has `VITE_BASE_DOMAIN=876en.org`, `VITE_API_BASE_URL=https://api.876en.org/api`, and the Authentik discovery/client values.
 5. Cloudflare routes include `admin.876en.org`, `876en.org`, `api.876en.org`, and the tenant wildcard or explicit tenant hostnames.
 6. Authentik has redirect URIs for `https://admin.876en.org/`, `https://876en.org/`, and each first tenant host such as `https://1st.876en.org/` and `https://ms.876en.org/`.
-7. Open `https://admin.876en.org/#/admin`, sign in with the email listed in `PLATFORM_ADMIN_EMAILS`, and confirm the header shows `Platform admin`.
+7. Open `https://876en.org/#/launch`, sign in with the account in `876en-admins`, and confirm it routes to platform admin.
 8. Create the first tenants, for example `1st` and `ms`, assigning each LT email as the first platoon admin.
 9. Open each tenant admin link, create a test inventory session, import a couple packet rows, invite one contributor, and submit/approve one proof item.
 10. After the test pass, leave the root static GitHub Pages site online until you are comfortable moving the public homepage to the Coolify app.
@@ -282,8 +283,8 @@ QA frontend env:
 VITE_BASE_DOMAIN=876en.org
 VITE_API_BASE_URL=https://qa-api.876en.org/api
 VITE_ENABLE_QA_AUTH=true
-VITE_OIDC_CLIENT_ID=inventory-web
-VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory/.well-known/openid-configuration
+VITE_OIDC_CLIENT_ID=<authentik inventory client id>
+VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 ```
 
 QA backend env:

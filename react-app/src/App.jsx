@@ -20,6 +20,13 @@ import AdminConsole from "./components/AdminConsole.jsx";
 import blackShadowLogo from "./assets/black-shadow-company.jpg";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "./config.js";
 import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
+import { apiRequest, getApiErrorMessage } from "./lib/api.js";
+import {
+  beginOidcLogin,
+  completeOidcRedirect,
+  getSessionAccessToken,
+  readAuthSession
+} from "./lib/auth.js";
 import { getPacketCandidateDisplay, recognizePacketFile } from "./lib/ocr.js";
 
 const BUCKET_BASE_URL = String(appConfig.legacyBucketBaseUrl || "").replace(/\/+$/, "");
@@ -355,6 +362,133 @@ function getAdminUrl() {
 
 function getApplicationPortalUrl() {
   return appConfig.authentikLaunchUrl || getAdminUrl();
+}
+
+function getTenantUrl(slug) {
+  return `https://${slug}.${appConfig.baseDomain}/#/admin`;
+}
+
+function getWorkspaceSlugsFromGroups(groups) {
+  const reserved = new Set(["876en", "876en-admins", "876en-frg-admins", "876en-platoon-admin"]);
+
+  return [...new Set((groups || [])
+    .map(group => String(group || "").trim().toLowerCase())
+    .filter(group => group.startsWith("876en-") && !reserved.has(group))
+    .map(group => group.replace(/^876en-/, ""))
+    .filter(Boolean))]
+    .sort();
+}
+
+function isOidcCallback(search = window.location.search) {
+  const params = new URLSearchParams(search || "");
+  return params.has("code") && params.has("state");
+}
+
+function LaunchRouter() {
+  const [status, setStatus] = useState({ text: "Checking your access...", isError: false });
+  const [workspaces, setWorkspaces] = useState([]);
+  const [me, setMe] = useState(null);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function routeAfterLogin() {
+      try {
+        const redirectedSession = await completeOidcRedirect();
+        if (redirectedSession) {
+          const routeAfterRedirect = `${window.location.pathname}${window.location.hash || ""}`;
+          const normalizedRouteAfterRedirect = routeAfterRedirect.toLowerCase();
+          if (!normalizedRouteAfterRedirect.endsWith("#/launch") && !normalizedRouteAfterRedirect.startsWith("/launch")) {
+            window.location.replace(routeAfterRedirect);
+            return;
+          }
+        }
+
+        const session = redirectedSession || readAuthSession();
+        const token = getSessionAccessToken(session);
+
+        if (!token) {
+          setStatus({ text: "Redirecting to sign in...", isError: false });
+          await beginOidcLogin("/#/launch");
+          return;
+        }
+
+        const data = await apiRequest("/me", { token });
+        if (ignore) return;
+
+        setMe(data);
+        const slugs = getWorkspaceSlugsFromGroups(data.groups);
+
+        if (data.isPlatformAdmin) {
+          window.location.assign(getAdminUrl());
+          return;
+        }
+
+        if (slugs.length === 1) {
+          window.location.assign(getTenantUrl(slugs[0]));
+          return;
+        }
+
+        if (slugs.length > 1) {
+          setWorkspaces(slugs);
+          setStatus({ text: "Choose a workspace to continue.", isError: false });
+          return;
+        }
+
+        if (data.isFrgAdmin) {
+          setStatus({
+            text: "FRG publishing access is ready, but the editor screen is not wired into this launcher yet.",
+            isError: false
+          });
+          return;
+        }
+
+        setStatus({
+          text: "This account can sign in, but it is not assigned to an inventory workspace yet.",
+          isError: true
+        });
+      } catch (error) {
+        if (!ignore) setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
+    }
+
+    routeAfterLogin();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  return (
+    <div className="auth-screen launch-screen">
+      <section className="auth-card launch-card" aria-labelledby="launchTitle">
+        <p className="eyebrow">876 EN Inventory</p>
+        <h1 id="launchTitle">Opening workspace</h1>
+        <p className="auth-copy">
+          We are checking your account and sending you to the right place.
+        </p>
+
+        {me ? (
+          <div className="launch-profile">
+            <span className="badge strong">{me.user?.display_name || me.user?.email}</span>
+            {me.groups?.length ? <span className="badge">{me.groups.length} groups</span> : null}
+          </div>
+        ) : null}
+
+        {workspaces.length ? (
+          <div className="launch-workspace-list">
+            {workspaces.map(slug => (
+              <a className="btn btn-secondary btn-full" key={slug} href={getTenantUrl(slug)}>
+                <CornerDownRight aria-hidden="true" />
+                <span>{slug.toUpperCase()} workspace</span>
+              </a>
+            ))}
+          </div>
+        ) : null}
+
+        <StatusText status={status} />
+      </section>
+    </div>
+  );
 }
 
 function PublicHome() {
@@ -1068,14 +1202,16 @@ function ViewerApp() {
 export default function App() {
   const [route, setRoute] = useState({
     path: window.location.pathname.toLowerCase(),
-    hash: window.location.hash
+    hash: window.location.hash,
+    search: window.location.search
   });
 
   useEffect(() => {
     const updateRoute = () => {
       setRoute({
         path: window.location.pathname.toLowerCase(),
-        hash: window.location.hash
+        hash: window.location.hash,
+        search: window.location.search
       });
     };
 
@@ -1092,6 +1228,7 @@ export default function App() {
   const normalizedHash = hash.toLowerCase();
   const tenantSlug = getTenantSlugFromHostname();
   if (normalizedHash.startsWith("#/accept-invite")) return <AcceptInvite />;
+  if (normalizedHash === "#/launch" || path.startsWith("/launch") || isOidcCallback(route.search)) return <LaunchRouter />;
   if (isAdminHostname() || path.startsWith("/admin") || normalizedHash === "#/admin") return <AdminConsole />;
   if (isBaseHostname()) return <PublicHome />;
   if (tenantSlug && normalizedHash !== "#/lookup" && !path.startsWith("/lookup")) return <AdminConsole />;

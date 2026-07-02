@@ -35,6 +35,8 @@ VITE_API_BASE_URL=/api
 VITE_LEGACY_BUCKET_BASE_URL=https://ms-inventories.s3.us-east-1.amazonaws.com
 VITE_NEWSLETTER_ACTION_URL=
 VITE_AUTHENTIK_LAUNCH_URL=https://auth.876en.org/if/user/
+VITE_OIDC_CLIENT_ID=<authentik inventory client id>
+VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 VITE_ENABLE_DEMO_FALLBACK=true
 VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
 VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
@@ -42,4 +44,4 @@ VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
 
 `VITE_ENABLE_DEMO_FALLBACK` keeps localhost and first deploys usable even when the old static JSON source is unavailable from the browser. Set it to `false` after the backend is serving tenant inventory data.
 
-`876en.org` renders the public FRG/newsletter splash page. The nav login dropdown points to Authentik's application portal by default, so users only see apps they are allowed to launch. Tenant subdomains render the SaaS workspace by default; the old static lookup screen remains available at `/#/lookup` or `/lookup` during transition.
+`876en.org` renders the public FRG/newsletter splash page. The nav login dropdown points to Authentik's application portal by default, so users only see apps they are allowed to launch. Set the Authentik inventory application's launch URL to `https://876en.org/#/launch`; that neutral route signs users in and sends platform admins to admin, single-platoon users to their platoon, or multi-platoon users to a chooser. Tenant subdomains render the SaaS workspace by default; the old static lookup screen remains available at `/#/lookup` or `/lookup` during transition.
