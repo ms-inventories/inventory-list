@@ -30,6 +30,8 @@ npm run dev
 
 Run `npm run migrate` before using the API. The migration runner applies every SQL file in `db/` once and can safely baseline a database where the first schema files were already applied manually.
 
+In production, `npm start` runs migrations before launching the server. The runner uses a Postgres advisory lock so overlapping redeploys wait instead of racing each other.
+
 When `ALLOW_DEV_AUTH=true`, you can simulate a user with headers:
 
 ```text

@@ -113,13 +113,15 @@ api.876en.org -> backend service on port 3000
 
 Use Postgres in Coolify.
 
-Run migrations from the backend resource terminal after `DATABASE_URL` is set:
+Backend startup runs migrations automatically because `npm start` executes:
 
 ```text
-npm run migrate
+npm run migrate && node src/server.js
 ```
 
-The migration runner records applied files in `schema_migrations`. If the early schema files were already applied manually, it baselines those files and continues with anything missing.
+The migration runner records applied files in `schema_migrations`. If the early schema files were already applied manually, it baselines those files and continues with anything missing. It also uses a Postgres advisory lock so overlapping deploys do not race.
+
+You can still run `npm run migrate` manually from the backend resource terminal when you want to verify the database before starting or restarting the app.
 
 ## Local NAS Storage
 
@@ -243,7 +245,7 @@ The next backend/frontend slice should add a manual match/override control for s
 Use this as the first real go-live pass.
 
 1. Backend Coolify env is set from `backend/.env.example`, with `NODE_ENV=production`, `ALLOW_DEV_AUTH=false`, the production `DATABASE_URL`, and `PLATFORM_ADMIN_EMAILS` containing your root admin email.
-2. Backend terminal runs `npm run migrate` and ends with `migration complete: database is current`.
+2. Backend deploy logs show `migration complete: database is current`, or the backend terminal runs `npm run migrate` with the same result.
 3. Backend `https://api.876en.org/health` returns `{ "ok": true }`.
 4. Frontend Coolify env has `VITE_BASE_DOMAIN=876en.org`, `VITE_API_BASE_URL=https://api.876en.org/api`, and the Authentik discovery/client values.
 5. Cloudflare routes include `admin.876en.org`, `876en.org`, `api.876en.org`, and the tenant wildcard or explicit tenant hostnames.

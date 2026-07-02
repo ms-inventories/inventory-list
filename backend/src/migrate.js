@@ -6,6 +6,7 @@ import pg from "pg";
 import { config } from "./config.js";
 
 const MIGRATION_TABLE = "schema_migrations";
+const MIGRATION_LOCK_KEY = "inventory-list-migrations";
 const BASELINE_MARKERS = new Map([
   ["001_init.sql", "tenants"],
   ["002_tenant_admin_invites.sql", "tenant_invitations"],
@@ -32,6 +33,15 @@ async function ensureMigrationTable(client) {
       applied_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+}
+
+async function acquireMigrationLock(client) {
+  console.log("waiting for migration lock");
+  await client.query("SELECT pg_advisory_lock(hashtext($1))", [MIGRATION_LOCK_KEY]);
+}
+
+async function releaseMigrationLock(client) {
+  await client.query("SELECT pg_advisory_unlock(hashtext($1))", [MIGRATION_LOCK_KEY]);
 }
 
 async function getMigrationFiles() {
@@ -96,8 +106,11 @@ async function main() {
 
   const pool = new pg.Pool({ connectionString: config.databaseUrl });
   const client = await pool.connect();
+  let hasLock = false;
 
   try {
+    await acquireMigrationLock(client);
+    hasLock = true;
     await ensureMigrationTable(client);
     const migrationFiles = await getMigrationFiles();
     let applied = await getAppliedMigrations(client);
@@ -122,6 +135,13 @@ async function main() {
 
     console.log(appliedCount ? `migration complete: ${appliedCount} applied` : "migration complete: database is current");
   } finally {
+    if (hasLock) {
+      try {
+        await releaseMigrationLock(client);
+      } catch (error) {
+        console.error("failed to release migration lock", error);
+      }
+    }
     client.release();
     await pool.end();
   }
