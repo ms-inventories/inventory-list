@@ -19,6 +19,12 @@ const imageMimeTypes = new Map([
   ["image/webp", ".webp"],
   ["image/gif", ".gif"]
 ]);
+const packetSourceMimeTypes = new Map([
+  ...imageMimeTypes,
+  ["application/pdf", ".pdf"],
+  ["text/plain", ".txt"],
+  ["text/csv", ".csv"]
+]);
 
 function parseBody(schema, body) {
   return schema.parse(body || {});
@@ -113,6 +119,7 @@ function rowToSessionItem(row) {
     packetLine: row.packet_line,
     expectedQty: row.expected_qty,
     locationHint: row.location_hint,
+    importBatchId: row.import_batch_id,
     status: row.status,
     directVerifiedBy: row.direct_verified_by,
     directVerifiedByEmail: row.direct_verified_by_email,
@@ -161,6 +168,26 @@ function rowToPhoto(row) {
     kind: row.kind,
     createdAt: row.created_at
   };
+}
+
+function rowToImportBatch(row, { includeText = false } = {}) {
+  const batch = {
+    id: row.id,
+    tenantId: row.tenant_id,
+    sessionId: row.session_id,
+    sourceName: row.source_name,
+    sourceMimeType: row.source_mime_type,
+    sourceStorageKey: row.source_storage_key,
+    sourceUrl: row.source_storage_key ? buildMediaUrl(row.source_storage_key) : "",
+    rowCount: row.row_count ?? 0,
+    createdBy: row.created_by,
+    createdByEmail: row.created_by_email,
+    createdByName: row.created_by_name,
+    createdAt: row.created_at
+  };
+
+  if (includeText) batch.extractedText = row.extracted_text || "";
+  return batch;
 }
 
 function safeStorageKey(key) {
@@ -212,12 +239,43 @@ function parseImagePayload(body) {
   return { buffer, extension };
 }
 
-async function saveUploadedImage(tenant, body) {
-  const { buffer, extension } = parseImagePayload(body);
-  const now = new Date();
-  const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-  const fileName = `${crypto.randomUUID()}${extension}`;
-  const storageKey = `tenants/${tenant.slug}/submissions/${month}/${fileName}`;
+function parseFilePayload(body, allowedMimeTypes, maxBytes) {
+  const mimeType = String(body.mimeType || "").toLowerCase();
+  const extension = allowedMimeTypes.get(mimeType);
+  if (!extension) {
+    const error = new Error("Unsupported file type");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let base64 = String(body.base64 || "").trim();
+  const dataUrl = String(body.dataUrl || "").trim();
+  if (!base64 && dataUrl) {
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+      const error = new Error("Invalid file data URL");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (match[1].toLowerCase() !== mimeType) {
+      const error = new Error("File data type does not match mimeType");
+      error.statusCode = 400;
+      throw error;
+    }
+    base64 = match[2];
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length || buffer.length > maxBytes) {
+    const error = new Error(`File must be ${Math.floor(maxBytes / 1024 / 1024)}MB or smaller`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { buffer, extension };
+}
+
+async function saveBufferToStorage(storageKey, buffer) {
   const absolutePath = path.resolve(config.storage.root, storageKey);
   const rootPath = path.resolve(config.storage.root);
 
@@ -230,6 +288,24 @@ async function saveUploadedImage(tenant, body) {
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, buffer);
   return storageKey;
+}
+
+async function saveUploadedImage(tenant, body) {
+  const { buffer, extension } = parseImagePayload(body);
+  const now = new Date();
+  const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const fileName = `${crypto.randomUUID()}${extension}`;
+  const storageKey = `tenants/${tenant.slug}/submissions/${month}/${fileName}`;
+  return saveBufferToStorage(storageKey, buffer);
+}
+
+async function savePacketImportSource(tenant, body) {
+  const { buffer, extension } = parseFilePayload(body, packetSourceMimeTypes, 10 * 1024 * 1024);
+  const now = new Date();
+  const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  const fileName = `${crypto.randomUUID()}${extension}`;
+  const storageKey = `tenants/${tenant.slug}/packet-imports/${month}/${fileName}`;
+  return saveBufferToStorage(storageKey, buffer);
 }
 
 async function createAuditEvent(client, { tenantId, actorUserId, action, entityType, entityId, metadata = {} }) {
@@ -1092,9 +1168,27 @@ export function registerRoutes(app) {
       if (item) item.submissions.push(submission);
     });
 
+    let importBatches = { rows: [] };
+    if (hasTenantRole(context, ["tenant_admin"])) {
+      const tableResult = await query("SELECT to_regclass('public.packet_import_batches') AS table_name");
+      if (tableResult.rows[0]?.table_name) {
+        importBatches = await query(
+          `
+            SELECT b.*, creator.email AS created_by_email, creator.display_name AS created_by_name
+            FROM packet_import_batches b
+            LEFT JOIN app_users creator ON creator.id = b.created_by
+            WHERE b.session_id = $1 AND b.tenant_id = $2
+            ORDER BY b.created_at DESC
+          `,
+          [session.id, context.tenant.id]
+        );
+      }
+    }
+
     return {
       session: rowToSession(session),
-      items
+      items,
+      importBatches: importBatches.rows.map(row => rowToImportBatch(row, { includeText: true }))
     };
   });
 
@@ -1191,10 +1285,35 @@ export function registerRoutes(app) {
           packetLine: z.string().min(2),
           expectedQty: z.number().int().nonnegative().optional(),
           locationHint: z.string().optional()
-        })).min(1).max(250)
+        })).min(1).max(250),
+        importBatch: z.object({
+          sourceName: z.string().max(240).optional(),
+          sourceMimeType: z.string().max(120).optional(),
+          extractedText: z.string().max(1_000_000).optional(),
+          sourceFile: z.object({
+            fileName: z.string().max(240).optional(),
+            mimeType: z.string().max(120),
+            dataUrl: z.string().optional(),
+            base64: z.string().optional()
+          }).optional()
+        }).optional()
       }),
       request.body
     );
+
+    const hasImportBatch = Boolean(
+      body.importBatch?.sourceName ||
+      body.importBatch?.sourceMimeType ||
+      body.importBatch?.extractedText ||
+      body.importBatch?.sourceFile
+    );
+    const tableResult = hasImportBatch
+      ? await query("SELECT to_regclass('public.packet_import_batches') AS table_name")
+      : { rows: [{ table_name: null }] };
+    if (hasImportBatch && !tableResult.rows[0]?.table_name) {
+      reply.code(503);
+      throw new Error("Packet import batch schema is not installed. Run backend/db/003_packet_import_batches.sql.");
+    }
 
     const created = await withTransaction(async client => {
       const sessionResult = await client.query(
@@ -1204,21 +1323,70 @@ export function registerRoutes(app) {
 
       if (!sessionResult.rows[0]) return null;
 
-      const rows = [];
-      for (const item of body.items) {
-        const result = await client.query(
+      let importBatch = null;
+      if (hasImportBatch) {
+        const sourceStorageKey = body.importBatch?.sourceFile
+          ? await savePacketImportSource(context.tenant, body.importBatch.sourceFile)
+          : null;
+        const batchResult = await client.query(
           `
-            INSERT INTO inventory_session_items (session_id, packet_line, expected_qty, location_hint)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO packet_import_batches (
+              tenant_id,
+              session_id,
+              source_name,
+              source_mime_type,
+              source_storage_key,
+              extracted_text,
+              row_count,
+              created_by
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
           `,
           [
+            context.tenant.id,
             request.params.sessionId,
-            item.packetLine.trim(),
-            item.expectedQty ?? null,
-            item.locationHint || null
+            body.importBatch?.sourceName || body.importBatch?.sourceFile?.fileName || null,
+            body.importBatch?.sourceMimeType || body.importBatch?.sourceFile?.mimeType || null,
+            sourceStorageKey,
+            body.importBatch?.extractedText || null,
+            body.items.length,
+            context.user.id
           ]
         );
+        importBatch = batchResult.rows[0];
+      }
+
+      const rows = [];
+      for (const item of body.items) {
+        const result = importBatch
+          ? await client.query(
+            `
+              INSERT INTO inventory_session_items (session_id, packet_line, expected_qty, location_hint, import_batch_id)
+              VALUES ($1, $2, $3, $4, $5)
+              RETURNING *
+            `,
+            [
+              request.params.sessionId,
+              item.packetLine.trim(),
+              item.expectedQty ?? null,
+              item.locationHint || null,
+              importBatch.id
+            ]
+          )
+          : await client.query(
+            `
+              INSERT INTO inventory_session_items (session_id, packet_line, expected_qty, location_hint)
+              VALUES ($1, $2, $3, $4)
+              RETURNING *
+            `,
+            [
+              request.params.sessionId,
+              item.packetLine.trim(),
+              item.expectedQty ?? null,
+              item.locationHint || null
+            ]
+          );
         rows.push(result.rows[0]);
       }
 
@@ -1228,10 +1396,14 @@ export function registerRoutes(app) {
         action: "session_items.bulk_created",
         entityType: "inventory_session",
         entityId: request.params.sessionId,
-        metadata: { count: rows.length }
+        metadata: {
+          count: rows.length,
+          importBatchId: importBatch?.id || null,
+          sourceName: body.importBatch?.sourceName || null
+        }
       });
 
-      return rows;
+      return { rows, importBatch };
     });
 
     if (!created) {
@@ -1240,7 +1412,10 @@ export function registerRoutes(app) {
     }
 
     reply.code(201);
-    return { sessionItems: created };
+    return {
+      sessionItems: created.rows,
+      importBatch: created.importBatch ? rowToImportBatch(created.importBatch, { includeText: true }) : null
+    };
   });
 
   route(app, "post", "/api/uploads/photos", async (request, reply) => {

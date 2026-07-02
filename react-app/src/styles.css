@@ -1472,6 +1472,85 @@ button {
   gap: 10px;
 }
 
+.packet-import-history {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  padding: 10px;
+}
+
+.packet-import-history-heading,
+.packet-import-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.packet-import-history-heading strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.packet-import-history-heading span {
+  display: grid;
+  min-width: 24px;
+  min-height: 24px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.packet-import-history-list {
+  display: grid;
+  gap: 6px;
+}
+
+.packet-import-history-row {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 8px;
+}
+
+.packet-import-history-row div:first-child {
+  min-width: 0;
+}
+
+.packet-import-history-row strong,
+.packet-import-history-row span {
+  display: block;
+}
+
+.packet-import-history-row strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.packet-import-history-row span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.packet-import-history-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .packet-import-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2359,12 +2438,14 @@ button {
   }
 
   .session-summary,
-  .session-item {
+  .session-item,
+  .packet-import-history-row {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .session-item-actions {
+  .session-item-actions,
+  .packet-import-history-actions {
     justify-content: flex-start;
   }
 }
@@ -2471,6 +2552,7 @@ button {
   .inline-control .btn,
   .packet-import-actions .btn,
   .button-row .btn,
+  .packet-import-history-actions .btn,
   .editor-card-header .btn,
   .session-create summary {
     width: 100%;

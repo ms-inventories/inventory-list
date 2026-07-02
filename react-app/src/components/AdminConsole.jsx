@@ -282,6 +282,27 @@ function sanitizePacketDraftRows(rows) {
     .filter(row => row.packetLine.length >= 2);
 }
 
+function packetMimeTypeForFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  const name = String(file?.name || "").toLowerCase();
+  if (type) return type;
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".csv")) return "text/csv";
+  if (name.endsWith(".txt")) return "text/plain";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".gif")) return "image/gif";
+  return "application/octet-stream";
+}
+
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return "";
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
 function sessionProgress(session) {
   const total = Number(session?.itemCount || 0);
   const done = Number(session?.foundCount || 0);
@@ -789,6 +810,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [packetRows, setPacketRows] = useState("");
   const [packetDraftRows, setPacketDraftRows] = useState([]);
   const [packetSourceName, setPacketSourceName] = useState("");
+  const [packetSourceFile, setPacketSourceFile] = useState(null);
   const [proofItemId, setProofItemId] = useState("");
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
@@ -876,12 +898,25 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
 
   async function readPacketUpload(file) {
     if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setStatus({ text: "Packet source files must be 10MB or smaller.", isError: true });
+      return;
+    }
 
     try {
       setIsReadingPacket(true);
       setStatus({ text: "Reading packet file...", isError: false });
-      const text = await readPacketFileText(file, message => setStatus({ text: message, isError: false }));
+      const [text, dataUrl] = await Promise.all([
+        readPacketFileText(file, message => setStatus({ text: message, isError: false })),
+        fileToDataUrl(file)
+      ]);
       setPacketRows(text);
+      setPacketSourceFile({
+        fileName: file.name,
+        mimeType: packetMimeTypeForFile(file),
+        dataUrl,
+        size: file.size
+      });
       reviewPacketRows(text, file.name);
     } catch (error) {
       setStatus({ text: error.message || "Could not read packet file.", isError: true });
@@ -902,6 +937,18 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     setPacketRows("");
     setPacketDraftRows([]);
     setPacketSourceName("");
+    setPacketSourceFile(null);
+  }
+
+  function retryImportBatch(batch) {
+    if (!batch?.extractedText) {
+      setStatus({ text: "That import does not have saved text to retry.", isError: true });
+      return;
+    }
+
+    setPacketRows(batch.extractedText);
+    setPacketSourceFile(null);
+    reviewPacketRows(batch.extractedText, batch.sourceName || "Saved import");
   }
 
   async function addPacketRows(e) {
@@ -918,17 +965,31 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
       return;
     }
 
+    const importBatch = {
+      sourceName: packetSourceName || packetSourceFile?.fileName || "Pasted packet text",
+      sourceMimeType: packetSourceFile?.mimeType || "text/plain",
+      extractedText: packetRows.slice(0, 1_000_000)
+    };
+    if (packetSourceFile) {
+      importBatch.sourceFile = {
+        fileName: packetSourceFile.fileName,
+        mimeType: packetSourceFile.mimeType,
+        dataUrl: packetSourceFile.dataUrl
+      };
+    }
+
     try {
       setIsSaving(true);
       await apiRequest(`/inventory/sessions/${selectedSessionId}/items/bulk`, {
         method: "POST",
         token,
         tenantSlug,
-        body: { items }
+        body: { items, importBatch }
       });
       setPacketRows("");
       setPacketDraftRows([]);
       setPacketSourceName("");
+      setPacketSourceFile(null);
       setStatus({ text: `Added ${items.length} packet rows.`, isError: false });
       await loadSessions(selectedSessionId);
     } catch (error) {
@@ -1012,6 +1073,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     () => selectedSession ? buildSessionReport(selectedSession, detail?.items || []) : null,
     [selectedSession, detail?.items]
   );
+  const importBatches = detail?.importBatches || [];
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -1194,6 +1256,40 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                 />
               ) : null}
 
+              {canManage && importBatches.length ? (
+                <div className="packet-import-history">
+                  <div className="packet-import-history-heading">
+                    <strong>Import history</strong>
+                    <span>{importBatches.length}</span>
+                  </div>
+                  <div className="packet-import-history-list">
+                    {importBatches.slice(0, 4).map(batch => (
+                      <div className="packet-import-history-row" key={batch.id}>
+                        <div>
+                          <strong>{batch.sourceName || "Packet import"}</strong>
+                          <span>
+                            {batch.rowCount || 0} rows - {formatDate(batch.createdAt)}
+                            {batch.sourceMimeType ? ` - ${batch.sourceMimeType}` : ""}
+                          </span>
+                        </div>
+                        <div className="packet-import-history-actions">
+                          {batch.sourceUrl ? (
+                            <a className="btn btn-secondary btn-small" href={batch.sourceUrl} target="_blank" rel="noreferrer">
+                              <FileText aria-hidden="true" />
+                              <span>Source</span>
+                            </a>
+                          ) : null}
+                          <button className="btn btn-secondary btn-small" type="button" onClick={() => retryImportBatch(batch)}>
+                            <ClipboardPlus aria-hidden="true" />
+                            <span>Retry</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               {canManage ? (
                 <details className="packet-import">
                   <summary className="btn btn-secondary">
@@ -1233,6 +1329,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                       ) : null}
                     </div>
                     {packetSourceName ? <span className="packet-import-note">Source: {packetSourceName}</span> : null}
+                    {packetSourceFile?.size ? <span className="packet-import-note">Stored with import: {formatFileSize(packetSourceFile.size)}</span> : null}
                     <textarea
                       className="input packet-textarea"
                       value={packetRows}
@@ -1241,6 +1338,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                         setPacketRows(e.target.value);
                         setPacketDraftRows([]);
                         setPacketSourceName("");
+                        setPacketSourceFile(null);
                       }}
                     />
                     {packetDraftRows.length ? (

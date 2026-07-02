@@ -110,11 +110,15 @@ api.876en.org -> backend service on port 3000
 
 Use Postgres in Coolify.
 
-Apply:
+Apply migrations in order:
 
 ```text
 backend/db/001_init.sql
+backend/db/002_tenant_admin_invites.sql
+backend/db/003_packet_import_batches.sql
 ```
+
+`003_packet_import_batches.sql` is required before saving packet imports with source files. Until it is applied, existing session views still work, but the new import archive flow will return a migration-needed error.
 
 ## Local NAS Storage
 
@@ -223,10 +227,11 @@ The first React tenant-admin session flow is live:
 - export complete close-out report rows as CSV
 - print a clean close-out report that hides the admin console and includes the full reconciliation list
 - import packet rows from pasted text, text/CSV files, PDFs, or photos through an LT review step before saving
+- persist packet import batches with source files, extracted text, source links, and retry actions for platoon admins
 - notify platoon admins by email when proof is submitted
 - notify the submitter by email when the LT requests more proof
 
-The next backend/frontend slice should persist import batches and source files so an LT can reopen, audit, or retry a hand-receipt import later.
+The next backend/frontend slice should add session item search/filter controls so large imported hand receipts stay usable on mobile.
 
 ## QA Environment
 
