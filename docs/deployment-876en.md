@@ -80,8 +80,11 @@ Environment variables:
 VITE_BASE_DOMAIN=876en.org
 VITE_API_BASE_URL=https://api.876en.org/api
 VITE_NEWSLETTER_ACTION_URL=<optional brevo form action url>
+VITE_AUTHENTIK_LAUNCH_URL=https://auth.876en.org/if/user/
 VITE_OIDC_CLIENT_ID=inventory-web
 VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory/.well-known/openid-configuration
+VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
+VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
 VITE_OIDC_SCOPE=openid profile email groups
 ```
 
@@ -213,7 +216,8 @@ Frontend OIDC notes:
 - Configure the Authentik application as a public/OIDC client with PKCE.
 - The frontend client ID should match `VITE_OIDC_CLIENT_ID`.
 - Add redirect URIs for the public app/admin hosts you use, starting with `https://admin.876en.org/`. Tenant admin login on platoon subdomains will also need allowed redirect URIs such as `https://1st.876en.org/` and `https://ms.876en.org/`, or an Authentik wildcard/regex redirect rule if you choose to allow tenant-wide callback URLs.
-- The public `876en.org` nav login dropdown points inventory users to `https://admin.876en.org/#/admin`; Authentik and the backend decide whether the signed-in user belongs to the inventory group or a tenant.
+- The public `876en.org` nav login dropdown should point to the Authentik application portal, `https://auth.876en.org/if/user/`. Authentik can show the FRG content-management app, inventory app, and any future tools based on user access.
+- The frontend can use explicit Authentik OAuth endpoints (`/application/o/authorize/` and `/application/o/token/`) so the browser does not need to fetch the discovery document from `auth.876en.org`.
 - Until Authentik is fully wired, the admin UI includes an access-token field so a valid bearer token can be pasted for testing.
 - Tenant invitation links use `https://<tenant>.876en.org/#/accept-invite?token=...`. Authentik only sees the origin/path portion of that redirect URI, so the allowed redirect entry is the tenant root such as `https://1st.876en.org/`; the app restores the invite hash after login.
 

@@ -24,6 +24,13 @@ async function sha256Base64Url(value) {
 }
 
 async function getOidcDiscovery() {
+  if (appConfig.oidc.authorizationEndpoint && appConfig.oidc.tokenEndpoint) {
+    return {
+      authorization_endpoint: appConfig.oidc.authorizationEndpoint,
+      token_endpoint: appConfig.oidc.tokenEndpoint
+    };
+  }
+
   const response = await fetch(appConfig.oidc.discoveryUrl, { cache: "no-store" });
   if (!response.ok) throw new Error(`OIDC discovery failed (${response.status})`);
   const discovery = await response.json();

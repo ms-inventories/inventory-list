@@ -353,6 +353,10 @@ function getAdminUrl() {
   return `https://admin.${appConfig.baseDomain}/#/admin`;
 }
 
+function getApplicationPortalUrl() {
+  return appConfig.authentikLaunchUrl || getAdminUrl();
+}
+
 function PublicHome() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState({ text: "", isError: false });
@@ -384,11 +388,11 @@ function PublicHome() {
               <span>Login</span>
             </summary>
             <div className="public-login-panel">
-              <a href={getAdminUrl()}>
-                <Settings aria-hidden="true" />
+              <a href={getApplicationPortalUrl()}>
+                <LogIn aria-hidden="true" />
                 <span>
-                  <strong>Inventory login</strong>
-                  <small>For approved inventory group members</small>
+                  <strong>Application portal</strong>
+                  <small>Sign in to continue</small>
                 </span>
               </a>
             </div>

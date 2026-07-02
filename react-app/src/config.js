@@ -20,11 +20,14 @@ export const appConfig = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl(),
   legacyBucketBaseUrl: import.meta.env.VITE_LEGACY_BUCKET_BASE_URL || "https://ms-inventories.s3.us-east-1.amazonaws.com",
   newsletterActionUrl: import.meta.env.VITE_NEWSLETTER_ACTION_URL || "",
+  authentikLaunchUrl: import.meta.env.VITE_AUTHENTIK_LAUNCH_URL || "https://auth.876en.org/if/user/",
   enableDemoFallback: import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== "false",
   enableQaAuth: import.meta.env.VITE_ENABLE_QA_AUTH === "true",
   oidc: {
     clientId: import.meta.env.VITE_OIDC_CLIENT_ID || "inventory-web",
     discoveryUrl: import.meta.env.VITE_OIDC_DISCOVERY_URL || "https://auth.876en.org/application/o/inventory/.well-known/openid-configuration",
+    authorizationEndpoint: import.meta.env.VITE_OIDC_AUTHORIZATION_ENDPOINT || "https://auth.876en.org/application/o/authorize/",
+    tokenEndpoint: import.meta.env.VITE_OIDC_TOKEN_ENDPOINT || "https://auth.876en.org/application/o/token/",
     scope: import.meta.env.VITE_OIDC_SCOPE || "openid profile email groups"
   }
 };
