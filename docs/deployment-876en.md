@@ -72,6 +72,16 @@ Build command: npm run build
 Publish directory: dist
 ```
 
+Environment variables:
+
+```text
+VITE_BASE_DOMAIN=876en.org
+VITE_API_BASE_URL=https://api.876en.org/api
+VITE_OIDC_CLIENT_ID=inventory-web
+VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory/.well-known/openid-configuration
+VITE_OIDC_SCOPE=openid profile email groups
+```
+
 Published routes:
 
 ```text
@@ -186,6 +196,13 @@ inventory-platform-admins
 ```
 
 Tenant roles live in the app database. Authentik proves identity; the app decides tenant access.
+
+Frontend OIDC notes:
+
+- Configure the Authentik application as a public/OIDC client with PKCE.
+- The frontend client ID should match `VITE_OIDC_CLIENT_ID`.
+- Add redirect URIs for the public app/admin hosts you use, starting with `https://admin.876en.org/`. Tenant admin login on platoon subdomains will also need allowed redirect URIs such as `https://1st.876en.org/` and `https://ms.876en.org/`, or an Authentik wildcard/regex redirect rule if you choose to allow tenant-wide callback URLs.
+- Until Authentik is fully wired, the admin UI includes an access-token field so a valid bearer token can be pasted for testing.
 
 ## GitHub Actions
 

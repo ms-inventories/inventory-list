@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ClipboardList,
   Copy,
   CornerDownRight,
   FileUp,
@@ -12,7 +11,8 @@ import {
   Settings,
   X
 } from "lucide-react";
-import { appConfig, getTenantSlugFromHostname } from "./config.js";
+import AdminConsole from "./components/AdminConsole.jsx";
+import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "./config.js";
 import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
 import { getPacketCandidateDisplay, recognizePacketFile } from "./lib/ocr.js";
 
@@ -929,30 +929,6 @@ function ViewerApp() {
   );
 }
 
-function AdminPlaceholder() {
-  return (
-    <div className="app-frame admin-frame">
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">Admin editor</p>
-          <h1>Inventory Admin</h1>
-          <p className="header-copy">The React admin screen will use Authentik and tenant roles next.</p>
-        </div>
-        <div className="header-actions">
-          <a className="btn btn-secondary" href="/">
-            <ClipboardList aria-hidden="true" />
-            <span>View inventory</span>
-          </a>
-        </div>
-      </header>
-
-      <div className="empty-state">
-        The current admin editor is still in the static root app. This React shell keeps the deploy path ready for the Coolify backend work.
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [route, setRoute] = useState({
     path: window.location.pathname.toLowerCase(),
@@ -977,6 +953,6 @@ export default function App() {
 
   const path = route.path;
   const hash = route.hash;
-  if (path.startsWith("/admin") || hash === "#/admin") return <AdminPlaceholder />;
+  if (isAdminHostname() || path.startsWith("/admin") || hash === "#/admin") return <AdminConsole />;
   return <ViewerApp />;
 }

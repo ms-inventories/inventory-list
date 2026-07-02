@@ -7,10 +7,19 @@ function getRequestHost(request) {
   return String(host).split(",")[0].trim().split(":")[0].toLowerCase();
 }
 
+function getTenantSlugHeader(request) {
+  const value = request.headers["x-tenant-slug"];
+  const slug = Array.isArray(value) ? value[0] : value;
+  const normalized = String(slug || "").trim().toLowerCase();
+  return /^[a-z0-9-]+$/.test(normalized) ? normalized : "";
+}
+
 export function tenantSlugFromHost(request) {
   let host = getRequestHost(request);
   const baseDomain = config.baseDomain.toLowerCase();
+  const headerSlug = getTenantSlugHeader(request);
 
+  if (headerSlug && (host === baseDomain || host === `api.${baseDomain}`)) return headerSlug;
   if (host.startsWith("api.")) host = host.slice(4);
   if (host === baseDomain) return "";
 
