@@ -69,6 +69,10 @@ button {
   padding: 28px;
 }
 
+.invite-card {
+  width: min(100%, 520px);
+}
+
 .auth-card h1,
 .app-header h1 {
   margin: 0;
@@ -84,6 +88,58 @@ button {
   margin: 12px 0 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.invite-summary {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+  gap: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  margin-top: 22px;
+  padding: 14px;
+}
+
+.invite-summary span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.invite-summary strong {
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.invite-result {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #c6d7c5;
+  border-radius: var(--radius);
+  background: #eef3eb;
+  margin-top: 22px;
+  padding: 14px;
+}
+
+.invite-result div,
+.invite-result strong,
+.invite-result span {
+  display: block;
+}
+
+.invite-result strong {
+  color: var(--primary-strong);
+  font-size: 1.05rem;
+}
+
+.invite-result span {
+  color: var(--muted);
+  line-height: 1.35;
+  margin-top: 2px;
 }
 
 .eyebrow {

@@ -203,6 +203,7 @@ Frontend OIDC notes:
 - The frontend client ID should match `VITE_OIDC_CLIENT_ID`.
 - Add redirect URIs for the public app/admin hosts you use, starting with `https://admin.876en.org/`. Tenant admin login on platoon subdomains will also need allowed redirect URIs such as `https://1st.876en.org/` and `https://ms.876en.org/`, or an Authentik wildcard/regex redirect rule if you choose to allow tenant-wide callback URLs.
 - Until Authentik is fully wired, the admin UI includes an access-token field so a valid bearer token can be pasted for testing.
+- Tenant invitation links use `https://<tenant>.876en.org/#/accept-invite?token=...`. Authentik only sees the origin/path portion of that redirect URI, so the allowed redirect entry is the tenant root such as `https://1st.876en.org/`; the app restores the invite hash after login.
 
 ## GitHub Actions
 

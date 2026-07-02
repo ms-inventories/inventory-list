@@ -11,6 +11,7 @@ import {
   Settings,
   X
 } from "lucide-react";
+import AcceptInvite from "./components/AcceptInvite.jsx";
 import AdminConsole from "./components/AdminConsole.jsx";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "./config.js";
 import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
@@ -932,14 +933,14 @@ function ViewerApp() {
 export default function App() {
   const [route, setRoute] = useState({
     path: window.location.pathname.toLowerCase(),
-    hash: window.location.hash.toLowerCase()
+    hash: window.location.hash
   });
 
   useEffect(() => {
     const updateRoute = () => {
       setRoute({
         path: window.location.pathname.toLowerCase(),
-        hash: window.location.hash.toLowerCase()
+        hash: window.location.hash
       });
     };
 
@@ -953,6 +954,8 @@ export default function App() {
 
   const path = route.path;
   const hash = route.hash;
-  if (isAdminHostname() || path.startsWith("/admin") || hash === "#/admin") return <AdminConsole />;
+  const normalizedHash = hash.toLowerCase();
+  if (normalizedHash.startsWith("#/accept-invite")) return <AcceptInvite />;
+  if (isAdminHostname() || path.startsWith("/admin") || normalizedHash === "#/admin") return <AdminConsole />;
   return <ViewerApp />;
 }
