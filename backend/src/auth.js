@@ -8,18 +8,40 @@ function getHeaderValue(request, name) {
   return request.headers[name.toLowerCase()];
 }
 
+function uniqueStrings(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function normalizeGroupName(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || raw === "[object object]") return [];
+
+  const normalized = new Set([raw]);
+  const pathName = raw.split("/").filter(Boolean).pop();
+  if (pathName) normalized.add(pathName);
+
+  return [...normalized];
+}
+
 function normalizeGroupList(value) {
   if (Array.isArray(value)) {
-    return value
-      .map(part => String(part).trim().toLowerCase())
-      .filter(Boolean);
+    return uniqueStrings(value.flatMap(part => normalizeGroupList(part)));
   }
 
   if (typeof value === "string") {
-    return value
+    return uniqueStrings(value
       .split(/[,\s]+/)
-      .map(part => part.trim().toLowerCase())
-      .filter(Boolean);
+      .flatMap(part => normalizeGroupName(part)));
+  }
+
+  if (value && typeof value === "object") {
+    return uniqueStrings([
+      value.name,
+      value.group,
+      value.path,
+      value.slug,
+      value.id
+    ].flatMap(part => normalizeGroupList(part)));
   }
 
   return [];
@@ -27,6 +49,24 @@ function normalizeGroupList(value) {
 
 function includesGroup(groups, groupName) {
   return groups.includes(String(groupName || "").toLowerCase());
+}
+
+function includesAnyGroup(groups, groupNames) {
+  return groupNames.some(groupName => includesGroup(groups, groupName));
+}
+
+function getPayloadGroups(payload) {
+  const claimNames = uniqueStrings([
+    config.oidc.groupsClaim,
+    "groups",
+    "group",
+    "roles",
+    "role",
+    "ak_groups",
+    "authentik_groups"
+  ]);
+
+  return uniqueStrings(claimNames.flatMap(name => normalizeGroupList(payload?.[name])));
 }
 
 function getDiscoveryUrl() {
@@ -56,9 +96,12 @@ async function verifyBearerToken(token) {
   if (config.oidc.audience) verifyOptions.audience = config.oidc.audience;
 
   const { payload } = await jwtVerify(token, jwks, verifyOptions);
-  const groups = normalizeGroupList(payload[config.oidc.groupsClaim]);
+  const groups = getPayloadGroups(payload);
   const email = String(payload.email || "").toLowerCase();
-  const isPlatformAdmin = includesGroup(groups, config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(email);
+  const isPlatformAdmin = includesAnyGroup(groups, [config.oidc.platformAdminGroup, "876en-admins"])
+    || config.platformAdminEmails.includes(email);
+  const isFrgAdmin = isPlatformAdmin
+    || includesAnyGroup(groups, [config.oidc.frgAdminGroup, "876en-frg-admins"]);
 
   return {
     subject: String(payload.sub || ""),
@@ -66,7 +109,7 @@ async function verifyBearerToken(token) {
     displayName: String(payload.name || payload.preferred_username || payload.email || ""),
     groups,
     isPlatformAdmin,
-    isFrgAdmin: isPlatformAdmin || includesGroup(groups, config.oidc.frgAdminGroup),
+    isFrgAdmin,
     claims: payload
   };
 }
@@ -80,14 +123,18 @@ function getDevIdentity(request) {
 
   const groups = normalizeGroupList(getHeaderValue(request, "x-dev-groups"));
   const normalizedEmail = String(email).toLowerCase();
+  const isPlatformAdmin = includesAnyGroup(groups, [config.oidc.platformAdminGroup, "876en-admins"])
+    || config.platformAdminEmails.includes(normalizedEmail);
+  const isFrgAdmin = isPlatformAdmin
+    || includesAnyGroup(groups, [config.oidc.frgAdminGroup, "876en-frg-admins"]);
 
   return {
     subject: String(subject),
     email: normalizedEmail,
     displayName: String(getHeaderValue(request, "x-dev-name") || email),
     groups,
-    isPlatformAdmin: includesGroup(groups, config.oidc.platformAdminGroup) || config.platformAdminEmails.includes(normalizedEmail),
-    isFrgAdmin: includesGroup(groups, config.oidc.platformAdminGroup) || includesGroup(groups, config.oidc.frgAdminGroup) || config.platformAdminEmails.includes(normalizedEmail),
+    isPlatformAdmin,
+    isFrgAdmin,
     claims: { dev: true }
   };
 }

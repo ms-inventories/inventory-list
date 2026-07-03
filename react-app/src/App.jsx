@@ -368,11 +368,17 @@ function getTenantUrl(slug) {
   return `https://${slug}.${appConfig.baseDomain}/#/admin`;
 }
 
+function normalizeGroupLabels(groups) {
+  return [...new Set((groups || [])
+    .map(group => String(group || "").trim().toLowerCase())
+    .filter(Boolean))]
+    .sort();
+}
+
 function getWorkspaceSlugsFromGroups(groups) {
   const reserved = new Set(["876en", "876en-admins", "876en-frg-admins", "876en-platoon-admin"]);
 
-  return [...new Set((groups || [])
-    .map(group => String(group || "").trim().toLowerCase())
+  return [...new Set(normalizeGroupLabels(groups)
     .filter(group => group.startsWith("876en-") && !reserved.has(group))
     .map(group => group.replace(/^876en-/, ""))
     .filter(Boolean))]
@@ -388,6 +394,8 @@ function LaunchRouter() {
   const [status, setStatus] = useState({ text: "Checking your access...", isError: false });
   const [workspaces, setWorkspaces] = useState([]);
   const [me, setMe] = useState(null);
+  const groupLabels = normalizeGroupLabels(me?.groups);
+  const signedInLabel = me?.user?.display_name || me?.user?.email || "Signed in";
 
   useEffect(() => {
     let ignore = false;
@@ -417,9 +425,10 @@ function LaunchRouter() {
         if (ignore) return;
 
         setMe(data);
-        const slugs = getWorkspaceSlugsFromGroups(data.groups);
+        const groups = normalizeGroupLabels(data.groups);
+        const slugs = getWorkspaceSlugsFromGroups(groups);
 
-        if (data.isPlatformAdmin) {
+        if (data.isPlatformAdmin || groups.includes("876en-admins")) {
           window.location.assign(getAdminUrl());
           return;
         }
@@ -435,7 +444,7 @@ function LaunchRouter() {
           return;
         }
 
-        if (data.isFrgAdmin) {
+        if (data.isFrgAdmin || groups.includes("876en-frg-admins")) {
           setStatus({
             text: "FRG publishing access is ready, but the editor screen is not wired into this launcher yet.",
             isError: false
@@ -469,8 +478,8 @@ function LaunchRouter() {
 
         {me ? (
           <div className="launch-profile">
-            <span className="badge strong">{me.user?.display_name || me.user?.email}</span>
-            {me.groups?.length ? <span className="badge">{me.groups.length} groups</span> : null}
+            <span className="badge strong">{signedInLabel}</span>
+            <span className="badge">{groupLabels.length ? `${groupLabels.length} groups` : "No groups in token"}</span>
           </div>
         ) : null}
 
@@ -486,6 +495,26 @@ function LaunchRouter() {
         ) : null}
 
         <StatusText status={status} />
+
+        {status.isError && me ? (
+          <details className="launch-access-details">
+            <summary>Access details</summary>
+            <dl>
+              <div>
+                <dt>Account</dt>
+                <dd>{signedInLabel}</dd>
+              </div>
+              <div>
+                <dt>Platform admin</dt>
+                <dd>{me.isPlatformAdmin ? "yes" : "no"}</dd>
+              </div>
+              <div>
+                <dt>Groups from token</dt>
+                <dd>{groupLabels.length ? groupLabels.join(", ") : "none"}</dd>
+              </div>
+            </dl>
+          </details>
+        ) : null}
       </section>
     </div>
   );
