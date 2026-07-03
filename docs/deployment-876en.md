@@ -88,6 +88,8 @@ VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
 VITE_OIDC_SCOPE=openid profile email groups
 ```
 
+Do not set the production frontend to `VITE_API_BASE_URL=/api` unless you have a working path route from every frontend hostname to the backend. With the current Cloudflare/Coolify setup, use `https://api.876en.org/api`; otherwise `https://876en.org/api/me` can return the React app HTML instead of backend JSON.
+
 Published routes:
 
 ```text

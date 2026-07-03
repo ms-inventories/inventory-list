@@ -37,6 +37,10 @@ function buildApiUrl(path) {
   return `${base}${cleanPath}`;
 }
 
+function getResponsePreview(text) {
+  return String(text || "").replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
 export async function apiRequest(path, { method = "GET", token = "", tenantSlug = "", body } = {}) {
   const headers = {
     Accept: "application/json"
@@ -69,7 +73,11 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
     try {
       data = JSON.parse(text);
     } catch {
-      data = { raw: text };
+      throw new ApiError(
+        "API returned a non-JSON response. Check VITE_API_BASE_URL and Cloudflare/Coolify routing.",
+        response.status,
+        { raw: getResponsePreview(text), url: buildApiUrl(path) }
+      );
     }
   }
 
