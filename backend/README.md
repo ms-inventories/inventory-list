@@ -14,7 +14,7 @@ It is intentionally separate from the static GitHub Pages app in the repository 
   - `contributor`: NCO/soldier who can submit findings and evidence.
   - `viewer`: read-only access.
 - Track inventory sessions, session items, submissions, photos, review requests, and audit events.
-- Bootstrap platform access with either an Authentik admin group or `PLATFORM_ADMIN_EMAILS`.
+- Bootstrap platform access with an Authentik admin group, `PLATFORM_ADMIN_EMAILS`, or `PLATFORM_ADMIN_SUBJECTS`.
 - Let platform admins create platoons and assign the first platoon admin.
 - Let platoon admins invite contributors, viewers, or additional platoon admins.
 - Derive day-to-day tenant access from Authentik groups:
@@ -73,6 +73,7 @@ Platform admin access is granted when either condition is true:
 
 - The Authentik token includes the `876en-admins` group.
 - The authenticated email is listed in `PLATFORM_ADMIN_EMAILS`.
+- The Authentik/OIDC subject is listed in `PLATFORM_ADMIN_SUBJECTS`.
 
 Tenant access can also come directly from Authentik. A user in `876en-ms` can work the MS tenant as a contributor. A user in both `876en-ms` and `876en-platoon-admin` can administer the MS tenant. A user in `876en-admins` can jump into every tenant for support.
 

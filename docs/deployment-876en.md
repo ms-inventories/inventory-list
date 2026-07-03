@@ -164,6 +164,7 @@ Backend env:
 ```text
 PUBLIC_APP_URL=https://876en.org
 PLATFORM_ADMIN_EMAILS=<your root/admin email>
+PLATFORM_ADMIN_SUBJECTS=<optional oidc subject allowlist>
 SMTP_HOST=smtp-relay.brevo.com
 SMTP_PORT=587
 SMTP_SECURE=false
@@ -199,6 +200,7 @@ OIDC_AUDIENCE=<authentik inventory client id>
 OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 OIDC_GROUPS_CLAIM=groups
 PLATFORM_ADMIN_GROUP=876en-admins
+PLATFORM_ADMIN_SUBJECTS=<optional oidc subject allowlist>
 FRG_ADMIN_GROUP=876en-frg-admins
 TENANT_ADMIN_GROUP=876en-platoon-admin
 TENANT_GROUP_PREFIX=876en-
@@ -215,7 +217,7 @@ App groups:
 
 Tenant access can come from Authentik groups or app database memberships. A user in `876en-ms` can work the MS tenant. A user in both `876en-ms` and `876en-platoon-admin` can administer the MS tenant. A user in `876en-admins` can jump into every tenant for support.
 
-Production requires `PLATFORM_ADMIN_EMAILS` even if you also use the `876en-admins` group. Put your first supply/root admin email here, log in once, create the first platoons, then you can keep or narrow the allowlist after Authentik groups are verified.
+Production requires either `PLATFORM_ADMIN_EMAILS` or `PLATFORM_ADMIN_SUBJECTS` even if you also use the `876en-admins` group. Put your first supply/root admin email here when Authentik emits an email claim. If the launcher shows `No groups in token` or the email is not what you expected, expand `Access details`, copy the `Subject`, set `PLATFORM_ADMIN_SUBJECTS` to that value, redeploy the backend, and sign in again. This is the bootstrap/support escape hatch while Authentik group claims are being polished.
 
 Frontend OIDC notes:
 

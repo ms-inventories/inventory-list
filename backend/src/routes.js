@@ -657,6 +657,11 @@ export function registerRoutes(app) {
 
     return {
       user: context.user,
+      identity: {
+        subject: context.identity.subject,
+        email: context.identity.email,
+        displayName: context.identity.displayName
+      },
       groups: context.identity.groups,
       isPlatformAdmin: context.identity.isPlatformAdmin,
       isFrgAdmin: context.identity.isFrgAdmin,

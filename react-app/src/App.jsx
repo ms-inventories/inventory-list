@@ -395,7 +395,12 @@ function LaunchRouter() {
   const [workspaces, setWorkspaces] = useState([]);
   const [me, setMe] = useState(null);
   const groupLabels = normalizeGroupLabels(me?.groups);
-  const signedInLabel = me?.user?.display_name || me?.user?.email || "Signed in";
+  const signedInLabel = me?.user?.display_name
+    || me?.user?.email
+    || me?.identity?.displayName
+    || me?.identity?.email
+    || "Signed in";
+  const identitySubject = me?.identity?.subject || me?.user?.authentik_subject || "";
 
   useEffect(() => {
     let ignore = false;
@@ -503,6 +508,14 @@ function LaunchRouter() {
               <div>
                 <dt>Account</dt>
                 <dd>{signedInLabel}</dd>
+              </div>
+              <div>
+                <dt>Subject</dt>
+                <dd>{identitySubject || "not provided"}</dd>
+              </div>
+              <div>
+                <dt>Email</dt>
+                <dd>{me.identity?.email || me.user?.email || "not provided"}</dd>
               </div>
               <div>
                 <dt>Platform admin</dt>

@@ -14,6 +14,7 @@ export const config = {
   baseDomain: String(process.env.BASE_DOMAIN || "876en.org").toLowerCase(),
   publicAppUrl: String(process.env.PUBLIC_APP_URL || `https://${process.env.BASE_DOMAIN || "876en.org"}`).replace(/\/+$/, ""),
   platformAdminEmails: splitCsv(process.env.PLATFORM_ADMIN_EMAILS).map(email => email.toLowerCase()),
+  platformAdminSubjects: splitCsv(process.env.PLATFORM_ADMIN_SUBJECTS).map(subject => subject.toLowerCase()),
   allowDevAuth: String(process.env.ALLOW_DEV_AUTH || "").toLowerCase() === "true",
   corsOrigins: splitCsv(process.env.CORS_ORIGINS),
   oidc: {
@@ -49,7 +50,9 @@ export function assertProductionConfig() {
   if (!config.databaseUrl) missing.push("DATABASE_URL");
   if (!config.oidc.issuer) missing.push("OIDC_ISSUER");
   if (!config.oidc.audience) missing.push("OIDC_AUDIENCE");
-  if (!config.platformAdminEmails.length) missing.push("PLATFORM_ADMIN_EMAILS");
+  if (!config.platformAdminEmails.length && !config.platformAdminSubjects.length) {
+    missing.push("PLATFORM_ADMIN_EMAILS or PLATFORM_ADMIN_SUBJECTS");
+  }
 
   if (missing.length) {
     throw new Error(`Missing required production config: ${missing.join(", ")}`);

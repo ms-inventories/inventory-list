@@ -149,6 +149,8 @@ async function getSupplementalIdPayload(accessPayload, idToken) {
 
 async function verifyBearerToken(token, idToken = "") {
   const accessPayload = await verifyJwt(token);
+  const subject = String(accessPayload.sub || "");
+  const normalizedSubject = subject.toLowerCase();
   const idPayload = await getSupplementalIdPayload(accessPayload, idToken);
   let userinfoPayload = null;
 
@@ -162,12 +164,13 @@ async function verifyBearerToken(token, idToken = "") {
 
   const email = getIdentityText(payloads, ["email", "preferred_username"]).toLowerCase();
   const isPlatformAdmin = includesAnyGroup(groups, [config.oidc.platformAdminGroup, "876en-admins"])
-    || config.platformAdminEmails.includes(email);
+    || config.platformAdminEmails.includes(email)
+    || config.platformAdminSubjects.includes(normalizedSubject);
   const isFrgAdmin = isPlatformAdmin
     || includesAnyGroup(groups, [config.oidc.frgAdminGroup, "876en-frg-admins"]);
 
   return {
-    subject: String(accessPayload.sub || ""),
+    subject,
     email,
     displayName: getIdentityText(payloads, ["name", "preferred_username", "email"]),
     groups,
@@ -185,9 +188,11 @@ function getDevIdentity(request) {
   if (!subject || !email) return null;
 
   const groups = normalizeGroupList(getHeaderValue(request, "x-dev-groups"));
+  const normalizedSubject = String(subject).toLowerCase();
   const normalizedEmail = String(email).toLowerCase();
   const isPlatformAdmin = includesAnyGroup(groups, [config.oidc.platformAdminGroup, "876en-admins"])
-    || config.platformAdminEmails.includes(normalizedEmail);
+    || config.platformAdminEmails.includes(normalizedEmail)
+    || config.platformAdminSubjects.includes(normalizedSubject);
   const isFrgAdmin = isPlatformAdmin
     || includesAnyGroup(groups, [config.oidc.frgAdminGroup, "876en-frg-admins"]);
 
