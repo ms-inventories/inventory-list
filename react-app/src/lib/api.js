@@ -1,4 +1,5 @@
 import { appConfig } from "../config.js";
+import { readAuthSession } from "./auth.js";
 
 const QA_IDENTITY_KEY = "inventory.qa.identity";
 
@@ -42,6 +43,8 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
   };
 
   if (token) headers.Authorization = `Bearer ${token}`;
+  const session = token ? readAuthSession() : null;
+  if (session?.accessToken === token && session.idToken) headers["X-ID-Token"] = session.idToken;
   if (tenantSlug) headers["X-Tenant-Slug"] = tenantSlug;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 

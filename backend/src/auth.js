@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { query } from "./db.js";
 
 let jwksPromise = null;
+let discoveryPromise = null;
 
 function getHeaderValue(request, name) {
   return request.headers[name.toLowerCase()];
@@ -75,13 +76,24 @@ function getDiscoveryUrl() {
   return `${issuer}/.well-known/openid-configuration`;
 }
 
-async function getJwks() {
-  if (!jwksPromise) {
-    jwksPromise = (async () => {
+async function getDiscovery() {
+  if (!discoveryPromise) {
+    discoveryPromise = (async () => {
       const response = await fetch(getDiscoveryUrl());
       if (!response.ok) throw new Error(`OIDC discovery failed (${response.status})`);
       const discovery = await response.json();
       if (!discovery.jwks_uri) throw new Error("OIDC discovery did not include jwks_uri");
+      return discovery;
+    })();
+  }
+
+  return discoveryPromise;
+}
+
+async function getJwks() {
+  if (!jwksPromise) {
+    jwksPromise = (async () => {
+      const discovery = await getDiscovery();
       return createRemoteJWKSet(new URL(discovery.jwks_uri));
     })();
   }
@@ -89,28 +101,79 @@ async function getJwks() {
   return jwksPromise;
 }
 
-async function verifyBearerToken(token) {
+async function verifyJwt(token) {
   const jwks = await getJwks();
   const verifyOptions = {};
   if (config.oidc.issuer) verifyOptions.issuer = config.oidc.issuer;
   if (config.oidc.audience) verifyOptions.audience = config.oidc.audience;
 
   const { payload } = await jwtVerify(token, jwks, verifyOptions);
-  const groups = getPayloadGroups(payload);
-  const email = String(payload.email || "").toLowerCase();
+  return payload;
+}
+
+async function getUserinfo(token) {
+  const discovery = await getDiscovery();
+  if (!discovery.userinfo_endpoint) return null;
+
+  const response = await fetch(discovery.userinfo_endpoint, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) return null;
+  return response.json();
+}
+
+function getIdentityText(payloads, keys) {
+  for (const payload of payloads) {
+    for (const key of keys) {
+      const value = payload?.[key];
+      if (value) return String(value);
+    }
+  }
+  return "";
+}
+
+async function getSupplementalIdPayload(accessPayload, idToken) {
+  if (!idToken) return null;
+
+  try {
+    const idPayload = await verifyJwt(idToken);
+    return idPayload.sub && idPayload.sub === accessPayload.sub ? idPayload : null;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyBearerToken(token, idToken = "") {
+  const accessPayload = await verifyJwt(token);
+  const idPayload = await getSupplementalIdPayload(accessPayload, idToken);
+  let userinfoPayload = null;
+
+  let groups = getPayloadGroups(accessPayload);
+  if (!groups.length || !accessPayload.email) {
+    userinfoPayload = await getUserinfo(token);
+  }
+
+  const payloads = [accessPayload, idPayload, userinfoPayload].filter(Boolean);
+  groups = uniqueStrings(payloads.flatMap(payload => getPayloadGroups(payload)));
+
+  const email = getIdentityText(payloads, ["email", "preferred_username"]).toLowerCase();
   const isPlatformAdmin = includesAnyGroup(groups, [config.oidc.platformAdminGroup, "876en-admins"])
     || config.platformAdminEmails.includes(email);
   const isFrgAdmin = isPlatformAdmin
     || includesAnyGroup(groups, [config.oidc.frgAdminGroup, "876en-frg-admins"]);
 
   return {
-    subject: String(payload.sub || ""),
+    subject: String(accessPayload.sub || ""),
     email,
-    displayName: String(payload.name || payload.preferred_username || payload.email || ""),
+    displayName: getIdentityText(payloads, ["name", "preferred_username", "email"]),
     groups,
     isPlatformAdmin,
     isFrgAdmin,
-    claims: payload
+    claims: accessPayload
   };
 }
 
@@ -147,7 +210,7 @@ export async function authenticate(request) {
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match) return null;
 
-  return verifyBearerToken(match[1]);
+  return verifyBearerToken(match[1], getHeaderValue(request, "x-id-token") || "");
 }
 
 export async function ensureUser(identity) {
