@@ -46,6 +46,8 @@ See [docs/deployment-876en.md](docs/deployment-876en.md) for the planned `876en.
 
 See [docs/coolify-labels.md](docs/coolify-labels.md) for frontend/backend wildcard label templates.
 
+See [docs/ui-task-list.md](docs/ui-task-list.md) for the current UI backlog, including dead buttons, confusing links, and unfinished flows.
+
 ## Monorepo Commands
 
 ```bash
