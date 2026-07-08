@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Bell,
   Building2,
   Camera,
   CheckCircle2,
   Copy,
   ClipboardList,
   ClipboardPlus,
+  CalendarDays,
+  ChevronDown,
   Download,
   FileText,
   FileUp,
+  Home,
   ListChecks,
   LogIn,
   LogOut,
   MailPlus,
+  Menu,
   MessageSquare,
   Plus,
   Printer,
@@ -2083,17 +2088,246 @@ function PlatformPanel({ token }) {
   );
 }
 
-function TenantPanel({ token, tenantSlug, me }) {
+function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessions, onOpenReview }) {
+  const [sessions, setSessions] = useState([]);
+  const [pendingItems, setPendingItems] = useState([]);
+  const [submissions, setSubmissions] = useState([]);
+  const [status, setStatus] = useState({ text: "Loading dashboard...", isError: false });
+
+  async function loadDashboard() {
+    try {
+      setStatus({ text: "Loading dashboard...", isError: false });
+      const sessionData = await apiRequest("/inventory/sessions", { token, tenantSlug });
+      const loadedSessions = sortSessionsByAttention(sessionData.sessions || []);
+      const openSessions = loadedSessions.filter(session => session.status !== "closed");
+      const detailTargets = openSessions.slice(0, 3);
+      const detailResults = await Promise.all(
+        detailTargets.map(async session => ({
+          session,
+          detail: await apiRequest(`/inventory/sessions/${session.id}`, { token, tenantSlug })
+        }))
+      );
+      const rows = detailResults.flatMap(({ session, detail }) => {
+        const rowSession = detail.session || session;
+        return (detail.items || [])
+          .filter(item => !sessionItemIsComplete(item))
+          .sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b))
+          .slice(0, 4)
+          .map(item => ({ ...item, session: rowSession }));
+      });
+      let reviewRows = [];
+      if (canManage) {
+        const reviewData = await apiRequest("/inventory/review-queue", { token, tenantSlug });
+        reviewRows = reviewData.submissions || [];
+      }
+      setSessions(loadedSessions);
+      setPendingItems(rows.slice(0, 5));
+      setSubmissions(reviewRows);
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  useEffect(() => {
+    loadDashboard();
+  }, [tenantSlug, token, canManage]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const openSessions = sessions.filter(session => session.status !== "closed");
+  const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
+  const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
+  const foundRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
+  const overallProgress = totalRows ? Math.round((foundRows / totalRows) * 100) : 0;
+
+  function rowMatches(values) {
+    if (!normalizedQuery) return true;
+    return values
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery);
+  }
+
+  function itemTitle(item) {
+    return item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Packet row";
+  }
+
+  function itemLocation(item) {
+    return item.locationHint || item.inventoryItem?.currentLocation || "No location yet";
+  }
+
+  const visiblePendingItems = pendingItems.filter(item => rowMatches([
+    itemTitle(item),
+    item.packetLine,
+    itemLocation(item),
+    item.status,
+    item.session?.name
+  ]));
+  const visibleSubmissions = submissions.filter(submission => rowMatches([
+    submission.sessionItem?.packetLine,
+    submission.session?.name,
+    submission.submittedByName,
+    submission.submittedByEmail,
+    submission.locationText,
+    submission.serialNumber,
+    submission.note,
+    submission.reviewNote
+  ])).slice(0, 5);
+
+  return (
+    <div className="leader-dashboard">
+      <div className="leader-page-heading">
+        <div>
+          <h1>Leader Dashboard</h1>
+          <p>Manage inventories, review submissions, and guide your platoon.</p>
+        </div>
+        <div className="leader-page-actions">
+          {canManage ? (
+            <>
+              <button className="btn btn-primary" type="button" onClick={onOpenSessions}>
+                <Plus aria-hidden="true" />
+                <span>Start new inventory</span>
+              </button>
+              <button className="btn btn-secondary" type="button" onClick={onOpenSessions}>
+                <FileUp aria-hidden="true" />
+                <span>Upload packet</span>
+                <ChevronDown aria-hidden="true" />
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-primary" type="button" onClick={onOpenSessions}>
+              <ListChecks aria-hidden="true" />
+              <span>Open inventory</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="leader-metric-strip" aria-label="Inventory overview">
+        <div>
+          <strong>{openSessions.length}</strong>
+          <span>Open sessions</span>
+        </div>
+        <div>
+          <strong>{pendingItems.length}</strong>
+          <span>Pending rows</span>
+        </div>
+        <div>
+          <strong>{reviewRowCount}</strong>
+          <span>Needs review</span>
+        </div>
+        <div>
+          <strong>{overallProgress}%</strong>
+          <span>Found</span>
+        </div>
+      </div>
+
+      <div className="leader-dashboard-grid">
+        <section className="leader-card">
+          <div className="leader-card-header">
+            <span className="leader-card-icon">
+              <Search aria-hidden="true" />
+            </span>
+            <div>
+              <h2>Pending</h2>
+              <p>Items that still need to be found.</p>
+            </div>
+            <button className="btn btn-secondary btn-small" type="button" onClick={onOpenSessions}>
+              <span>View all</span>
+            </button>
+          </div>
+
+          <div className="leader-table">
+            {visiblePendingItems.length ? visiblePendingItems.map(item => {
+              const imageUrls = getInventoryItemImages(item.inventoryItem);
+              return (
+                <article className="leader-table-row" key={item.id}>
+                  <div className="leader-item-cell">
+                    <span className="leader-thumb">
+                      {imageUrls[0] ? <img src={imageUrls[0]} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
+                    </span>
+                    <div>
+                      <strong>{itemTitle(item)}</strong>
+                      <span>{item.session?.name || "Inventory session"}</span>
+                    </div>
+                  </div>
+                  <span>{itemLocation(item)}</span>
+                  <span className={`status-pill ${item.status}`}>{item.status}</span>
+                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenSessions}>
+                    <span>Open</span>
+                  </button>
+                </article>
+              );
+            }) : (
+              <EmptyPanel title="Nothing pending" body="Open a session to add packet rows or review completed work." />
+            )}
+          </div>
+        </section>
+
+        <section className="leader-card">
+          <div className="leader-card-header">
+            <span className="leader-card-icon">
+              <ClipboardList aria-hidden="true" />
+            </span>
+            <div>
+              <h2>Review</h2>
+              <p>Leader approval required.</p>
+            </div>
+            {canManage ? (
+              <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
+                <span>View all</span>
+              </button>
+            ) : null}
+          </div>
+
+          <div className="leader-table">
+            {canManage && visibleSubmissions.length ? visibleSubmissions.map(submission => {
+              const photo = submission.photos?.[0]?.url;
+              return (
+                <article className="leader-table-row review-row" key={submission.id}>
+                  <div className="leader-item-cell">
+                    <span className="leader-thumb">
+                      {photo ? <img src={photo} alt="" loading="lazy" /> : <Camera aria-hidden="true" />}
+                    </span>
+                    <div>
+                      <strong>{submission.sessionItem?.packetLine || "Submitted proof"}</strong>
+                      <span>{submission.submittedByName || submission.submittedByEmail || "Submitted"}</span>
+                    </div>
+                  </div>
+                  <span>{submission.reviewNote || submission.note || formatReviewState(submission.reviewState)}</span>
+                  <span className={`status-pill ${submission.reviewState}`}>{formatReviewState(submission.reviewState)}</span>
+                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
+                    <span>Review</span>
+                  </button>
+                </article>
+              );
+            }) : (
+              <EmptyPanel
+                title={canManage ? "No proof waiting" : "Review is leader-only"}
+                body={canManage ? "New submissions will appear here." : "Open inventory sessions to see assigned work."}
+              />
+            )}
+          </div>
+        </section>
+      </div>
+
+      <StatusLine status={status} />
+    </div>
+  );
+}
+
+function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const isTenantAdmin = Boolean(me?.isPlatformAdmin || me?.membership?.role === "tenant_admin");
   const canSubmitProof = Boolean(isTenantAdmin || me?.membership?.role === "contributor");
-  const tabs = isTenantAdmin
-    ? [
-        ["tasks", "Tasks"],
-        ["review", "Review"],
-        ["people", "People"]
-      ]
-    : [["tasks", "Tasks"]];
-  const [activeTab, setActiveTab] = useState("tasks");
+  const navItems = [
+    { id: "dashboard", label: "Dashboard", icon: Home },
+    { id: "tasks", label: "Inventory Sessions", icon: CalendarDays },
+    ...(isTenantAdmin ? [{ id: "review", label: "Review Queue", icon: ClipboardList }] : []),
+    ...(isTenantAdmin ? [{ id: "people", label: "People & Invites", icon: Users }] : [])
+  ];
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [leaderQuery, setLeaderQuery] = useState("");
   const [tenant, setTenant] = useState(null);
   const [members, setMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
@@ -2171,35 +2405,102 @@ function TenantPanel({ token, tenantSlug, me }) {
   }
 
   return (
-    <>
-      <nav className="workspace-tabs" aria-label="Workspace views">
-        {tabs.map(([id, label]) => (
-          <button
-            className={activeTab === id ? "active" : ""}
-            type="button"
-            key={id}
-            onClick={() => setActiveTab(id)}
-          >
-            {label}
+    <div className="leader-shell">
+      <aside className="leader-sidebar">
+        <div className="leader-brand">
+          <button className="leader-menu-button" type="button" aria-label="Menu">
+            <Menu aria-hidden="true" />
           </button>
-        ))}
-      </nav>
+          <strong>876 Inventory</strong>
+        </div>
 
-      {activeTab === "tasks" ? (
-        <SessionPanel
-          token={token}
-          tenantSlug={tenantSlug}
-          canManage={isTenantAdmin}
-          canSubmit={canSubmitProof}
-        />
-      ) : null}
+        <nav className="leader-nav" aria-label="Platoon workspace">
+          {navItems.map(item => {
+            const Icon = item.icon;
+            return (
+              <button
+                className={activeTab === item.id ? "active" : ""}
+                type="button"
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+              >
+                <Icon aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
 
-      {activeTab === "review" && isTenantAdmin ? (
-        <ReviewPanel token={token} tenantSlug={tenantSlug} />
-      ) : null}
+        <div className="leader-system-card">
+          <ShieldCheck aria-hidden="true" />
+          <div>
+            <strong>Workspace active</strong>
+            <span>{tenant?.name || `${tenantSlug}.${appConfig.baseDomain}`}</span>
+          </div>
+        </div>
+      </aside>
 
-      {activeTab === "people" && isTenantAdmin ? (
-        <div className="admin-grid people-grid">
+      <main className="leader-main">
+        <header className="leader-topbar">
+          <label className="leader-search">
+            <Search aria-hidden="true" />
+            <input
+              value={leaderQuery}
+              placeholder="Search items, sessions, locations..."
+              onChange={e => setLeaderQuery(e.target.value)}
+            />
+          </label>
+          <div className="leader-user-actions">
+            <button className="icon-button" type="button" onClick={() => { loadTenant(); onRefresh?.(); }} aria-label="Refresh">
+              <RefreshCw aria-hidden="true" />
+            </button>
+            <button className="icon-button" type="button" aria-label="Notifications">
+              <Bell aria-hidden="true" />
+            </button>
+            <div className="leader-user-card">
+              <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "U").slice(0, 1).toUpperCase()}</span>
+              <div>
+                <strong>{me?.user?.display_name || me?.user?.email || "Signed in"}</strong>
+                <span>{me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member"}</span>
+              </div>
+              <ChevronDown aria-hidden="true" />
+            </div>
+            <button className="btn btn-secondary btn-small" type="button" onClick={onLogout}>
+              <LogOut aria-hidden="true" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </header>
+
+        <div className="leader-content">
+          <StatusLine status={status} />
+
+          {activeTab === "dashboard" ? (
+            <LeaderOverviewPanel
+              token={token}
+              tenantSlug={tenantSlug}
+              query={leaderQuery}
+              canManage={isTenantAdmin}
+              onOpenSessions={() => setActiveTab("tasks")}
+              onOpenReview={() => setActiveTab("review")}
+            />
+          ) : null}
+
+          {activeTab === "tasks" ? (
+            <SessionPanel
+              token={token}
+              tenantSlug={tenantSlug}
+              canManage={isTenantAdmin}
+              canSubmit={canSubmitProof}
+            />
+          ) : null}
+
+          {activeTab === "review" && isTenantAdmin ? (
+            <ReviewPanel token={token} tenantSlug={tenantSlug} />
+          ) : null}
+
+          {activeTab === "people" && isTenantAdmin ? (
+            <div className="admin-grid people-grid">
         <section className="admin-card">
           <div className="admin-card-heading">
             <span className="admin-icon">
@@ -2317,8 +2618,10 @@ function TenantPanel({ token, tenantSlug, me }) {
           </div>
         </section>
       </div>
-      ) : null}
-    </>
+          ) : null}
+        </div>
+      </main>
+    </div>
   );
 }
 
@@ -2444,10 +2747,11 @@ export default function AdminConsole() {
   const canUseTenant = Boolean(
     tenantSlug && (me?.isPlatformAdmin || ["tenant_admin", "contributor", "viewer"].includes(me?.membership?.role))
   );
+  const isTenantDashboard = Boolean(token && me && !isPlatformPage && canUseTenant);
 
   return (
-    <div className="app-frame admin-frame">
-      <AdminHeader me={me} tenantSlug={tenantSlug} onRefresh={() => loadMe()} onLogout={logout} />
+    <div className={isTenantDashboard ? "leader-app" : "app-frame admin-frame"}>
+      {!isTenantDashboard ? <AdminHeader me={me} tenantSlug={tenantSlug} onRefresh={() => loadMe()} onLogout={logout} /> : null}
 
       {!token || !me ? (
         <AuthPanel
@@ -2460,19 +2764,21 @@ export default function AdminConsole() {
         />
       ) : (
         <>
+          {!isTenantDashboard ? (
           <section className="admin-profile-strip">
             <span className="badge strong">{me.user?.display_name || me.user?.email}</span>
             {me.isPlatformAdmin ? <span className="badge">Platform admin</span> : null}
             {me.isFrgAdmin && !me.isPlatformAdmin ? <span className="badge">FRG admin</span> : null}
             {me.membership?.role ? <span className="badge">{formatRole(me.membership.role)}</span> : null}
           </section>
+          ) : null}
 
           {isPlatformPage ? (
             canUsePlatform
               ? <PlatformPanel token={token} />
               : <EmptyPanel title="Platform access required" body="This account can sign in, but it is not a root admin." />
           ) : canUseTenant ? (
-            <TenantPanel token={token} tenantSlug={tenantSlug} me={me} />
+            <TenantPanel token={token} tenantSlug={tenantSlug} me={me} onRefresh={() => loadMe()} onLogout={logout} />
           ) : (
             <EmptyPanel title="Platoon admin access required" body="This account is not assigned as a platoon admin here." />
           )}
