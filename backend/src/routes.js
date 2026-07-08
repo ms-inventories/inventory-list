@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { authContext } from "./auth.js";
+import { authContext, exchangeOidcCode } from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { sendProofRequestEmail, sendProofSubmittedEmail, sendTenantInviteEmail } from "./email.js";
@@ -649,8 +649,36 @@ function registerErrorHandler(app) {
   });
 }
 
+function isAllowedOidcRedirectUri(value) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const baseDomain = config.baseDomain.toLowerCase();
+    const isLocal = ["localhost", "127.0.0.1"].includes(hostname);
+    const isAppDomain = url.protocol === "https:" && (hostname === baseDomain || hostname.endsWith(`.${baseDomain}`));
+    return (isAppDomain || isLocal) && url.pathname === "/";
+  } catch {
+    return false;
+  }
+}
+
 export function registerRoutes(app) {
   route(app, "get", "/health", async () => ({ ok: true }));
+
+  route(app, "post", "/api/auth/oidc/token", async (request, reply) => {
+    const body = z.object({
+      code: z.string().min(1),
+      codeVerifier: z.string().min(32),
+      redirectUri: z.string().url()
+    }).parse(request.body);
+
+    if (!isAllowedOidcRedirectUri(body.redirectUri)) {
+      reply.code(400);
+      throw new Error("OIDC redirect URI is not allowed");
+    }
+
+    return exchangeOidcCode(body);
+  });
 
   route(app, "get", "/api/me", async (request, reply) => {
     const context = await requireContext(request, reply);

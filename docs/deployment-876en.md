@@ -180,7 +180,7 @@ Implemented email events:
 
 - tenant invite email
 - LT/platoon-admin notification when an NCO submits a finding
-- NCO notification when the LT requests more proof
+- NCO notification when the platoon admin requests more proof
 
 The proof emails are best-effort. The API saves the inventory action first, then sends mail in the background so SMTP downtime does not block field work.
 
@@ -199,6 +199,7 @@ Backend env:
 ```text
 OIDC_ISSUER=https://auth.876en.org/application/o/inventory-web/
 OIDC_AUDIENCE=<authentik inventory client id>
+OIDC_CLIENT_ID=<authentik inventory client id>
 OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 OIDC_GROUPS_CLAIM=groups
 PLATFORM_ADMIN_GROUP=876en-admins
@@ -242,19 +243,19 @@ The first React tenant-admin session flow is live:
 - view session progress and row status
 - let the LT directly mark rows found or not found when working alone
 - let contributors/NCOs submit found/not-found/mismatch proof with location, serial, note, and photo
-- show contributors the LT's request note and move those response items to the top
-- let the LT review proof from a queue and approve, reject, or request more proof
-- let the LT write a specific request note when asking for more proof
-- show a proof history timeline in the LT review queue when an item has follow-up submissions
+- show contributors the platoon admin's request note and move those response items to the top
+- let the platoon admin review proof from a queue and approve, reject, or request more proof
+- let the platoon admin write a specific request note when asking for more proof
+- show a proof history timeline in the platoon admin review queue when an item has follow-up submissions
 - show a close-out report on session detail with counts, unresolved rows, and a copyable text summary
 - export complete close-out report rows as CSV
 - print a clean close-out report that hides the admin console and includes the full reconciliation list
-- import packet rows from pasted text, text/CSV files, PDFs, or photos through an LT review step before saving
+- import packet rows from pasted text, text/CSV files, PDFs, or photos through a platoon admin review step before saving
 - persist packet import batches with source files, extracted text, source links, and retry actions for platoon admins
 - search and filter session rows by text, status, proof requests, review work, problems, and completed items
 - auto-match imported session rows to known inventory items by LIN, NSN, title, and common-name signals
 - notify platoon admins by email when proof is submitted
-- notify the submitter by email when the LT requests more proof
+- notify the submitter by email when the platoon admin requests more proof
 
 The next backend/frontend slice should add a manual match/override control for session rows the automatic matcher misses or gets wrong.
 
@@ -269,7 +270,7 @@ Use this as the first real go-live pass.
 5. Cloudflare routes include `admin.876en.org`, `876en.org`, `api.876en.org`, and the tenant wildcard or explicit tenant hostnames.
 6. Authentik has redirect URIs for `https://admin.876en.org/`, `https://876en.org/`, and each first tenant host such as `https://1st.876en.org/` and `https://ms.876en.org/`.
 7. Open `https://876en.org/#/launch`, sign in with the account in `876en-admins`, and confirm it routes to platform admin.
-8. Create the first tenants, for example `1st` and `ms`, assigning each LT email as the first platoon admin.
+8. Create the first tenants, for example `1st` and `ms`, assigning each platoon admin email as the first platoon admin.
 9. Open each tenant admin link, create a test inventory session, import a couple packet rows, invite one contributor, and submit/approve one proof item.
 10. After the test pass, leave the root static GitHub Pages site online until you are comfortable moving the public homepage to the Coolify app.
 

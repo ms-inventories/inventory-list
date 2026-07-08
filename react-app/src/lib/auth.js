@@ -44,6 +44,12 @@ function getRedirectUri() {
   return `${window.location.origin}${window.location.pathname}`;
 }
 
+function buildApiUrl(path) {
+  const base = String(appConfig.apiBaseUrl || "/api").replace(/\/+$/, "");
+  const cleanPath = String(path || "").startsWith("/") ? path : `/${path}`;
+  return `${base}${cleanPath}`;
+}
+
 function cleanRedirectUrl(returnTo) {
   window.history.replaceState({}, "", returnTo || `${window.location.pathname}${window.location.hash || ""}`);
 }
@@ -109,22 +115,18 @@ export async function completeOidcRedirect() {
     throw new Error("Login state did not match");
   }
 
-  const discovery = await getOidcDiscovery();
-  const body = new URLSearchParams({
-    client_id: appConfig.oidc.clientId,
-    code,
-    code_verifier: verifier,
-    grant_type: "authorization_code",
-    redirect_uri: getRedirectUri()
-  });
-
-  const response = await fetch(discovery.token_endpoint, {
+  const response = await fetch(buildApiUrl("/auth/oidc/token"), {
     method: "POST",
     headers: {
       Accept: "application/json",
-      "Content-Type": "application/x-www-form-urlencoded"
+      "Content-Type": "application/json"
     },
-    body
+    body: JSON.stringify({
+      code,
+      codeVerifier: verifier,
+      redirectUri: getRedirectUri()
+    }),
+    cache: "no-store"
   });
 
   const tokenSet = await response.json();

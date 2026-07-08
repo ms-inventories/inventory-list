@@ -55,7 +55,7 @@ Suggested Authentik group:
 
 ### Tenant Admin
 
-Usually the LT for a platoon.
+Usually the LT, PSG, or delegated inventory lead for a platoon.
 
 Can:
 
@@ -113,9 +113,9 @@ The database also supports explicit hostnames through `tenant_domains`, so alias
 
 ### 1. Tenant Admin Starts Session
 
-The LT creates an inventory session from a packet or an existing item list.
+The platoon admin creates an inventory session from a packet or an existing item list.
 
-If the packet does not include locations, the LT can add them while importing/scanning rows.
+If the packet does not include locations, the platoon admin can add them while importing/scanning rows.
 
 ### 2. Contributors Submit Findings
 
@@ -131,7 +131,7 @@ The session item moves to `needs_review`.
 
 ### 3. Tenant Admin Reviews Evidence
 
-The LT can:
+The platoon admin can:
 
 - Approve the finding.
 - Reject it.
@@ -145,7 +145,7 @@ Examples of proof requests:
 
 ### 4. Direct Check Mode
 
-If the LT is doing the inventory personally, the LT can directly mark session items as found/approved without submitting evidence to himself.
+If the platoon admin is doing the inventory personally, they can directly mark session items as found/approved without submitting evidence to themselves.
 
 ## Backend Apps
 

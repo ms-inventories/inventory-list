@@ -116,7 +116,7 @@ export async function sendProofRequestEmail({
 
   const subject = `More proof needed: ${tenantName}`;
   const text = compactLines([
-    `${requestedByName || "The LT"} requested more inventory proof for ${tenantName}.`,
+    `${requestedByName || "The platoon admin"} requested more inventory proof for ${tenantName}.`,
     "",
     `Session: ${sessionName || "Inventory session"}`,
     packetLine ? `Packet row: ${packetLine}` : null,

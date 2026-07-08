@@ -69,7 +69,7 @@ function AdminHeader({ me, tenantSlug, onRefresh, onLogout }) {
   const adminHost = isAdminHostname();
   const title = adminHost || !tenantSlug ? "Platform Admin" : "Platoon Admin";
   const subtitle = adminHost || !tenantSlug
-    ? "Create platoon workspaces and assign the first LT."
+    ? "Create platoon workspaces and assign the first platoon admin."
     : `${tenantSlug}.${appConfig.baseDomain}`;
 
   return (
@@ -129,7 +129,7 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
               <span>Root admin</span>
             </button>
             <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("lt")}>
-              <span>LT admin</span>
+              <span>Platoon admin</span>
             </button>
             <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("nco")}>
               <span>NCO</span>
@@ -746,7 +746,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
     <form className="proof-form" onSubmit={submitProof}>
       {requestNote ? (
         <div className="proof-request-context">
-          <strong>LT request</strong>
+          <strong>Platoon admin request</strong>
           <span>{requestNote}</span>
         </div>
       ) : null}
@@ -1344,7 +1344,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
                 ) : null}
               </>
             ) : (
-              <EmptyPanel title="No sessions yet" body="Start one from the packet the LT receives." />
+              <EmptyPanel title="No sessions yet" body="Start one from the packet your team receives." />
             )}
           </div>
         </div>
@@ -1764,7 +1764,7 @@ function ReviewPanel({ token, tenantSlug }) {
           <MessageSquare aria-hidden="true" />
         </span>
         <div>
-          <p className="eyebrow">LT review</p>
+          <p className="eyebrow">Platoon admin review</p>
           <h2>Proof Queue</h2>
         </div>
       </div>
@@ -1993,22 +1993,22 @@ function PlatformPanel({ token }) {
             <span>.{appConfig.baseDomain}</span>
           </div>
 
-          <label className="field-label" htmlFor="tenantAdminEmail">LT email</label>
+          <label className="field-label" htmlFor="tenantAdminEmail">Platoon admin email</label>
           <input
             id="tenantAdminEmail"
             className="input"
             type="email"
             value={form.adminEmail}
-            placeholder="lt@example.com"
+            placeholder="admin@example.com"
             onChange={e => updateForm("adminEmail", e.target.value)}
           />
 
-          <label className="field-label" htmlFor="tenantAdminName">LT name</label>
+          <label className="field-label" htmlFor="tenantAdminName">Platoon admin name</label>
           <input
             id="tenantAdminName"
             className="input"
             value={form.adminDisplayName}
-            placeholder="LT Smith"
+            placeholder="PSG Smith"
             onChange={e => updateForm("adminDisplayName", e.target.value)}
           />
 

@@ -18,6 +18,7 @@ export const config = {
   allowDevAuth: String(process.env.ALLOW_DEV_AUTH || "").toLowerCase() === "true",
   corsOrigins: splitCsv(process.env.CORS_ORIGINS),
   oidc: {
+    clientId: process.env.OIDC_CLIENT_ID || process.env.VITE_OIDC_CLIENT_ID || process.env.OIDC_AUDIENCE || "",
     issuer: process.env.OIDC_ISSUER || "",
     audience: process.env.OIDC_AUDIENCE || "",
     discoveryUrl: process.env.OIDC_DISCOVERY_URL || "",

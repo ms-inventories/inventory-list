@@ -147,6 +147,45 @@ async function getSupplementalIdPayload(accessPayload, idToken) {
   }
 }
 
+export async function exchangeOidcCode({ code, codeVerifier, redirectUri }) {
+  const discovery = await getDiscovery();
+  if (!discovery.token_endpoint) throw new Error("OIDC discovery did not include token_endpoint");
+  if (!config.oidc.clientId) throw new Error("OIDC_CLIENT_ID is required for token exchange");
+
+  const body = new URLSearchParams({
+    client_id: config.oidc.clientId,
+    code,
+    code_verifier: codeVerifier,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri
+  });
+
+  const response = await fetch(discovery.token_endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body
+  });
+
+  const text = await response.text();
+  let tokenSet = null;
+  try {
+    tokenSet = text ? JSON.parse(text) : {};
+  } catch {
+    tokenSet = { error: text || "Token exchange failed" };
+  }
+
+  if (!response.ok) {
+    const error = new Error(tokenSet?.error_description || tokenSet?.error || "Token exchange failed");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return tokenSet;
+}
+
 async function verifyBearerToken(token, idToken = "") {
   const accessPayload = await verifyJwt(token);
   const subject = String(accessPayload.sub || "");
