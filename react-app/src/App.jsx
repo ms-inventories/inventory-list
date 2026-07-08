@@ -651,8 +651,8 @@ function PublicHome() {
               <a href={getApplicationPortalUrl()}>
                 <LogIn aria-hidden="true" />
                 <span>
-                  <strong>Application portal</strong>
-                  <small>Sign in to continue</small>
+                  <strong>Member portal</strong>
+                  <small>Open approved apps</small>
                 </span>
               </a>
             </div>

@@ -2537,6 +2537,26 @@ button {
   gap: 10px;
 }
 
+.session-intent-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid #cfd9cb;
+  border-radius: var(--radius);
+  background: #f4f7f1;
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.35;
+  padding: 10px;
+}
+
+.session-intent-note svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+}
+
 .session-list {
   max-height: 420px;
   overflow-y: auto;

@@ -1017,6 +1017,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
   const [isReadingPacket, setIsReadingPacket] = useState(false);
   const [printReportId, setPrintReportId] = useState("");
   const packetFileInputRef = useRef(null);
+  const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
 
   async function loadSessions(nextSelectedId = selectedSessionId) {
     try {
@@ -1058,6 +1059,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
   useEffect(() => {
     if (uploadIntent !== "packet") return;
     setIsPacketImportOpen(true);
+    setStatus({ text: "Start or select a session, then choose the packet file inside that session.", isError: false });
     onUploadIntentHandled?.();
   }, [uploadIntent, onUploadIntentHandled]);
 
@@ -1421,6 +1423,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                 <span>New session</span>
               </summary>
               <form className="disclosure-panel admin-form session-create-form" onSubmit={createSession}>
+                {isPacketUploadIntent && !selectedSession ? (
+                  <div className="session-intent-note">
+                    <FileUp aria-hidden="true" />
+                    <span>Start a session first. The packet importer will open after the session is selected.</span>
+                  </div>
+                ) : null}
                 <label className="field-label" htmlFor="sessionName">Session name</label>
                 <div className="inline-control">
                   <input
@@ -1455,7 +1463,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                 ) : null}
               </>
             ) : (
-              <EmptyPanel title="No sessions yet" body="Start one from the packet your team receives." />
+              <EmptyPanel title="No sessions yet" body="Start a session first, then upload the packet your team received." />
             )}
           </div>
         </div>
@@ -1540,7 +1548,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                 >
                   <summary className="btn btn-secondary">
                     <ClipboardPlus aria-hidden="true" />
-                    <span>Import packet</span>
+                    <span>Import packet rows</span>
                   </summary>
                   <form className="disclosure-panel packet-import-form" onSubmit={addPacketRows}>
                     <div className="packet-import-actions">
@@ -1551,7 +1559,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                         onClick={openPacketFilePicker}
                       >
                         <FileUp aria-hidden="true" />
-                        <span>{isReadingPacket ? "Reading..." : "Choose packet file"}</span>
+                        <span>{isReadingPacket ? "Reading..." : "Choose PDF or spreadsheet"}</span>
                       </button>
                       <input
                         ref={packetFileInputRef}
@@ -1782,12 +1790,17 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                 }) : detailItems.length ? (
                   <EmptyPanel title="No matching rows" body="Clear the search or choose another filter." />
                 ) : (
-                  <EmptyPanel title="No packet rows yet" body="Paste rows from the hand receipt to build the checklist." />
+                  <EmptyPanel title="No packet rows yet" body="Use Import packet rows to upload a packet or paste rows from the hand receipt." />
                 )}
               </div>
             </>
           ) : (
-            <EmptyPanel title="Select a session" body="Session details and packet rows will appear here." />
+            <EmptyPanel
+              title={isPacketUploadIntent ? "Start or select a session" : "Select a session"}
+              body={isPacketUploadIntent
+                ? "Packet upload lives inside a session so the imported rows stay attached to the right inventory."
+                : "Session details and packet rows will appear here."}
+            />
           )}
         </div>
       </div>
