@@ -2960,6 +2960,18 @@ button {
   gap: 8px;
 }
 
+.packet-upload-button {
+  min-width: 170px;
+}
+
+.packet-hidden-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .packet-file-button {
   position: relative;
   overflow: hidden;

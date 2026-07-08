@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   Building2,
@@ -923,7 +923,7 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
   );
 }
 
-function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
+function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, onUploadIntentHandled }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [detail, setDetail] = useState(null);
@@ -932,6 +932,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [packetDraftRows, setPacketDraftRows] = useState([]);
   const [packetSourceName, setPacketSourceName] = useState("");
   const [packetSourceFile, setPacketSourceFile] = useState(null);
+  const [isPacketImportOpen, setIsPacketImportOpen] = useState(false);
   const [sessionItemQuery, setSessionItemQuery] = useState("");
   const [sessionItemFilter, setSessionItemFilter] = useState("all");
   const [proofItemId, setProofItemId] = useState("");
@@ -939,6 +940,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   const [isSaving, setIsSaving] = useState(false);
   const [isReadingPacket, setIsReadingPacket] = useState(false);
   const [printReportId, setPrintReportId] = useState("");
+  const packetFileInputRef = useRef(null);
 
   async function loadSessions(nextSelectedId = selectedSessionId) {
     try {
@@ -976,6 +978,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
   useEffect(() => {
     loadSessions();
   }, [tenantSlug, token]);
+
+  useEffect(() => {
+    if (uploadIntent !== "packet") return;
+    setIsPacketImportOpen(true);
+    onUploadIntentHandled?.();
+  }, [uploadIntent, onUploadIntentHandled]);
 
   useEffect(() => {
     setSessionItemQuery("");
@@ -1052,6 +1060,15 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
     } finally {
       setIsReadingPacket(false);
     }
+  }
+
+  function openPacketFilePicker() {
+    if (!selectedSessionId) {
+      setIsPacketImportOpen(true);
+      setStatus({ text: "Start or select an inventory session before uploading the packet.", isError: true });
+      return;
+    }
+    packetFileInputRef.current?.click();
   }
 
   function updatePacketDraftRow(rowId, field, value) {
@@ -1440,27 +1457,38 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit }) {
               ) : null}
 
               {canManage ? (
-                <details className="packet-import">
+                <details
+                  className="packet-import"
+                  open={isPacketImportOpen || Boolean(packetRows || packetDraftRows.length)}
+                  onToggle={event => setIsPacketImportOpen(event.currentTarget.open)}
+                >
                   <summary className="btn btn-secondary">
                     <ClipboardPlus aria-hidden="true" />
                     <span>Import packet</span>
                   </summary>
                   <form className="disclosure-panel packet-import-form" onSubmit={addPacketRows}>
                     <div className="packet-import-actions">
-                      <label className="btn btn-secondary btn-small packet-file-button">
+                      <button
+                        className="btn btn-primary btn-small packet-upload-button"
+                        type="button"
+                        disabled={isReadingPacket || isSaving}
+                        onClick={openPacketFilePicker}
+                      >
                         <FileUp aria-hidden="true" />
-                        <span>{isReadingPacket ? "Reading..." : "Upload PDF/text/photo"}</span>
-                        <input
-                          type="file"
-                          accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
-                          disabled={isReadingPacket || isSaving}
-                          onChange={e => {
-                            const file = e.target.files?.[0];
-                            e.target.value = "";
-                            readPacketUpload(file);
-                          }}
-                        />
-                      </label>
+                        <span>{isReadingPacket ? "Reading..." : "Choose packet file"}</span>
+                      </button>
+                      <input
+                        ref={packetFileInputRef}
+                        className="packet-hidden-file"
+                        type="file"
+                        accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
+                        disabled={isReadingPacket || isSaving}
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          e.target.value = "";
+                          readPacketUpload(file);
+                        }}
+                      />
                       <button
                         className="btn btn-secondary btn-small"
                         type="button"
@@ -2252,7 +2280,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   );
 }
 
-function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessions, onOpenReview }) {
+function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessions, onOpenUpload, onOpenReview }) {
   const [sessions, setSessions] = useState([]);
   const [pendingItems, setPendingItems] = useState([]);
   const [submissions, setSubmissions] = useState([]);
@@ -2353,10 +2381,9 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
                 <Plus aria-hidden="true" />
                 <span>Start new inventory</span>
               </button>
-              <button className="btn btn-secondary" type="button" onClick={onOpenSessions}>
+              <button className="btn btn-secondary" type="button" onClick={onOpenUpload}>
                 <FileUp aria-hidden="true" />
                 <span>Upload packet</span>
-                <ChevronDown aria-hidden="true" />
               </button>
             </>
           ) : (
@@ -2491,6 +2518,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     ...(isTenantAdmin ? [{ id: "people", label: "People & Invites", icon: Users }] : [])
   ];
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [sessionIntent, setSessionIntent] = useState("");
   const [leaderQuery, setLeaderQuery] = useState("");
   const [tenant, setTenant] = useState(null);
   const [members, setMembers] = useState([]);
@@ -2562,6 +2590,11 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     }
+  }
+
+  function openSessions(intent = "") {
+    setSessionIntent(intent);
+    setActiveTab("tasks");
   }
 
   if (!tenantSlug) {
@@ -2645,7 +2678,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               tenantSlug={tenantSlug}
               query={leaderQuery}
               canManage={isTenantAdmin}
-              onOpenSessions={() => setActiveTab("tasks")}
+              onOpenSessions={() => openSessions()}
+              onOpenUpload={() => openSessions("packet")}
               onOpenReview={() => setActiveTab("review")}
             />
           ) : null}
@@ -2656,6 +2690,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               tenantSlug={tenantSlug}
               canManage={isTenantAdmin}
               canSubmit={canSubmitProof}
+              uploadIntent={sessionIntent}
+              onUploadIntentHandled={() => setSessionIntent("")}
             />
           ) : null}
 
