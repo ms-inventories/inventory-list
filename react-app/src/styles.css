@@ -355,6 +355,39 @@ button {
   max-width: 680px;
 }
 
+.public-newsletter-request-card h3 {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-size: 1.28rem;
+  line-height: 1.15;
+}
+
+.public-newsletter-request-card {
+  align-content: center;
+}
+
+.public-newsletter-request-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.public-newsletter-modal {
+  width: min(100%, 560px);
+}
+
+.public-newsletter-modal .modal-heading {
+  align-items: flex-start;
+}
+
+.public-newsletter-modal .icon-button {
+  margin-left: auto;
+}
+
+.public-newsletter-modal-actions {
+  margin-top: 8px;
+}
+
 .auth-screen {
   position: relative;
   display: grid;
@@ -2027,6 +2060,12 @@ button {
   gap: 8px;
 }
 
+.newsletter-subscriber-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
@@ -3115,6 +3154,7 @@ button {
 
 .status-pill.needs_review,
 .status-pill.mismatch,
+.status-pill.pending,
 .status-pill.draft,
 .status-pill.skipped {
   border-color: #e3c58e;
@@ -3124,6 +3164,7 @@ button {
 
 .status-pill.closed,
 .status-pill.not_found,
+.status-pill.rejected,
 .status-pill.unsubscribed,
 .status-pill.failed {
   border-color: #e4b3ae;

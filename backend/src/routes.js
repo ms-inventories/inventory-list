@@ -204,10 +204,15 @@ function rowToNewsletterSubscriber(row) {
     id: row.id,
     email: row.email,
     displayName: row.display_name,
+    platoon: row.platoon,
+    supervisorName: row.supervisor_name,
     status: row.status,
     source: row.source,
     lastSubscribedAt: row.last_subscribed_at,
     unsubscribedAt: row.unsubscribed_at,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    reviewNote: row.review_note,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -841,26 +846,60 @@ export function registerRoutes(app) {
     const body = parseBody(
       z.object({
         email: z.string().email(),
-        displayName: z.string().max(120).optional()
+        displayName: z.string().min(2).max(120),
+        platoon: z.string().min(2).max(120),
+        supervisorName: z.string().min(2).max(120)
       }),
       request.body
     );
     const email = body.email.trim().toLowerCase();
-    const displayName = String(body.displayName || "").trim() || null;
+    const displayName = body.displayName.trim();
+    const platoon = body.platoon.trim();
+    const supervisorName = body.supervisorName.trim();
 
     const result = await query(
       `
-        INSERT INTO newsletter_subscribers (email, display_name, status, source, last_subscribed_at, unsubscribed_at, updated_at)
-        VALUES ($1, $2, 'active', 'public_site', now(), NULL, now())
+        INSERT INTO newsletter_subscribers (
+          email,
+          display_name,
+          platoon,
+          supervisor_name,
+          status,
+          source,
+          last_subscribed_at,
+          unsubscribed_at,
+          reviewed_by,
+          reviewed_at,
+          review_note,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, 'pending', 'public_site', now(), NULL, NULL, NULL, NULL, now())
         ON CONFLICT (email) DO UPDATE SET
-          display_name = COALESCE(EXCLUDED.display_name, newsletter_subscribers.display_name),
-          status = 'active',
+          display_name = EXCLUDED.display_name,
+          platoon = EXCLUDED.platoon,
+          supervisor_name = EXCLUDED.supervisor_name,
+          status = CASE
+            WHEN newsletter_subscribers.status = 'active' THEN 'active'
+            ELSE 'pending'
+          END,
           last_subscribed_at = now(),
           unsubscribed_at = NULL,
+          reviewed_by = CASE
+            WHEN newsletter_subscribers.status = 'active' THEN newsletter_subscribers.reviewed_by
+            ELSE NULL
+          END,
+          reviewed_at = CASE
+            WHEN newsletter_subscribers.status = 'active' THEN newsletter_subscribers.reviewed_at
+            ELSE NULL
+          END,
+          review_note = CASE
+            WHEN newsletter_subscribers.status = 'active' THEN newsletter_subscribers.review_note
+            ELSE NULL
+          END,
           updated_at = now()
         RETURNING *
       `,
-      [email, displayName]
+      [email, displayName, platoon, supervisorName]
     );
 
     reply.code(201);
@@ -915,7 +954,9 @@ export function registerRoutes(app) {
       query(
         `
           SELECT
+            COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
             COUNT(*) FILTER (WHERE status = 'active')::int AS active_count,
+            COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected_count,
             COUNT(*) FILTER (WHERE status = 'unsubscribed')::int AS unsubscribed_count,
             COUNT(*)::int AS total_count
           FROM newsletter_subscribers
@@ -925,7 +966,14 @@ export function registerRoutes(app) {
         `
           SELECT *
           FROM newsletter_subscribers
-          ORDER BY updated_at DESC
+          ORDER BY
+            CASE status
+              WHEN 'pending' THEN 0
+              WHEN 'active' THEN 1
+              WHEN 'rejected' THEN 2
+              ELSE 3
+            END,
+            updated_at DESC
           LIMIT 40
         `
       )
@@ -934,12 +982,68 @@ export function registerRoutes(app) {
     return {
       issues: issueResult.rows.map(row => rowToNewsletterIssue(row, { includeBody: true })),
       subscriberStats: {
+        pending: statsResult.rows[0]?.pending_count || 0,
         active: statsResult.rows[0]?.active_count || 0,
+        rejected: statsResult.rows[0]?.rejected_count || 0,
         unsubscribed: statsResult.rows[0]?.unsubscribed_count || 0,
         total: statsResult.rows[0]?.total_count || 0
       },
       subscribers: subscriberResult.rows.map(rowToNewsletterSubscriber)
     };
+  });
+
+  route(app, "patch", "/api/newsletter/admin/subscribers/:subscriberId/review", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+    const body = parseBody(
+      z.object({
+        decision: z.enum(["approved", "rejected"]),
+        note: z.string().max(600).optional()
+      }),
+      request.body
+    );
+    const nextStatus = body.decision === "approved" ? "active" : "rejected";
+
+    const reviewed = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          UPDATE newsletter_subscribers
+          SET status = $1,
+            reviewed_by = $2,
+            reviewed_at = now(),
+            review_note = $3,
+            unsubscribed_at = NULL,
+            last_subscribed_at = CASE WHEN $1 = 'active' THEN now() ELSE last_subscribed_at END,
+            updated_at = now()
+          WHERE id = $4
+          RETURNING *
+        `,
+        [nextStatus, auth.user.id, String(body.note || "").trim() || null, request.params.subscriberId]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "newsletter.subscriber.reviewed",
+        entityType: "newsletter_subscriber",
+        entityId: result.rows[0].id,
+        metadata: {
+          email: result.rows[0].email,
+          decision: body.decision,
+          status: nextStatus
+        }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!reviewed) {
+      reply.code(404);
+      throw new Error("Newsletter subscriber not found");
+    }
+
+    return { subscriber: rowToNewsletterSubscriber(reviewed) };
   });
 
   route(app, "post", "/api/newsletter/admin/issues", async (request, reply) => {

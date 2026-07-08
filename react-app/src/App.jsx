@@ -552,8 +552,13 @@ function LaunchRouter() {
 }
 
 function PublicHome() {
-  const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [subscriberForm, setSubscriberForm] = useState({
+    displayName: "",
+    email: "",
+    platoon: "",
+    supervisorName: ""
+  });
+  const [isSubscriberModalOpen, setIsSubscriberModalOpen] = useState(false);
   const [status, setStatus] = useState({ text: "", isError: false });
   const [newsletter, setNewsletter] = useState({ latestIssue: null, issues: [] });
   const [newsletterStatus, setNewsletterStatus] = useState({ text: "Loading latest newsletter...", isError: false });
@@ -581,21 +586,38 @@ function PublicHome() {
     };
   }, []);
 
+  function updateSubscriberForm(key, value) {
+    setSubscriberForm(current => ({ ...current, [key]: value }));
+  }
+
+  function openSubscriberModal() {
+    setStatus({ text: "", isError: false });
+    setIsSubscriberModalOpen(true);
+  }
+
   async function submitNewsletter(event) {
     event.preventDefault();
 
     try {
-      setStatus({ text: "Adding you to the list...", isError: false });
-      await apiRequest("/newsletter/subscribers", {
+      setStatus({ text: "Submitting request...", isError: false });
+      const data = await apiRequest("/newsletter/subscribers", {
         method: "POST",
         body: {
-          email: email.trim(),
-          displayName: displayName.trim() || undefined
+          displayName: subscriberForm.displayName.trim(),
+          email: subscriberForm.email.trim(),
+          platoon: subscriberForm.platoon.trim(),
+          supervisorName: subscriberForm.supervisorName.trim()
         }
       });
-      setEmail("");
-      setDisplayName("");
-      setStatus({ text: "You are on the Black Shadow Company newsletter list.", isError: false });
+      const isApproved = data.subscriber?.status === "active";
+      setSubscriberForm({ displayName: "", email: "", platoon: "", supervisorName: "" });
+      setIsSubscriberModalOpen(false);
+      setStatus({
+        text: isApproved
+          ? "You are already approved for the Black Shadow Company newsletter."
+          : "Request submitted. A newsletter admin will verify your company connection before emails are sent.",
+        isError: false
+      });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     }
@@ -603,6 +625,12 @@ function PublicHome() {
 
   const latestIssue = newsletter.latestIssue;
   const issuePreviewLines = getIssueBodyPreview(latestIssue?.body);
+  const canSubmitSubscriberRequest = Boolean(
+    subscriberForm.displayName.trim()
+    && subscriberForm.email.trim()
+    && subscriberForm.platoon.trim()
+    && subscriberForm.supervisorName.trim()
+  );
 
   return (
     <main className="public-site">
@@ -689,39 +717,103 @@ function PublicHome() {
             )}
             <StatusText status={newsletterStatus} />
           </div>
-          <form
-            className="public-newsletter-form"
-            onSubmit={submitNewsletter}
-          >
-            <label className="field-label" htmlFor="newsletterName">Name</label>
-            <input
-              id="newsletterName"
-              className="input"
-              type="text"
-              value={displayName}
-              placeholder="Your name"
-              onChange={event => setDisplayName(event.target.value)}
-            />
-            <label className="field-label" htmlFor="newsletterEmail">Email address</label>
-            <div className="public-newsletter-row">
-              <input
-                id="newsletterEmail"
-                className="input"
-                type="email"
-                value={email}
-                placeholder="name@example.com"
-                onChange={event => setEmail(event.target.value)}
-                required
-              />
-              <button className="btn btn-primary" type="submit" disabled={!email.trim()}>
-                <Mail aria-hidden="true" />
-                <span>Sign up</span>
-              </button>
+          <div className="public-newsletter-form public-newsletter-request-card">
+            <div>
+              <p className="eyebrow">Company verification</p>
+              <h3>Request newsletter access</h3>
+              <p>
+                Submit your company details so an admin can approve newsletter delivery.
+              </p>
             </div>
+            <button className="btn btn-primary btn-full" type="button" onClick={openSubscriberModal}>
+              <ShieldCheck aria-hidden="true" />
+              <span>Request access</span>
+            </button>
             <StatusText status={status} />
-          </form>
+          </div>
         </div>
       </section>
+
+      {isSubscriberModalOpen ? (
+        <div className="modal-backdrop public-newsletter-modal-backdrop" role="presentation" onClick={event => {
+          if (event.target === event.currentTarget) setIsSubscriberModalOpen(false);
+        }}>
+          <section className="modal-panel public-newsletter-modal" role="dialog" aria-modal="true" aria-labelledby="newsletterRequestTitle">
+            <div className="modal-heading">
+              <span className="modal-icon"><ShieldCheck aria-hidden="true" /></span>
+              <div>
+                <p className="eyebrow">Newsletter request</p>
+                <div className="modal-title" id="newsletterRequestTitle">Verify company connection</div>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setIsSubscriberModalOpen(false)}
+                aria-label="Close newsletter request"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+
+            <form className="public-newsletter-request-form" onSubmit={submitNewsletter}>
+              <label className="field-label" htmlFor="newsletterRequestName">Name</label>
+              <input
+                id="newsletterRequestName"
+                className="input"
+                type="text"
+                value={subscriberForm.displayName}
+                placeholder="Your full name"
+                onChange={event => updateSubscriberForm("displayName", event.target.value)}
+                required
+              />
+
+              <label className="field-label" htmlFor="newsletterRequestEmail">Email address</label>
+              <input
+                id="newsletterRequestEmail"
+                className="input"
+                type="email"
+                value={subscriberForm.email}
+                placeholder="name@example.com"
+                onChange={event => updateSubscriberForm("email", event.target.value)}
+                required
+              />
+
+              <label className="field-label" htmlFor="newsletterRequestPlatoon">Platoon</label>
+              <input
+                id="newsletterRequestPlatoon"
+                className="input"
+                type="text"
+                value={subscriberForm.platoon}
+                placeholder="1st Platoon, Maintenance, HQ..."
+                onChange={event => updateSubscriberForm("platoon", event.target.value)}
+                required
+              />
+
+              <label className="field-label" htmlFor="newsletterRequestSupervisor">Immediate supervisor</label>
+              <input
+                id="newsletterRequestSupervisor"
+                className="input"
+                type="text"
+                value={subscriberForm.supervisorName}
+                placeholder="Squad leader or immediate supervisor"
+                onChange={event => updateSubscriberForm("supervisorName", event.target.value)}
+                required
+              />
+
+              <div className="button-row public-newsletter-modal-actions">
+                <button className="btn btn-primary" type="submit" disabled={!canSubmitSubscriberRequest}>
+                  <Mail aria-hidden="true" />
+                  <span>Submit request</span>
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={() => setIsSubscriberModalOpen(false)}>
+                  <span>Cancel</span>
+                </button>
+              </div>
+              <StatusText status={status} />
+            </form>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -2028,13 +2028,14 @@ function ReviewPanel({ token, tenantSlug }) {
 function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [issues, setIssues] = useState([]);
   const [subscribers, setSubscribers] = useState([]);
-  const [subscriberStats, setSubscriberStats] = useState({ active: 0, unsubscribed: 0, total: 0 });
+  const [subscriberStats, setSubscriberStats] = useState({ pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
   const [selectedIssueId, setSelectedIssueId] = useState("");
   const [form, setForm] = useState(() => newsletterIssueForm());
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [reviewingSubscriberId, setReviewingSubscriberId] = useState("");
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
   const normalizedQuery = query.trim().toLowerCase();
@@ -2057,7 +2058,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       const nextSubscribers = data.subscribers || [];
       setIssues(nextIssues);
       setSubscribers(nextSubscribers);
-      setSubscriberStats(data.subscriberStats || { active: 0, unsubscribed: 0, total: 0 });
+      setSubscriberStats(data.subscriberStats || { pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
 
       const hasSelectedIssue = selectedIssueId && nextIssues.some(issue => issue.id === selectedIssueId);
       if (!hasSelectedIssue) {
@@ -2152,10 +2153,12 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
   function exportSubscribers() {
     const rows = [
-      ["Email", "Name", "Status", "Subscribed", "Updated"],
+      ["Email", "Name", "Platoon", "Immediate Supervisor", "Status", "Approved/Requested", "Updated"],
       ...subscribers.map(subscriber => [
         subscriber.email,
         subscriber.displayName || "",
+        subscriber.platoon || "",
+        subscriber.supervisorName || "",
         subscriber.status,
         formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt),
         formatDate(subscriber.updatedAt)
@@ -2163,6 +2166,29 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     ];
     const csv = rows.map(row => row.map(csvCell).join(",")).join("\n");
     downloadTextFile(`newsletter-subscribers-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv");
+  }
+
+  async function reviewSubscriber(subscriberId, decision) {
+    setReviewingSubscriberId(subscriberId);
+    try {
+      const data = await apiRequest(`/newsletter/admin/subscribers/${subscriberId}/review`, {
+        method: "PATCH",
+        token,
+        body: { decision }
+      });
+      setSubscribers(current => current.map(subscriber => (
+        subscriber.id === data.subscriber.id ? data.subscriber : subscriber
+      )));
+      setStatus({
+        text: decision === "approved" ? "Subscriber approved for newsletter delivery" : "Subscriber request rejected",
+        isError: false
+      });
+      await loadNewsletter();
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setReviewingSubscriberId("");
+    }
   }
 
   async function refreshNewsletter() {
@@ -2248,11 +2274,11 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
           <section className="platform-stat-grid newsletter-stat-grid" aria-label="Newsletter totals">
             <div className="platform-stat-card">
               <span className="platform-stat-icon blue">
-                <FileText aria-hidden="true" />
+                <ShieldCheck aria-hidden="true" />
               </span>
               <div>
-                <strong>{issues.length}</strong>
-                <span>Total issues</span>
+                <strong>{subscriberStats.pending || 0}</strong>
+                <span>Pending requests</span>
               </div>
             </div>
             <div className="platform-stat-card">
@@ -2261,7 +2287,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               </span>
               <div>
                 <strong>{subscriberStats.active || 0}</strong>
-                <span>Active subscribers</span>
+                <span>Approved subscribers</span>
               </div>
             </div>
             <div className="platform-stat-card">
@@ -2405,7 +2431,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <div className="newsletter-subscriber-heading">
               <div>
                 <h2>Subscribers</h2>
-                <p>{countLabel(subscriberStats.active || 0, "active subscriber")} on the list.</p>
+                <p>
+                  {countLabel(subscriberStats.pending || 0, "pending request")} and {countLabel(subscriberStats.active || 0, "approved subscriber")}.
+                </p>
               </div>
               <button className="btn btn-secondary btn-small" type="button" onClick={exportSubscribers} disabled={!subscribers.length}>
                 <Download aria-hidden="true" />
@@ -2417,13 +2445,37 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               <div className="newsletter-subscriber-list">
                 {subscribers.map(subscriber => (
                   <article className="admin-list-row" key={subscriber.id}>
-                    <div>
+                    <div className="newsletter-subscriber-main">
                       <strong>{subscriber.displayName || subscriber.email}</strong>
                       <span>{subscriber.email}</span>
+                      <span>{subscriber.platoon || "No platoon provided"}</span>
+                      <span>Supervisor: {subscriber.supervisorName || "Not provided"}</span>
                     </div>
                     <div className="admin-row-meta">
                       <span className={`status-pill ${subscriber.status}`}>{subscriber.status}</span>
                       <span className="badge">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
+                      {subscriber.status === "pending" || subscriber.status === "rejected" ? (
+                        <button
+                          className="btn btn-primary btn-small"
+                          type="button"
+                          disabled={reviewingSubscriberId === subscriber.id}
+                          onClick={() => reviewSubscriber(subscriber.id, "approved")}
+                        >
+                          <CheckCircle2 aria-hidden="true" />
+                          <span>Approve</span>
+                        </button>
+                      ) : null}
+                      {subscriber.status === "pending" ? (
+                        <button
+                          className="btn btn-danger-soft btn-small"
+                          type="button"
+                          disabled={reviewingSubscriberId === subscriber.id}
+                          onClick={() => reviewSubscriber(subscriber.id, "rejected")}
+                        >
+                          <XCircle aria-hidden="true" />
+                          <span>Reject</span>
+                        </button>
+                      ) : null}
                     </div>
                   </article>
                 ))}
