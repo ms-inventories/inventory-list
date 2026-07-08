@@ -79,7 +79,6 @@ Environment variables:
 ```text
 VITE_BASE_DOMAIN=876en.org
 VITE_API_BASE_URL=https://api.876en.org/api
-VITE_NEWSLETTER_ACTION_URL=<optional brevo form action url>
 VITE_AUTHENTIK_LAUNCH_URL=https://auth.876en.org/if/user/
 VITE_OIDC_CLIENT_ID=<authentik inventory client id>
 VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration

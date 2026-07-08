@@ -79,12 +79,15 @@ function EmptyPanel({ title, body }) {
   );
 }
 
-function AdminHeader({ me, tenantSlug, onRefresh, onLogout }) {
+function AdminHeader({ me, tenantSlug, mode = "", onRefresh, onLogout }) {
   const adminHost = isAdminHostname();
-  const title = adminHost || !tenantSlug ? "Platform Admin" : "Platoon Admin";
-  const subtitle = adminHost || !tenantSlug
-    ? "Create platoon workspaces and assign the first platoon admin."
-    : `${tenantSlug}.${appConfig.baseDomain}`;
+  const isNewsletterMode = mode === "newsletter";
+  const title = isNewsletterMode ? "Newsletter Admin" : adminHost || !tenantSlug ? "Platform Admin" : "Platoon Admin";
+  const subtitle = isNewsletterMode
+    ? "Publish public FRG updates and manage newsletter subscribers."
+    : adminHost || !tenantSlug
+      ? "Create platoon workspaces and assign the first platoon admin."
+      : `${tenantSlug}.${appConfig.baseDomain}`;
 
   return (
     <header className="app-header">
@@ -144,6 +147,9 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
             </button>
             <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("lead")}>
               <span>Platoon admin</span>
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("frg")}>
+              <span>Newsletter admin</span>
             </button>
             <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("nco")}>
               <span>NCO</span>
@@ -688,6 +694,49 @@ const proofRequestOptions = [
 
 function countLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${Number(count) === 1 ? singular : plural}`;
+}
+
+const newsletterDraftTemplate = {
+  title: "Black Shadow Company Newsletter",
+  editionLabel: "First issue",
+  summary: "Family updates, event reminders, and resources for the 876 EN community.",
+  body: [
+    "Welcome to the Black Shadow Company newsletter.",
+    "",
+    "This issue is ready for the FRG team to update with current family readiness notes, event reminders, and useful resources.",
+    "",
+    "Upcoming focus",
+    "- Family readiness announcements",
+    "- Drill weekend reminders",
+    "- Support resources and contact notes",
+    "",
+    "For questions, contact the company FRG team."
+  ].join("\n")
+};
+
+function newsletterIssueForm(issue = newsletterDraftTemplate) {
+  return {
+    title: issue.title || "",
+    editionLabel: issue.editionLabel || "",
+    summary: issue.summary || "",
+    body: issue.body || ""
+  };
+}
+
+function newsletterPayload(form) {
+  return {
+    title: form.title.trim(),
+    editionLabel: form.editionLabel.trim() || undefined,
+    summary: form.summary.trim() || undefined,
+    body: form.body.trim()
+  };
+}
+
+function newsletterBodyParagraphs(body) {
+  return String(body || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
 }
 
 function buildProofRequestMessage(fields) {
@@ -1949,6 +1998,419 @@ function ReviewPanel({ token, tenantSlug }) {
   );
 }
 
+function NewsletterPanel({ token, me, onRefresh, onLogout }) {
+  const [issues, setIssues] = useState([]);
+  const [subscribers, setSubscribers] = useState([]);
+  const [subscriberStats, setSubscriberStats] = useState({ active: 0, unsubscribed: 0, total: 0 });
+  const [selectedIssueId, setSelectedIssueId] = useState("");
+  const [form, setForm] = useState(() => newsletterIssueForm());
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
+  const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredIssues = issues.filter(issue => {
+    if (!normalizedQuery) return true;
+    return [
+      issue.title,
+      issue.editionLabel,
+      issue.summary,
+      issue.status
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
+  });
+  const previewLines = newsletterBodyParagraphs(form.body);
+
+  async function loadNewsletter() {
+    try {
+      setStatus({ text: "Loading newsletter...", isError: false });
+      const data = await apiRequest("/newsletter/admin", { token });
+      const nextIssues = data.issues || [];
+      const nextSubscribers = data.subscribers || [];
+      setIssues(nextIssues);
+      setSubscribers(nextSubscribers);
+      setSubscriberStats(data.subscriberStats || { active: 0, unsubscribed: 0, total: 0 });
+
+      const hasSelectedIssue = selectedIssueId && nextIssues.some(issue => issue.id === selectedIssueId);
+      if (!hasSelectedIssue) {
+        const firstIssue = nextIssues[0] || null;
+        setSelectedIssueId(firstIssue?.id || "");
+        setForm(newsletterIssueForm(firstIssue || newsletterDraftTemplate));
+      }
+
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  useEffect(() => {
+    loadNewsletter();
+  }, [token]);
+
+  function updateForm(key, value) {
+    setForm(current => ({ ...current, [key]: value }));
+  }
+
+  function selectIssue(issue) {
+    setSelectedIssueId(issue.id);
+    setForm(newsletterIssueForm(issue));
+    setStatus({ text: "", isError: false });
+  }
+
+  function startNewDraft() {
+    setSelectedIssueId("");
+    setForm(newsletterIssueForm());
+    setStatus({ text: "New draft ready", isError: false });
+  }
+
+  async function saveIssue(event) {
+    event.preventDefault();
+    setIsSaving(true);
+    try {
+      const payload = newsletterPayload(form);
+      const data = await apiRequest(
+        selectedIssueId ? `/newsletter/admin/issues/${selectedIssueId}` : "/newsletter/admin/issues",
+        {
+          method: selectedIssueId ? "PATCH" : "POST",
+          token,
+          body: payload
+        }
+      );
+      const savedIssue = data.issue;
+      setIssues(current => {
+        const exists = current.some(issue => issue.id === savedIssue.id);
+        return exists
+          ? current.map(issue => issue.id === savedIssue.id ? savedIssue : issue)
+          : [savedIssue, ...current];
+      });
+      setSelectedIssueId(savedIssue.id);
+      setForm(newsletterIssueForm(savedIssue));
+      setStatus({ text: selectedIssueId ? "Newsletter issue saved" : "Draft created", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function publishIssue() {
+    if (!selectedIssueId) {
+      setStatus({ text: "Save the draft before publishing.", isError: true });
+      return;
+    }
+
+    setIsPublishing(true);
+    try {
+      const data = await apiRequest(`/newsletter/admin/issues/${selectedIssueId}/publish`, {
+        method: "POST",
+        token
+      });
+      const publishedIssue = data.issue;
+      const delivery = data.delivery || {};
+      setIssues(current => current.map(issue => issue.id === publishedIssue.id ? publishedIssue : issue));
+      setForm(newsletterIssueForm(publishedIssue));
+      setStatus({
+        text: `Published. Delivered ${delivery.sent || 0}, skipped ${delivery.skipped || 0}, failed ${delivery.failed || 0}.`,
+        isError: false
+      });
+      await loadNewsletter();
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  function exportSubscribers() {
+    const rows = [
+      ["Email", "Name", "Status", "Subscribed", "Updated"],
+      ...subscribers.map(subscriber => [
+        subscriber.email,
+        subscriber.displayName || "",
+        subscriber.status,
+        formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt),
+        formatDate(subscriber.updatedAt)
+      ])
+    ];
+    const csv = rows.map(row => row.map(csvCell).join(",")).join("\n");
+    downloadTextFile(`newsletter-subscribers-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv");
+  }
+
+  async function refreshNewsletter() {
+    await loadNewsletter();
+    onRefresh?.();
+  }
+
+  return (
+    <div className="platform-shell newsletter-shell">
+      <aside className="platform-sidebar newsletter-sidebar">
+        <div className="platform-brand">
+          <MailPlus aria-hidden="true" />
+          <strong>FRG Newsletter</strong>
+        </div>
+
+        <nav className="platform-nav" aria-label="Newsletter admin">
+          <button className="active" type="button">
+            <FileText aria-hidden="true" />
+            <span>Issues</span>
+          </button>
+          {me?.isPlatformAdmin ? (
+            <button type="button" onClick={() => window.location.assign("/#/admin")}>
+              <ShieldCheck aria-hidden="true" />
+              <span>Platform</span>
+            </button>
+          ) : null}
+          <button type="button" onClick={() => window.location.assign(`https://${appConfig.baseDomain}/`)}>
+            <Home aria-hidden="true" />
+            <span>Public site</span>
+          </button>
+        </nav>
+
+        <div className="platform-sidebar-foot">
+          <button type="button" onClick={refreshNewsletter}>
+            <RefreshCw aria-hidden="true" />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </aside>
+
+      <main className="platform-main">
+        <header className="platform-topbar">
+          <div />
+          <div className="leader-user-actions">
+            <button className="icon-button" type="button" onClick={refreshNewsletter} aria-label="Refresh newsletter">
+              <RefreshCw aria-hidden="true" />
+            </button>
+            <div className="leader-user-card">
+              <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "N").slice(0, 1).toUpperCase()}</span>
+              <div>
+                <strong>{me?.user?.display_name || me?.user?.email || "Newsletter user"}</strong>
+                <span>{roleLabel}</span>
+              </div>
+              <ChevronDown aria-hidden="true" />
+            </div>
+            <button className="btn btn-secondary btn-small" type="button" onClick={onLogout}>
+              <LogOut aria-hidden="true" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </header>
+
+        <div className="platform-content newsletter-content">
+          <div className="platform-page-heading">
+            <div>
+              <h1>Newsletter</h1>
+              <p>Write, publish, and track public Black Shadow Company updates.</p>
+            </div>
+            <div className="newsletter-heading-actions">
+              <a className="btn btn-secondary" href={`https://${appConfig.baseDomain}/`} target="_blank" rel="noreferrer">
+                <Home aria-hidden="true" />
+                <span>View public site</span>
+              </a>
+              <button className="btn btn-primary" type="button" onClick={startNewDraft}>
+                <Plus aria-hidden="true" />
+                <span>New issue</span>
+              </button>
+            </div>
+          </div>
+
+          <StatusLine status={status} />
+
+          <section className="platform-stat-grid newsletter-stat-grid" aria-label="Newsletter totals">
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon blue">
+                <FileText aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{issues.length}</strong>
+                <span>Total issues</span>
+              </div>
+            </div>
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon green">
+                <Users aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{subscriberStats.active || 0}</strong>
+                <span>Active subscribers</span>
+              </div>
+            </div>
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon amber">
+                <Send aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{issues.reduce((sum, issue) => sum + Number(issue.sentCount || 0), 0)}</strong>
+                <span>Emails sent</span>
+              </div>
+            </div>
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon purple">
+                <CheckCircle2 aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{issues.filter(issue => issue.status === "published").length}</strong>
+                <span>Published</span>
+              </div>
+            </div>
+          </section>
+
+          <div className="newsletter-admin-grid">
+            <section className="platform-table-card newsletter-issue-list-card">
+              <div className="platform-table-toolbar">
+                <label className="platform-search">
+                  <Search aria-hidden="true" />
+                  <input
+                    value={query}
+                    placeholder="Search issues..."
+                    onChange={event => setQuery(event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="newsletter-issue-list">
+                {filteredIssues.length ? filteredIssues.map(issue => (
+                  <button
+                    className={issue.id === selectedIssueId ? "newsletter-issue-button active" : "newsletter-issue-button"}
+                    type="button"
+                    key={issue.id}
+                    onClick={() => selectIssue(issue)}
+                  >
+                    <span>
+                      <strong>{issue.title}</strong>
+                      <small>{issue.editionLabel || formatShortDate(issue.createdAt)}</small>
+                    </span>
+                    <span className={`status-pill ${issue.status}`}>{issue.status}</span>
+                  </button>
+                )) : (
+                  <EmptyPanel title="No issues yet" body="Create the first newsletter issue to publish an update." />
+                )}
+              </div>
+            </section>
+
+            <section className="platform-table-card newsletter-editor-card">
+              <div className="newsletter-editor-layout">
+                <form className="newsletter-editor-form" onSubmit={saveIssue}>
+                  <div className="newsletter-editor-heading">
+                    <div>
+                      <p className="eyebrow">{selectedIssue?.status || "Draft"}</p>
+                      <h2>{selectedIssueId ? "Edit issue" : "New issue"}</h2>
+                    </div>
+                    {selectedIssue ? <span className={`status-pill ${selectedIssue.status}`}>{selectedIssue.status}</span> : null}
+                  </div>
+
+                  <label className="field-label" htmlFor="newsletterTitle">Title</label>
+                  <input
+                    id="newsletterTitle"
+                    className="input"
+                    value={form.title}
+                    placeholder="Company newsletter title"
+                    onChange={event => updateForm("title", event.target.value)}
+                    required
+                  />
+
+                  <div className="newsletter-form-row">
+                    <div>
+                      <label className="field-label" htmlFor="newsletterEdition">Edition</label>
+                      <input
+                        id="newsletterEdition"
+                        className="input"
+                        value={form.editionLabel}
+                        placeholder="July family update"
+                        onChange={event => updateForm("editionLabel", event.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="field-label" htmlFor="newsletterSummary">Summary</label>
+                      <input
+                        id="newsletterSummary"
+                        className="input"
+                        value={form.summary}
+                        placeholder="One-line overview"
+                        onChange={event => updateForm("summary", event.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <label className="field-label" htmlFor="newsletterBody">Newsletter body</label>
+                  <textarea
+                    id="newsletterBody"
+                    className="input newsletter-body-input"
+                    value={form.body}
+                    placeholder="Write the newsletter update..."
+                    onChange={event => updateForm("body", event.target.value)}
+                    required
+                  />
+
+                  <div className="button-row">
+                    <button className="btn btn-secondary" type="submit" disabled={isSaving}>
+                      <FileText aria-hidden="true" />
+                      <span>{isSaving ? "Saving..." : selectedIssueId ? "Save issue" : "Create draft"}</span>
+                    </button>
+                    <button className="btn btn-primary" type="button" onClick={publishIssue} disabled={!selectedIssueId || isPublishing}>
+                      <Send aria-hidden="true" />
+                      <span>{isPublishing ? "Publishing..." : "Publish"}</span>
+                    </button>
+                  </div>
+                </form>
+
+                <aside className="newsletter-preview" aria-label="Newsletter preview">
+                  <p className="eyebrow">Preview</p>
+                  <h2>{form.title || "Newsletter title"}</h2>
+                  <div className="public-newsletter-meta">
+                    {form.editionLabel ? <span>{form.editionLabel}</span> : null}
+                    {selectedIssue?.publishedAt ? <span>{formatShortDate(selectedIssue.publishedAt)}</span> : null}
+                  </div>
+                  {form.summary ? <p className="newsletter-preview-summary">{form.summary}</p> : null}
+                  <div className="newsletter-preview-body">
+                    {previewLines.length ? previewLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : (
+                      <p className="muted-copy">The issue preview appears as you write.</p>
+                    )}
+                  </div>
+                </aside>
+              </div>
+            </section>
+          </div>
+
+          <section className="platform-table-card newsletter-subscriber-card">
+            <div className="newsletter-subscriber-heading">
+              <div>
+                <h2>Subscribers</h2>
+                <p>{countLabel(subscriberStats.active || 0, "active subscriber")} on the list.</p>
+              </div>
+              <button className="btn btn-secondary btn-small" type="button" onClick={exportSubscribers} disabled={!subscribers.length}>
+                <Download aria-hidden="true" />
+                <span>Export CSV</span>
+              </button>
+            </div>
+
+            {subscribers.length ? (
+              <div className="newsletter-subscriber-list">
+                {subscribers.map(subscriber => (
+                  <article className="admin-list-row" key={subscriber.id}>
+                    <div>
+                      <strong>{subscriber.displayName || subscriber.email}</strong>
+                      <span>{subscriber.email}</span>
+                    </div>
+                    <div className="admin-row-meta">
+                      <span className={`status-pill ${subscriber.status}`}>{subscriber.status}</span>
+                      <span className="badge">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <EmptyPanel title="No subscribers yet" body="Public newsletter signups will appear here." />
+            )}
+          </section>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [tenants, setTenants] = useState([]);
   const [form, setForm] = useState({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
@@ -2035,6 +2497,10 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           <button type="button">
             <Home aria-hidden="true" />
             <span>Dashboard</span>
+          </button>
+          <button type="button" onClick={() => window.location.assign("/#/newsletter")}>
+            <MailPlus aria-hidden="true" />
+            <span>Newsletter</span>
           </button>
           <button className="active" type="button">
             <Users aria-hidden="true" />
@@ -2912,6 +3378,12 @@ export default function AdminConsole() {
         name: "QA Platoon Admin",
         groups: ["876en-ms", "876en-platoon-admin"]
       },
+      frg: {
+        sub: "qa-frg",
+        email: "qa-frg@876en.test",
+        name: "QA Newsletter Admin",
+        groups: ["876en-frg-admins"]
+      },
       nco: {
         sub: "qa-nco",
         email: "qa-nco@876en.test",
@@ -2942,19 +3414,25 @@ export default function AdminConsole() {
     }
   }
 
-  const isPlatformPage = isAdminHostname() || !tenantSlug;
+  const normalizedHash = typeof window === "undefined" ? "" : window.location.hash.toLowerCase();
+  const isNewsletterPage = normalizedHash === "#/newsletter" || normalizedHash.startsWith("#/newsletter?");
+  const isPlatformPage = !isNewsletterPage && (isAdminHostname() || !tenantSlug);
   const canUsePlatform = Boolean(me?.isPlatformAdmin);
+  const canUseNewsletter = Boolean(me?.isPlatformAdmin || me?.isFrgAdmin);
   const canUseTenant = Boolean(
     tenantSlug && (me?.isPlatformAdmin || ["tenant_admin", "contributor", "viewer"].includes(me?.membership?.role))
   );
   const isTenantDashboard = Boolean(token && me && !isPlatformPage && canUseTenant);
+  const isNewsletterDashboard = Boolean(
+    token && me && canUseNewsletter && (isNewsletterPage || (isAdminHostname() && !canUsePlatform))
+  );
   const isPlatformDashboard = Boolean(token && me && isPlatformPage && canUsePlatform);
-  const shellClassName = isTenantDashboard ? "leader-app" : isPlatformDashboard ? "platform-app" : "app-frame admin-frame";
+  const shellClassName = isTenantDashboard ? "leader-app" : isPlatformDashboard || isNewsletterDashboard ? "platform-app" : "app-frame admin-frame";
 
   return (
     <div className={shellClassName}>
-      {!isTenantDashboard && !isPlatformDashboard ? (
-        <AdminHeader me={me} tenantSlug={tenantSlug} onRefresh={() => loadMe()} onLogout={logout} />
+      {!isTenantDashboard && !isPlatformDashboard && !isNewsletterDashboard ? (
+        <AdminHeader me={me} tenantSlug={tenantSlug} mode={isNewsletterPage ? "newsletter" : ""} onRefresh={() => loadMe()} onLogout={logout} />
       ) : null}
 
       {!token || !me ? (
@@ -2968,7 +3446,7 @@ export default function AdminConsole() {
         />
       ) : (
         <>
-          {!isTenantDashboard && !isPlatformDashboard ? (
+          {!isTenantDashboard && !isPlatformDashboard && !isNewsletterDashboard ? (
           <section className="admin-profile-strip">
             <span className="badge strong">{me.user?.display_name || me.user?.email}</span>
             {me.isPlatformAdmin ? <span className="badge">Platform admin</span> : null}
@@ -2977,7 +3455,11 @@ export default function AdminConsole() {
           </section>
           ) : null}
 
-          {isPlatformPage ? (
+          {isNewsletterPage || (isPlatformPage && canUseNewsletter && !canUsePlatform) ? (
+            canUseNewsletter
+              ? <NewsletterPanel token={token} me={me} onRefresh={() => loadMe()} onLogout={logout} />
+              : <EmptyPanel title="Newsletter admin access required" body="This account can sign in, but it is not assigned newsletter publishing access." />
+          ) : isPlatformPage ? (
             canUsePlatform
               ? <PlatformPanel token={token} me={me} onRefresh={() => loadMe()} onLogout={logout} />
               : <EmptyPanel title="Platform access required" body="This account can sign in, but it is not a root admin." />

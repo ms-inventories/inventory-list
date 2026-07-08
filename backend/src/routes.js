@@ -5,7 +5,7 @@ import { z } from "zod";
 import { authContext, exchangeOidcCode } from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
-import { sendProofRequestEmail, sendProofSubmittedEmail, sendTenantInviteEmail } from "./email.js";
+import { sendNewsletterIssueEmail, sendProofRequestEmail, sendProofSubmittedEmail, sendTenantInviteEmail } from "./email.js";
 import { hasTenantRole, tenantContext } from "./tenant.js";
 
 const tenantRoles = ["tenant_admin", "contributor", "viewer"];
@@ -13,6 +13,12 @@ const itemStatuses = ["unchecked", "found", "not_found", "mismatch", "needs_revi
 const submissionStatuses = ["found", "not_found", "mismatch", "needs_review"];
 const reviewDecisions = ["approved", "request_more_info", "rejected"];
 const photoKinds = ["general", "serial", "location", "damage"];
+const newsletterIssueSchema = z.object({
+  title: z.string().min(2).max(160),
+  editionLabel: z.string().max(80).optional(),
+  summary: z.string().max(600).optional(),
+  body: z.string().min(10).max(10000)
+});
 const imageMimeTypes = new Map([
   ["image/jpeg", ".jpg"],
   ["image/png", ".png"],
@@ -193,6 +199,41 @@ function rowToImportBatch(row, { includeText = false } = {}) {
   return batch;
 }
 
+function rowToNewsletterSubscriber(row) {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    status: row.status,
+    source: row.source,
+    lastSubscribedAt: row.last_subscribed_at,
+    unsubscribedAt: row.unsubscribed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function rowToNewsletterIssue(row, { includeBody = false } = {}) {
+  if (!row) return null;
+
+  const issue = {
+    id: row.id,
+    title: row.title,
+    editionLabel: row.edition_label,
+    summary: row.summary,
+    status: row.status,
+    publishedAt: row.published_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    sentCount: Number(row.sent_count || 0),
+    failedCount: Number(row.failed_count || 0),
+    skippedCount: Number(row.skipped_count || 0)
+  };
+
+  if (includeBody) issue.body = row.body;
+  return issue;
+}
+
 function safeStorageKey(key) {
   const normalized = String(key || "").replace(/\\/g, "/").replace(/^\/+/, "");
   if (!normalized || normalized.includes("..")) return "";
@@ -349,6 +390,12 @@ function buildTenantAdminUrl(tenant) {
 
 function buildTenantTaskUrl(tenant) {
   return tenantBaseUrl(tenant);
+}
+
+function buildNewsletterUnsubscribeUrl(email) {
+  const url = new URL(config.publicAppUrl);
+  url.hash = `/unsubscribe?email=${encodeURIComponent(email)}`;
+  return url.toString();
 }
 
 function normalizeMatchText(value) {
@@ -613,6 +660,71 @@ async function requirePlatformAdmin(request, reply) {
   return auth;
 }
 
+async function requireFrgAdmin(request, reply) {
+  const auth = await authContext(request, reply);
+
+  if (!auth.identity.isFrgAdmin && !auth.identity.isPlatformAdmin) {
+    reply.code(403);
+    throw new Error("Newsletter admin access required");
+  }
+
+  return auth;
+}
+
+async function deliverNewsletterIssue(issue) {
+  const subscribers = await query(
+    `
+      SELECT s.*
+      FROM newsletter_subscribers s
+      WHERE s.status = 'active'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM newsletter_deliveries d
+          WHERE d.issue_id = $1 AND d.email = s.email
+        )
+      ORDER BY s.created_at ASC
+    `,
+    [issue.id]
+  );
+  const counts = { sent: 0, skipped: 0, failed: 0 };
+
+  for (const subscriber of subscribers.rows) {
+    let deliveryStatus = "sent";
+    let errorText = null;
+
+    try {
+      const result = await sendNewsletterIssueEmail({
+        to: subscriber.email,
+        issue,
+        unsubscribeUrl: buildNewsletterUnsubscribeUrl(subscriber.email)
+      });
+
+      if (!result.sent) {
+        deliveryStatus = "skipped";
+        errorText = result.reason || "not_sent";
+      }
+    } catch (error) {
+      deliveryStatus = "failed";
+      errorText = error.message || "delivery_failed";
+    }
+
+    counts[deliveryStatus] += 1;
+    await query(
+      `
+        INSERT INTO newsletter_deliveries (issue_id, subscriber_id, email, status, error, sent_at)
+        VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 = 'sent' THEN now() ELSE NULL END)
+        ON CONFLICT (issue_id, email) DO NOTHING
+      `,
+      [issue.id, subscriber.id, subscriber.email, deliveryStatus, errorText]
+    );
+  }
+
+  return {
+    total: subscribers.rows.length,
+    ...counts
+  };
+}
+
 function route(app, method, path, handler) {
   app[method](path, async (request, response, next) => {
     const reply = {
@@ -697,6 +809,263 @@ export function registerRoutes(app) {
       tenant: rowToTenant(context.tenant),
       membership: context.membership
     };
+  });
+
+  route(app, "get", "/api/newsletter/public", async () => {
+    const latestResult = await query(
+      `
+        SELECT *
+        FROM newsletter_issues
+        WHERE status = 'published'
+        ORDER BY published_at DESC NULLS LAST, created_at DESC
+        LIMIT 1
+      `
+    );
+    const recentResult = await query(
+      `
+        SELECT *
+        FROM newsletter_issues
+        WHERE status = 'published'
+        ORDER BY published_at DESC NULLS LAST, created_at DESC
+        LIMIT 5
+      `
+    );
+
+    return {
+      latestIssue: rowToNewsletterIssue(latestResult.rows[0], { includeBody: true }),
+      issues: recentResult.rows.map(row => rowToNewsletterIssue(row))
+    };
+  });
+
+  route(app, "post", "/api/newsletter/subscribers", async (request, reply) => {
+    const body = parseBody(
+      z.object({
+        email: z.string().email(),
+        displayName: z.string().max(120).optional()
+      }),
+      request.body
+    );
+    const email = body.email.trim().toLowerCase();
+    const displayName = String(body.displayName || "").trim() || null;
+
+    const result = await query(
+      `
+        INSERT INTO newsletter_subscribers (email, display_name, status, source, last_subscribed_at, unsubscribed_at, updated_at)
+        VALUES ($1, $2, 'active', 'public_site', now(), NULL, now())
+        ON CONFLICT (email) DO UPDATE SET
+          display_name = COALESCE(EXCLUDED.display_name, newsletter_subscribers.display_name),
+          status = 'active',
+          last_subscribed_at = now(),
+          unsubscribed_at = NULL,
+          updated_at = now()
+        RETURNING *
+      `,
+      [email, displayName]
+    );
+
+    reply.code(201);
+    return { subscriber: rowToNewsletterSubscriber(result.rows[0]) };
+  });
+
+  route(app, "post", "/api/newsletter/unsubscribe", async (request) => {
+    const body = parseBody(
+      z.object({
+        email: z.string().email()
+      }),
+      request.body
+    );
+    const email = body.email.trim().toLowerCase();
+
+    await query(
+      `
+        UPDATE newsletter_subscribers
+        SET status = 'unsubscribed',
+          unsubscribed_at = now(),
+          updated_at = now()
+        WHERE email = $1
+      `,
+      [email]
+    );
+
+    return { ok: true, email, status: "unsubscribed" };
+  });
+
+  route(app, "get", "/api/newsletter/admin", async (request, reply) => {
+    await requireFrgAdmin(request, reply);
+
+    const [issueResult, statsResult, subscriberResult] = await Promise.all([
+      query(
+        `
+          SELECT i.*,
+            COUNT(d.id) FILTER (WHERE d.status = 'sent')::int AS sent_count,
+            COUNT(d.id) FILTER (WHERE d.status = 'failed')::int AS failed_count,
+            COUNT(d.id) FILTER (WHERE d.status = 'skipped')::int AS skipped_count
+          FROM newsletter_issues i
+          LEFT JOIN newsletter_deliveries d ON d.issue_id = i.id
+          GROUP BY i.id
+          ORDER BY
+            CASE i.status
+              WHEN 'draft' THEN 0
+              WHEN 'published' THEN 1
+              ELSE 2
+            END,
+            COALESCE(i.published_at, i.updated_at, i.created_at) DESC
+        `
+      ),
+      query(
+        `
+          SELECT
+            COUNT(*) FILTER (WHERE status = 'active')::int AS active_count,
+            COUNT(*) FILTER (WHERE status = 'unsubscribed')::int AS unsubscribed_count,
+            COUNT(*)::int AS total_count
+          FROM newsletter_subscribers
+        `
+      ),
+      query(
+        `
+          SELECT *
+          FROM newsletter_subscribers
+          ORDER BY updated_at DESC
+          LIMIT 40
+        `
+      )
+    ]);
+
+    return {
+      issues: issueResult.rows.map(row => rowToNewsletterIssue(row, { includeBody: true })),
+      subscriberStats: {
+        active: statsResult.rows[0]?.active_count || 0,
+        unsubscribed: statsResult.rows[0]?.unsubscribed_count || 0,
+        total: statsResult.rows[0]?.total_count || 0
+      },
+      subscribers: subscriberResult.rows.map(rowToNewsletterSubscriber)
+    };
+  });
+
+  route(app, "post", "/api/newsletter/admin/issues", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+    const body = parseBody(newsletterIssueSchema, request.body);
+
+    const created = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          INSERT INTO newsletter_issues (title, edition_label, summary, body, created_by)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING *
+        `,
+        [
+          body.title.trim(),
+          String(body.editionLabel || "").trim() || null,
+          String(body.summary || "").trim() || null,
+          body.body.trim(),
+          auth.user.id
+        ]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "newsletter.issue.created",
+        entityType: "newsletter_issue",
+        entityId: result.rows[0].id,
+        metadata: { title: body.title.trim() }
+      });
+
+      return result.rows[0];
+    });
+
+    reply.code(201);
+    return { issue: rowToNewsletterIssue(created, { includeBody: true }) };
+  });
+
+  route(app, "patch", "/api/newsletter/admin/issues/:issueId", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+    const body = parseBody(newsletterIssueSchema, request.body);
+
+    const updated = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          UPDATE newsletter_issues
+          SET title = $1,
+            edition_label = $2,
+            summary = $3,
+            body = $4,
+            updated_at = now()
+          WHERE id = $5
+          RETURNING *
+        `,
+        [
+          body.title.trim(),
+          String(body.editionLabel || "").trim() || null,
+          String(body.summary || "").trim() || null,
+          body.body.trim(),
+          request.params.issueId
+        ]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "newsletter.issue.updated",
+        entityType: "newsletter_issue",
+        entityId: result.rows[0].id,
+        metadata: { title: body.title.trim() }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!updated) {
+      reply.code(404);
+      throw new Error("Newsletter issue not found");
+    }
+
+    return { issue: rowToNewsletterIssue(updated, { includeBody: true }) };
+  });
+
+  route(app, "post", "/api/newsletter/admin/issues/:issueId/publish", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+
+    const published = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          UPDATE newsletter_issues
+          SET status = 'published',
+            published_by = $1,
+            published_at = CASE
+              WHEN status = 'published' AND published_at IS NOT NULL THEN published_at
+              ELSE now()
+            END,
+            updated_at = now()
+          WHERE id = $2
+          RETURNING *
+        `,
+        [auth.user.id, request.params.issueId]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "newsletter.issue.published",
+        entityType: "newsletter_issue",
+        entityId: result.rows[0].id,
+        metadata: { title: result.rows[0].title }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!published) {
+      reply.code(404);
+      throw new Error("Newsletter issue not found");
+    }
+
+    const delivery = await deliverNewsletterIssue(published);
+    return { issue: rowToNewsletterIssue(published, { includeBody: true }), delivery };
   });
 
   route(app, "get", "/api/platform/tenants", async (request, reply) => {

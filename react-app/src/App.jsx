@@ -360,6 +360,10 @@ function getAdminUrl() {
   return `https://admin.${appConfig.baseDomain}/#/admin`;
 }
 
+function getNewsletterAdminUrl() {
+  return `https://admin.${appConfig.baseDomain}/#/newsletter`;
+}
+
 function getApplicationPortalUrl() {
   return appConfig.authentikLaunchUrl || getAdminUrl();
 }
@@ -388,6 +392,23 @@ function getWorkspaceSlugsFromGroups(groups) {
 function isOidcCallback(search = window.location.search) {
   const params = new URLSearchParams(search || "");
   return params.has("code") && params.has("state");
+}
+
+function formatPublicDate(value) {
+  if (!value) return "";
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function getIssueBodyPreview(body) {
+  const lines = String(body || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  return lines.slice(0, 4);
 }
 
 function LaunchRouter() {
@@ -438,6 +459,11 @@ function LaunchRouter() {
           return;
         }
 
+        if (data.isFrgAdmin || groups.includes("876en-frg-admins")) {
+          window.location.assign(getNewsletterAdminUrl());
+          return;
+        }
+
         if (slugs.length === 1) {
           window.location.assign(getTenantUrl(slugs[0]));
           return;
@@ -446,14 +472,6 @@ function LaunchRouter() {
         if (slugs.length > 1) {
           setWorkspaces(slugs);
           setStatus({ text: "Choose a workspace to continue.", isError: false });
-          return;
-        }
-
-        if (data.isFrgAdmin || groups.includes("876en-frg-admins")) {
-          setStatus({
-            text: "FRG publishing access is ready, but the editor screen is not wired into this launcher yet.",
-            isError: false
-          });
           return;
         }
 
@@ -535,18 +553,56 @@ function LaunchRouter() {
 
 function PublicHome() {
   const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [status, setStatus] = useState({ text: "", isError: false });
-  const newsletterActionUrl = String(appConfig.newsletterActionUrl || "").trim();
-  const canSubmit = Boolean(newsletterActionUrl);
+  const [newsletter, setNewsletter] = useState({ latestIssue: null, issues: [] });
+  const [newsletterStatus, setNewsletterStatus] = useState({ text: "Loading latest newsletter...", isError: false });
 
-  function submitNewsletter(event) {
-    if (canSubmit) return;
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadNewsletter() {
+      try {
+        const data = await apiRequest("/newsletter/public");
+        if (ignore) return;
+        setNewsletter({
+          latestIssue: data.latestIssue || null,
+          issues: data.issues || []
+        });
+        setNewsletterStatus({ text: "", isError: false });
+      } catch (error) {
+        if (!ignore) setNewsletterStatus({ text: getApiErrorMessage(error), isError: true });
+      }
+    }
+
+    loadNewsletter();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  async function submitNewsletter(event) {
     event.preventDefault();
-    setStatus({
-      text: "Newsletter signup is being connected. Check back here for the first update link.",
-      isError: false
-    });
+
+    try {
+      setStatus({ text: "Adding you to the list...", isError: false });
+      await apiRequest("/newsletter/subscribers", {
+        method: "POST",
+        body: {
+          email: email.trim(),
+          displayName: displayName.trim() || undefined
+        }
+      });
+      setEmail("");
+      setDisplayName("");
+      setStatus({ text: "You are on the Black Shadow Company newsletter list.", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
   }
+
+  const latestIssue = newsletter.latestIssue;
+  const issuePreviewLines = getIssueBodyPreview(latestIssue?.body);
 
   return (
     <main className="public-site">
@@ -612,25 +668,45 @@ function PublicHome() {
 
       <section className="public-newsletter-band" id="newsletter" aria-labelledby="newsletterTitle">
         <div className="public-newsletter-wrap">
-          <div>
+          <div className="public-newsletter-copy">
             <p className="eyebrow">Newsletter</p>
-            <h2 id="newsletterTitle">Stay in the loop</h2>
-            <p>
-              The newsletter form is ready to connect to Brevo when the company contact list is finalized.
-            </p>
+            <h2 id="newsletterTitle">{latestIssue?.title || "Black Shadow Company newsletter"}</h2>
+            {latestIssue ? (
+              <article className="public-newsletter-latest">
+                <div className="public-newsletter-meta">
+                  {latestIssue.editionLabel ? <span>{latestIssue.editionLabel}</span> : null}
+                  {latestIssue.publishedAt ? <span>{formatPublicDate(latestIssue.publishedAt)}</span> : null}
+                </div>
+                {latestIssue.summary ? <p className="public-newsletter-summary">{latestIssue.summary}</p> : null}
+                <div className="public-newsletter-body">
+                  {issuePreviewLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}
+                </div>
+              </article>
+            ) : (
+              <p>
+                Sign up for family updates, event reminders, and company resources as the first issue is published.
+              </p>
+            )}
+            <StatusText status={newsletterStatus} />
           </div>
           <form
             className="public-newsletter-form"
-            action={newsletterActionUrl || undefined}
-            method="post"
             onSubmit={submitNewsletter}
           >
+            <label className="field-label" htmlFor="newsletterName">Name</label>
+            <input
+              id="newsletterName"
+              className="input"
+              type="text"
+              value={displayName}
+              placeholder="Your name"
+              onChange={event => setDisplayName(event.target.value)}
+            />
             <label className="field-label" htmlFor="newsletterEmail">Email address</label>
             <div className="public-newsletter-row">
               <input
                 id="newsletterEmail"
                 className="input"
-                name="EMAIL"
                 type="email"
                 value={email}
                 placeholder="name@example.com"
@@ -639,7 +715,7 @@ function PublicHome() {
               />
               <button className="btn btn-primary" type="submit" disabled={!email.trim()}>
                 <Mail aria-hidden="true" />
-                <span>{canSubmit ? "Sign up" : "Coming soon"}</span>
+                <span>Sign up</span>
               </button>
             </div>
             <StatusText status={status} />
@@ -647,6 +723,56 @@ function PublicHome() {
         </div>
       </section>
     </main>
+  );
+}
+
+function NewsletterUnsubscribe() {
+  const [email, setEmail] = useState(() => {
+    const hash = window.location.hash || "";
+    const query = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+    return new URLSearchParams(query).get("email") || "";
+  });
+  const [status, setStatus] = useState({ text: "", isError: false });
+
+  async function unsubscribe(event) {
+    event.preventDefault();
+    try {
+      setStatus({ text: "Updating subscription...", isError: false });
+      await apiRequest("/newsletter/unsubscribe", {
+        method: "POST",
+        body: { email: email.trim() }
+      });
+      setStatus({ text: "You have been unsubscribed from the newsletter.", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  return (
+    <div className="auth-screen launch-screen">
+      <section className="auth-card invite-card" aria-labelledby="unsubscribeTitle">
+        <p className="eyebrow">Newsletter</p>
+        <h1 id="unsubscribeTitle">Unsubscribe</h1>
+        <p className="auth-copy">Enter the email address to remove it from the Black Shadow Company newsletter.</p>
+        <form className="form-stack" onSubmit={unsubscribe}>
+          <label className="field-label" htmlFor="unsubscribeEmail">Email address</label>
+          <input
+            id="unsubscribeEmail"
+            className="input"
+            type="email"
+            value={email}
+            placeholder="name@example.com"
+            onChange={event => setEmail(event.target.value)}
+            required
+          />
+          <button className="btn btn-primary btn-full" type="submit" disabled={!email.trim()}>
+            <Mail aria-hidden="true" />
+            <span>Unsubscribe</span>
+          </button>
+          <StatusText status={status} />
+        </form>
+      </section>
+    </div>
   );
 }
 
@@ -1270,8 +1396,9 @@ export default function App() {
   const normalizedHash = hash.toLowerCase();
   const tenantSlug = getTenantSlugFromHostname();
   if (normalizedHash.startsWith("#/accept-invite")) return <AcceptInvite />;
+  if (normalizedHash.startsWith("#/unsubscribe")) return <NewsletterUnsubscribe />;
   if (normalizedHash === "#/launch" || path.startsWith("/launch") || isOidcCallback(route.search)) return <LaunchRouter />;
-  if (isAdminHostname() || path.startsWith("/admin") || normalizedHash === "#/admin") return <AdminConsole />;
+  if (isAdminHostname() || path.startsWith("/admin") || normalizedHash === "#/admin" || normalizedHash === "#/newsletter") return <AdminConsole />;
   if (isBaseHostname()) return <PublicHome />;
   if (tenantSlug && normalizedHash !== "#/lookup" && !path.startsWith("/lookup")) return <AdminConsole />;
   return <ViewerApp />;

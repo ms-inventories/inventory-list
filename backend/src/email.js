@@ -135,3 +135,29 @@ export async function sendProofRequestEmail({
 
   return { sent: true };
 }
+
+export async function sendNewsletterIssueEmail({ to, issue, unsubscribeUrl }) {
+  if (!isEmailConfigured()) {
+    return { sent: false, reason: "smtp_not_configured" };
+  }
+
+  const subject = issue.editionLabel
+    ? `${issue.editionLabel}: ${issue.title}`
+    : issue.title;
+  const text = compactLines([
+    issue.summary || null,
+    "",
+    issue.body,
+    "",
+    unsubscribeUrl ? `Unsubscribe: ${unsubscribeUrl}` : null
+  ]);
+
+  await getTransporter().sendMail({
+    from: senderAddress(),
+    to,
+    subject,
+    text
+  });
+
+  return { sent: true };
+}
