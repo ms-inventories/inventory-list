@@ -672,6 +672,10 @@ const proofRequestOptions = [
   { value: "damage", label: "Damage" }
 ];
 
+function countLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${Number(count) === 1 ? singular : plural}`;
+}
+
 function buildProofRequestMessage(fields) {
   const labels = fields
     .map(field => proofRequestOptions.find(option => option.value === field)?.label)
@@ -1908,6 +1912,8 @@ function PlatformPanel({ token }) {
   const [form, setForm] = useState({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
   const [status, setStatus] = useState({ text: "Loading platoons...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
+  const totalMembers = tenants.reduce((sum, tenant) => sum + Number(tenant.memberCount || 0), 0);
+  const totalAdmins = tenants.reduce((sum, tenant) => sum + Number(tenant.adminCount || 0), 0);
 
   async function loadTenants() {
     try {
@@ -1956,14 +1962,14 @@ function PlatformPanel({ token }) {
   }
 
   return (
-    <div className="admin-grid">
-      <section className="admin-card">
+    <div className="admin-grid platform-grid">
+      <section className="admin-card platform-create-card">
         <div className="admin-card-heading">
           <span className="admin-icon">
             <Building2 aria-hidden="true" />
           </span>
           <div>
-            <p className="eyebrow">Root</p>
+            <p className="eyebrow">New workspace</p>
             <h2>Create platoon</h2>
           </div>
         </div>
@@ -2022,27 +2028,46 @@ function PlatformPanel({ token }) {
       </section>
 
       <section className="admin-card admin-card-wide">
-        <div className="admin-card-heading">
-          <span className="admin-icon">
-            <Users aria-hidden="true" />
-          </span>
-          <div>
-            <p className="eyebrow">Workspaces</p>
-            <h2>Platoons</h2>
+        <div className="admin-section-top">
+          <div className="admin-card-heading">
+            <span className="admin-icon">
+              <Users aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow">Workspaces</p>
+              <h2>Platoons</h2>
+            </div>
+          </div>
+          <div className="platform-stats" aria-label="Platoon workspace totals">
+            <span>
+              <strong>{tenants.length}</strong>
+              <small>Platoons</small>
+            </span>
+            <span>
+              <strong>{totalMembers}</strong>
+              <small>Members</small>
+            </span>
+            <span>
+              <strong>{totalAdmins}</strong>
+              <small>Admins</small>
+            </span>
           </div>
         </div>
 
         {tenants.length ? (
-          <div className="admin-list">
+          <div className="admin-list platform-list">
             {tenants.map(tenant => (
-              <article className="admin-list-row" key={tenant.id}>
-                <div>
-                  <strong>{tenant.name}</strong>
-                  <span>{tenant.slug}.{appConfig.baseDomain}</span>
+              <article className="admin-list-row platform-row" key={tenant.id}>
+                <div className="platform-row-main">
+                  <span className="tenant-avatar" aria-hidden="true">{tenant.slug.slice(0, 2).toUpperCase()}</span>
+                  <div>
+                    <strong>{tenant.name}</strong>
+                    <span>{tenant.slug}.{appConfig.baseDomain}</span>
+                  </div>
                 </div>
                 <div className="admin-row-meta">
-                  <span className="badge">{tenant.memberCount} members</span>
-                  <span className="badge">{tenant.adminCount} admins</span>
+                  <span className="badge">{countLabel(tenant.memberCount, "member")}</span>
+                  <span className="badge">{countLabel(tenant.adminCount, "admin")}</span>
                   <a className="btn btn-secondary btn-small" href={`https://${tenant.slug}.${appConfig.baseDomain}/#/admin`}>
                     <span>Open</span>
                   </a>

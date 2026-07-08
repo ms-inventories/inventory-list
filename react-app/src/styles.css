@@ -954,7 +954,8 @@ button {
 }
 
 .admin-frame {
-  width: min(1240px, calc(100% - 32px));
+  width: min(1280px, calc(100% - 40px));
+  padding-top: 24px;
 }
 
 .admin-grid {
@@ -1138,10 +1139,131 @@ button {
 
 .admin-profile-strip {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  min-height: 48px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  box-shadow: none;
+}
+
+.admin-frame .app-header {
+  align-items: center;
   margin-bottom: 14px;
-  padding: 12px;
+}
+
+.admin-frame .app-header h1 {
+  font-size: clamp(2.25rem, 4vw, 3.15rem);
+  line-height: 1;
+}
+
+.admin-frame .header-copy {
+  max-width: 540px;
+  margin-top: 8px;
+}
+
+.admin-frame .header-actions .btn {
+  min-height: 42px;
+}
+
+.platform-grid {
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.platform-create-card {
+  gap: 14px;
+}
+
+.platform-create-card .admin-form {
+  gap: 9px;
+}
+
+.platform-create-card .field-label {
+  margin-top: 2px;
+}
+
+.platform-create-card .input,
+.platform-create-card .input-suffix-row {
+  min-height: 44px;
+}
+
+.admin-section-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.platform-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(72px, auto));
+  gap: 8px;
+}
+
+.platform-stats span {
+  display: grid;
+  min-width: 72px;
+  min-height: 46px;
+  align-content: center;
+  justify-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 6px 10px;
+}
+
+.platform-stats strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.platform-stats small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.platform-list {
+  gap: 8px;
+}
+
+.platform-row {
+  min-height: 64px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.platform-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tenant-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius);
+  background: #eef3eb;
+  color: var(--primary-strong);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.platform-row .admin-row-meta {
+  align-items: center;
+}
+
+.platform-row .badge {
+  min-height: 26px;
 }
 
 .admin-status {
@@ -2908,6 +3030,19 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .platform-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-section-top {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .platform-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .session-layout {
     grid-template-columns: 1fr;
   }
@@ -3125,6 +3260,28 @@ button {
   .admin-actions-row,
   .admin-profile-strip {
     align-items: stretch;
+  }
+
+  .admin-frame .app-header h1 {
+    font-size: 2rem;
+  }
+
+  .admin-profile-strip {
+    min-height: 0;
+    margin-bottom: 12px;
+    padding: 8px;
+  }
+
+  .platform-create-card {
+    padding: 14px;
+  }
+
+  .platform-stats span {
+    min-width: 0;
+  }
+
+  .platform-row-main {
+    width: 100%;
   }
 
   .closeout-metrics {
