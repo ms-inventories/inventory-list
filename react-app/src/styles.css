@@ -1787,9 +1787,27 @@ button {
   color: #253044;
 }
 
+.platform-domain,
+.platform-table-date {
+  color: var(--platform-muted) !important;
+  font-size: 0.84rem;
+  font-weight: 760;
+}
+
+.platform-table-number {
+  color: var(--platform-ink) !important;
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
 .platform-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.platform-open-link {
+  min-width: 62px;
+  justify-content: center;
 }
 
 .platform-org-card {
@@ -2291,7 +2309,7 @@ button {
 .platform-row-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -2308,14 +2326,14 @@ button {
 
 .platform-row-main strong {
   color: var(--platform-ink, var(--ink));
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
 .platform-row-main div > span {
   color: var(--platform-muted, var(--muted));
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 780;
   line-height: 1.2;
   overflow-wrap: anywhere;
@@ -2323,8 +2341,8 @@ button {
 
 .tenant-avatar {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--radius);

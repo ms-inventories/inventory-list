@@ -696,6 +696,33 @@ function countLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${Number(count) === 1 ? singular : plural}`;
 }
 
+function tenantHost(tenant) {
+  return `${tenant.slug}.${appConfig.baseDomain}`;
+}
+
+function tenantDisplayName(tenant) {
+  const rawName = String(tenant.name || "").trim();
+  const host = tenantHost(tenant).toLowerCase();
+  const slug = String(tenant.slug || "").toLowerCase();
+  const domain = String(appConfig.baseDomain || "").toLowerCase();
+
+  if (!rawName) return `${String(tenant.slug || "Platoon").toUpperCase()} Platoon`;
+
+  const normalized = rawName.toLowerCase();
+  if (normalized === slug || normalized === host || normalized.endsWith(`.${domain}`)) {
+    return `${String(tenant.slug || "Platoon").toUpperCase()} Platoon`;
+  }
+
+  return rawName;
+}
+
+function tenantInitials(tenant) {
+  const displayName = tenantDisplayName(tenant).replace(/\bplatoon\b/gi, "").trim() || tenant.slug || "P";
+  const parts = displayName.split(/[\s.-]+/).filter(Boolean);
+  if (parts.length < 2) return String(parts[0] || "P").slice(0, 2).toUpperCase();
+  return parts.slice(0, 2).map(part => part[0]).join("").toUpperCase();
+}
+
 const newsletterDraftTemplate = {
   title: "Black Shadow Company Newsletter",
   editionLabel: "First issue",
@@ -2631,27 +2658,30 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   <span>Created</span>
                   <span>Actions</span>
                 </div>
-                {visibleTenants.map(tenant => (
-                  <article className="platform-table-row" role="row" key={tenant.id}>
-                    <div className="platform-row-main">
-                      <span className="tenant-avatar" aria-hidden="true">{tenant.slug.slice(0, 2).toUpperCase()}</span>
-                      <div>
-                        <strong>{tenant.name}</strong>
-                        <span>{tenant.slug}.{appConfig.baseDomain}</span>
+                {visibleTenants.map(tenant => {
+                  const host = tenantHost(tenant);
+                  return (
+                    <article className="platform-table-row" role="row" key={tenant.id}>
+                      <div className="platform-row-main">
+                        <span className="tenant-avatar" aria-hidden="true">{tenantInitials(tenant)}</span>
+                        <div>
+                          <strong>{tenantDisplayName(tenant)}</strong>
+                          <span>{host}</span>
+                        </div>
                       </div>
-                    </div>
-                    <span>{tenant.slug}.{appConfig.baseDomain}</span>
-                    <span>{tenant.adminCount || 0}</span>
-                    <span>{tenant.memberCount || 0}</span>
-                    <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
-                    <span>{formatShortDate(tenant.createdAt)}</span>
-                    <div className="platform-actions">
-                      <a className="btn btn-secondary btn-small" href={`https://${tenant.slug}.${appConfig.baseDomain}/#/admin`}>
-                        <span>Open</span>
-                      </a>
-                    </div>
-                  </article>
-                ))}
+                      <span className="platform-domain">{host}</span>
+                      <span className="platform-table-number">{tenant.adminCount || 0}</span>
+                      <span className="platform-table-number">{tenant.memberCount || 0}</span>
+                      <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
+                      <span className="platform-table-date">{formatShortDate(tenant.createdAt)}</span>
+                      <div className="platform-actions">
+                        <a className="btn btn-secondary btn-small platform-open-link" href={`https://${host}/#/admin`}>
+                          <span>Open</span>
+                        </a>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             ) : (
               <EmptyPanel title="No platoons found" body="Adjust the search or create a new platoon workspace." />
