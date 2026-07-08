@@ -46,7 +46,8 @@ function rowToTenant(row) {
     id: row.id,
     slug: row.slug,
     name: row.name,
-    status: row.status
+    status: row.status,
+    createdAt: row.created_at
   };
 }
 
@@ -703,7 +704,7 @@ export function registerRoutes(app) {
 
     const result = await query(
       `
-        SELECT t.id, t.slug, t.name, t.status,
+        SELECT t.id, t.slug, t.name, t.status, t.created_at,
           COUNT(m.id)::int AS member_count,
           COUNT(m.id) FILTER (WHERE m.role = 'tenant_admin' AND m.status = 'active')::int AS admin_count
         FROM tenants t
@@ -737,7 +738,7 @@ export function registerRoutes(app) {
 
     const created = await withTransaction(async client => {
       const tenantResult = await client.query(
-        "INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING id, slug, name, status",
+        "INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING id, slug, name, status, created_at",
         [body.slug, body.name]
       );
       const tenant = tenantResult.rows[0];

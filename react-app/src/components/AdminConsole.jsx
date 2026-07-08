@@ -61,6 +61,15 @@ function formatDate(value) {
   }
 }
 
+function formatShortDate(value) {
+  if (!value) return "Not recorded";
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
+}
+
 function EmptyPanel({ title, body }) {
   return (
     <div className="admin-empty">
@@ -1912,13 +1921,27 @@ function ReviewPanel({ token, tenantSlug }) {
   );
 }
 
-function PlatformPanel({ token }) {
+function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [tenants, setTenants] = useState([]);
   const [form, setForm] = useState({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [status, setStatus] = useState({ text: "Loading platoons...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const totalMembers = tenants.reduce((sum, tenant) => sum + Number(tenant.memberCount || 0), 0);
   const totalAdmins = tenants.reduce((sum, tenant) => sum + Number(tenant.adminCount || 0), 0);
+  const activeTenants = tenants.filter(tenant => tenant.status === "active");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleTenants = tenants.filter(tenant => {
+    const matchesStatus = statusFilter === "all" || tenant.status === statusFilter;
+    const matchesQuery = !normalizedQuery || [
+      tenant.name,
+      tenant.slug,
+      tenant.status
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
+    return matchesStatus && matchesQuery;
+  });
 
   async function loadTenants() {
     try {
@@ -1934,6 +1957,11 @@ function PlatformPanel({ token }) {
   useEffect(() => {
     loadTenants();
   }, [token]);
+
+  async function refreshPlatform() {
+    await loadTenants();
+    onRefresh?.();
+  }
 
   function updateForm(key, value) {
     setForm(current => {
@@ -1957,6 +1985,7 @@ function PlatformPanel({ token }) {
       };
       const data = await apiRequest("/platform/tenants", { method: "POST", token, body });
       setForm({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
+      setIsCreateOpen(false);
       setStatus({ text: `Created ${data.tenant.slug}.${appConfig.baseDomain}`, isError: false });
       await loadTenants();
     } catch (error) {
@@ -1967,123 +1996,258 @@ function PlatformPanel({ token }) {
   }
 
   return (
-    <div className="admin-grid platform-grid">
-      <section className="admin-card platform-create-card">
-        <div className="admin-card-heading">
-          <span className="admin-icon">
-            <Building2 aria-hidden="true" />
-          </span>
-          <div>
-            <p className="eyebrow">New workspace</p>
-            <h2>Create platoon</h2>
-          </div>
+    <div className="platform-shell">
+      <aside className="platform-sidebar">
+        <div className="platform-brand">
+          <ShieldCheck aria-hidden="true" />
+          <strong>876 Inventory</strong>
         </div>
 
-        <form className="admin-form" onSubmit={createTenant}>
-          <label className="field-label" htmlFor="tenantName">Platoon name</label>
-          <input
-            id="tenantName"
-            className="input"
-            required
-            value={form.name}
-            placeholder="1st Platoon"
-            onChange={e => updateForm("name", e.target.value)}
-          />
-
-          <label className="field-label" htmlFor="tenantSlug">Subdomain</label>
-          <div className="input-suffix-row">
-            <input
-              id="tenantSlug"
-              className="input"
-              required
-              pattern="[a-z0-9-]+"
-              value={form.slug}
-              placeholder="1st"
-              onChange={e => updateForm("slug", e.target.value.toLowerCase())}
-            />
-            <span>.{appConfig.baseDomain}</span>
-          </div>
-
-          <label className="field-label" htmlFor="tenantAdminEmail">Platoon admin email</label>
-          <input
-            id="tenantAdminEmail"
-            className="input"
-            type="email"
-            value={form.adminEmail}
-            placeholder="admin@example.com"
-            onChange={e => updateForm("adminEmail", e.target.value)}
-          />
-
-          <label className="field-label" htmlFor="tenantAdminName">Platoon admin name</label>
-          <input
-            id="tenantAdminName"
-            className="input"
-            value={form.adminDisplayName}
-            placeholder="PSG Smith"
-            onChange={e => updateForm("adminDisplayName", e.target.value)}
-          />
-
-          <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
-            <Plus aria-hidden="true" />
-            <span>{isSaving ? "Creating..." : "Create platoon"}</span>
+        <nav className="platform-nav" aria-label="Platform admin">
+          <button type="button">
+            <Home aria-hidden="true" />
+            <span>Dashboard</span>
           </button>
-        </form>
+          <button className="active" type="button">
+            <Users aria-hidden="true" />
+            <span>Platoons</span>
+          </button>
+          <button type="button">
+            <UserPlus aria-hidden="true" />
+            <span>Users</span>
+          </button>
+          <button type="button">
+            <ShieldCheck aria-hidden="true" />
+            <span>Roles</span>
+          </button>
+          <button type="button">
+            <Building2 aria-hidden="true" />
+            <span>Organizations</span>
+          </button>
+        </nav>
 
-        <StatusLine status={status} />
-      </section>
-
-      <section className="admin-card admin-card-wide">
-        <div className="admin-section-top">
-          <div className="admin-card-heading">
-            <span className="admin-icon">
-              <Users aria-hidden="true" />
-            </span>
-            <div>
-              <p className="eyebrow">Workspaces</p>
-              <h2>Platoons</h2>
-            </div>
-          </div>
-          <div className="platform-stats" aria-label="Platoon workspace totals">
-            <span>
-              <strong>{tenants.length}</strong>
-              <small>Platoons</small>
-            </span>
-            <span>
-              <strong>{totalMembers}</strong>
-              <small>Members</small>
-            </span>
-            <span>
-              <strong>{totalAdmins}</strong>
-              <small>Admins</small>
-            </span>
-          </div>
+        <div className="platform-sidebar-foot">
+          <button type="button">
+            <RefreshCw aria-hidden="true" />
+            <span>Support</span>
+          </button>
         </div>
+      </aside>
 
-        {tenants.length ? (
-          <div className="admin-list platform-list">
-            {tenants.map(tenant => (
-              <article className="admin-list-row platform-row" key={tenant.id}>
-                <div className="platform-row-main">
-                  <span className="tenant-avatar" aria-hidden="true">{tenant.slug.slice(0, 2).toUpperCase()}</span>
-                  <div>
-                    <strong>{tenant.name}</strong>
-                    <span>{tenant.slug}.{appConfig.baseDomain}</span>
-                  </div>
-                </div>
-                <div className="admin-row-meta">
-                  <span className="badge">{countLabel(tenant.memberCount, "member")}</span>
-                  <span className="badge">{countLabel(tenant.adminCount, "admin")}</span>
-                  <a className="btn btn-secondary btn-small" href={`https://${tenant.slug}.${appConfig.baseDomain}/#/admin`}>
-                    <span>Open</span>
-                  </a>
-                </div>
-              </article>
-            ))}
+      <main className="platform-main">
+        <header className="platform-topbar">
+          <div />
+          <div className="leader-user-actions">
+            <button className="icon-button" type="button" onClick={refreshPlatform} aria-label="Refresh">
+              <RefreshCw aria-hidden="true" />
+            </button>
+            <div className="leader-user-card">
+              <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "A").slice(0, 1).toUpperCase()}</span>
+              <div>
+                <strong>{me?.user?.display_name || me?.user?.email || "Admin user"}</strong>
+                <span>Super administrator</span>
+              </div>
+              <ChevronDown aria-hidden="true" />
+            </div>
+            <button className="btn btn-secondary btn-small" type="button" onClick={onLogout}>
+              <LogOut aria-hidden="true" />
+              <span>Sign out</span>
+            </button>
           </div>
-        ) : (
-          <EmptyPanel title="No platoons yet" body="Create the first workspace to start assigning inventory." />
-        )}
-      </section>
+        </header>
+
+        <div className="platform-content">
+          <div className="platform-page-heading">
+            <div>
+              <h1>Platoons</h1>
+              <p>Create, manage, and organize platoon workspaces.</p>
+            </div>
+            <button className="btn btn-primary" type="button" onClick={() => setIsCreateOpen(true)}>
+              <Plus aria-hidden="true" />
+              <span>Create platoon</span>
+            </button>
+          </div>
+
+          <StatusLine status={status} />
+
+          <section className="platform-stat-grid" aria-label="Platform totals">
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon blue">
+                <Users aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{tenants.length}</strong>
+                <span>Total platoons</span>
+              </div>
+            </div>
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon green">
+                <CheckCircle2 aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{activeTenants.length}</strong>
+                <span>Active platoons</span>
+              </div>
+            </div>
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon purple">
+                <ShieldCheck aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{totalMembers}</strong>
+                <span>Total users</span>
+              </div>
+            </div>
+            <div className="platform-stat-card">
+              <span className="platform-stat-icon amber">
+                <Building2 aria-hidden="true" />
+              </span>
+              <div>
+                <strong>{totalAdmins}</strong>
+                <span>Admins assigned</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="platform-table-card">
+            <div className="platform-table-toolbar">
+              <label className="platform-search">
+                <Search aria-hidden="true" />
+                <input
+                  value={query}
+                  placeholder="Search platoons by name or subdomain..."
+                  onChange={event => setQuery(event.target.value)}
+                />
+              </label>
+              <select className="select platform-filter" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}>
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="archived">Archived</option>
+              </select>
+            </div>
+
+            {visibleTenants.length ? (
+              <div className="platform-table" role="table" aria-label="Platoon workspaces">
+                <div className="platform-table-head" role="row">
+                  <span>Platoon name</span>
+                  <span>Subdomain</span>
+                  <span>Admins</span>
+                  <span>Members</span>
+                  <span>Status</span>
+                  <span>Created</span>
+                  <span>Actions</span>
+                </div>
+                {visibleTenants.map(tenant => (
+                  <article className="platform-table-row" role="row" key={tenant.id}>
+                    <div className="platform-row-main">
+                      <span className="tenant-avatar" aria-hidden="true">{tenant.slug.slice(0, 2).toUpperCase()}</span>
+                      <div>
+                        <strong>{tenant.name}</strong>
+                        <span>{tenant.slug}.{appConfig.baseDomain}</span>
+                      </div>
+                    </div>
+                    <span>{tenant.slug}.{appConfig.baseDomain}</span>
+                    <span>{tenant.adminCount || 0}</span>
+                    <span>{tenant.memberCount || 0}</span>
+                    <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
+                    <span>{formatShortDate(tenant.createdAt)}</span>
+                    <div className="platform-actions">
+                      <a className="btn btn-secondary btn-small" href={`https://${tenant.slug}.${appConfig.baseDomain}/#/admin`}>
+                        <span>Open</span>
+                      </a>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <EmptyPanel title="No platoons found" body="Adjust the search or create a new platoon workspace." />
+            )}
+          </section>
+
+          <section className="platform-table-card platform-org-card">
+            <div className="platform-section-heading">
+              <h2>Organization overview</h2>
+            </div>
+            <div className="platform-org-row">
+              <span>876 EN</span>
+              <span>{countLabel(tenants.length, "platoon")}</span>
+              <span>{countLabel(totalMembers, "user")}</span>
+              <span className="status-pill active">Active</span>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      {isCreateOpen ? (
+        <div className="modal-backdrop platform-modal-backdrop" role="presentation">
+          <aside className="platform-create-modal" role="dialog" aria-modal="true" aria-labelledby="createPlatoonTitle">
+            <div className="platform-modal-heading">
+              <div>
+                <p className="eyebrow">New workspace</p>
+                <h2 id="createPlatoonTitle">Create platoon</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setIsCreateOpen(false)} aria-label="Close create platoon">
+                <XCircle aria-hidden="true" />
+              </button>
+            </div>
+
+            <form className="admin-form" onSubmit={createTenant}>
+              <label className="field-label" htmlFor="tenantName">Platoon name</label>
+              <input
+                id="tenantName"
+                className="input"
+                required
+                value={form.name}
+                placeholder="1st Platoon"
+                onChange={e => updateForm("name", e.target.value)}
+              />
+
+              <label className="field-label" htmlFor="tenantSlug">Subdomain</label>
+              <div className="input-suffix-row">
+                <input
+                  id="tenantSlug"
+                  className="input"
+                  required
+                  pattern="[a-z0-9-]+"
+                  value={form.slug}
+                  placeholder="1st"
+                  onChange={e => updateForm("slug", e.target.value.toLowerCase())}
+                />
+                <span>.{appConfig.baseDomain}</span>
+              </div>
+
+              <label className="field-label" htmlFor="tenantAdminEmail">Platoon admin email</label>
+              <input
+                id="tenantAdminEmail"
+                className="input"
+                type="email"
+                value={form.adminEmail}
+                placeholder="admin@example.com"
+                onChange={e => updateForm("adminEmail", e.target.value)}
+              />
+
+              <label className="field-label" htmlFor="tenantAdminName">Platoon admin name</label>
+              <input
+                id="tenantAdminName"
+                className="input"
+                value={form.adminDisplayName}
+                placeholder="PSG Smith"
+                onChange={e => updateForm("adminDisplayName", e.target.value)}
+              />
+
+              <div className="button-row platform-modal-actions">
+                <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
+                  <Plus aria-hidden="true" />
+                  <span>{isSaving ? "Creating..." : "Create platoon"}</span>
+                </button>
+                <button className="btn btn-secondary btn-full" type="button" onClick={() => setIsCreateOpen(false)}>
+                  <span>Cancel</span>
+                </button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2748,10 +2912,14 @@ export default function AdminConsole() {
     tenantSlug && (me?.isPlatformAdmin || ["tenant_admin", "contributor", "viewer"].includes(me?.membership?.role))
   );
   const isTenantDashboard = Boolean(token && me && !isPlatformPage && canUseTenant);
+  const isPlatformDashboard = Boolean(token && me && isPlatformPage && canUsePlatform);
+  const shellClassName = isTenantDashboard ? "leader-app" : isPlatformDashboard ? "platform-app" : "app-frame admin-frame";
 
   return (
-    <div className={isTenantDashboard ? "leader-app" : "app-frame admin-frame"}>
-      {!isTenantDashboard ? <AdminHeader me={me} tenantSlug={tenantSlug} onRefresh={() => loadMe()} onLogout={logout} /> : null}
+    <div className={shellClassName}>
+      {!isTenantDashboard && !isPlatformDashboard ? (
+        <AdminHeader me={me} tenantSlug={tenantSlug} onRefresh={() => loadMe()} onLogout={logout} />
+      ) : null}
 
       {!token || !me ? (
         <AuthPanel
@@ -2764,7 +2932,7 @@ export default function AdminConsole() {
         />
       ) : (
         <>
-          {!isTenantDashboard ? (
+          {!isTenantDashboard && !isPlatformDashboard ? (
           <section className="admin-profile-strip">
             <span className="badge strong">{me.user?.display_name || me.user?.email}</span>
             {me.isPlatformAdmin ? <span className="badge">Platform admin</span> : null}
@@ -2775,7 +2943,7 @@ export default function AdminConsole() {
 
           {isPlatformPage ? (
             canUsePlatform
-              ? <PlatformPanel token={token} />
+              ? <PlatformPanel token={token} me={me} onRefresh={() => loadMe()} onLogout={logout} />
               : <EmptyPanel title="Platform access required" body="This account can sign in, but it is not a root admin." />
           ) : canUseTenant ? (
             <TenantPanel token={token} tenantSlug={tenantSlug} me={me} onRefresh={() => loadMe()} onLogout={logout} />
