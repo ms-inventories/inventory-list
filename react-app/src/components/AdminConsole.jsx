@@ -128,7 +128,7 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
             <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("root")}>
               <span>Root admin</span>
             </button>
-            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("lt")}>
+            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("lead")}>
               <span>Platoon admin</span>
             </button>
             <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("nco")}>
@@ -2378,10 +2378,10 @@ export default function AdminConsole() {
         name: "QA Root Admin",
         groups: ["876en-admins"]
       },
-      lt: {
-        sub: "qa-lt",
-        email: "qa-lt@876en.test",
-        name: "QA LT",
+      lead: {
+        sub: "qa-lead",
+        email: "qa-lead@876en.test",
+        name: "QA Platoon Admin",
         groups: ["876en-ms", "876en-platoon-admin"]
       },
       nco: {

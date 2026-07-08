@@ -179,7 +179,7 @@ EMAIL_FROM_ADDRESS=no-reply@876en.org
 Implemented email events:
 
 - tenant invite email
-- LT/platoon-admin notification when an NCO submits a finding
+- Platoon admin notification when an NCO submits a finding
 - NCO notification when the platoon admin requests more proof
 
 The proof emails are best-effort. The API saves the inventory action first, then sends mail in the background so SMTP downtime does not block field work.
@@ -241,7 +241,7 @@ The first React tenant-admin session flow is live:
 - create an active inventory session from the platoon admin page
 - paste hand-receipt packet rows into the session
 - view session progress and row status
-- let the LT directly mark rows found or not found when working alone
+- let the platoon admin directly mark rows found or not found when working alone
 - let contributors/NCOs submit found/not-found/mismatch proof with location, serial, note, and photo
 - show contributors the platoon admin's request note and move those response items to the top
 - let the platoon admin review proof from a queue and approve, reject, or request more proof
@@ -307,13 +307,13 @@ STORAGE_ROOT=/data/inventory-uploads-qa
 
 Keep QA on a separate database and storage folder. Never enable `ALLOW_DEV_AUTH` on the production backend.
 
-The QA frontend exposes root/LT/NCO persona buttons when `VITE_ENABLE_QA_AUTH=true`. A normal test pass should be:
+The QA frontend exposes root/platoon-admin/NCO persona buttons when `VITE_ENABLE_QA_AUTH=true`. A normal test pass should be:
 
-1. Root admin creates a platoon with `qa-lt@876en.test` as the LT.
-2. QA LT opens that platoon, creates a session, and pastes packet rows.
-3. QA LT invites or directly creates contributor access for `qa-nco@876en.test`.
+1. Root admin creates a platoon with `qa-lead@876en.test` as the platoon admin.
+2. QA platoon admin opens that platoon, creates a session, and pastes packet rows.
+3. QA platoon admin invites or directly creates contributor access for `qa-nco@876en.test`.
 4. QA NCO opens Tasks, submits proof with a photo/location/serial.
-5. QA LT opens Review and approves, requests more proof, or rejects.
+5. QA platoon admin opens Review and approves, requests more proof, or rejects.
 
 ## GitHub Actions
 

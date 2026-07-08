@@ -10,7 +10,7 @@ It is intentionally separate from the static GitHub Pages app in the repository 
 - Validate Authentik-issued OIDC access tokens.
 - Enforce tenant roles:
   - `platform_admin`: supply/main admin who can create tenants.
-  - `tenant_admin`: LT or tenant owner.
+  - `tenant_admin`: platoon owner or delegated inventory lead.
   - `contributor`: NCO/soldier who can submit findings and evidence.
   - `viewer`: read-only access.
 - Track inventory sessions, session items, submissions, photos, review requests, and audit events.
@@ -41,8 +41,8 @@ When `ALLOW_DEV_AUTH=true`, you can simulate a user with headers:
 
 ```text
 x-dev-sub: dev-user-1
-x-dev-email: lt@example.com
-x-dev-name: Demo LT
+x-dev-email: platoon-admin@example.com
+x-dev-name: Demo Platoon Admin
 x-dev-groups: 876en-ms,876en-platoon-admin
 ```
 
@@ -62,12 +62,12 @@ Request body:
 {
   "name": "1st Platoon",
   "slug": "1st",
-  "adminEmail": "lt@example.com",
-  "adminDisplayName": "1LT Example"
+  "adminEmail": "platoon-admin@example.com",
+  "adminDisplayName": "Platoon Admin Example"
 }
 ```
 
-That creates `1st.876en.org` as the primary tenant hostname and makes the LT a `tenant_admin`.
+That creates `1st.876en.org` as the primary tenant hostname and makes the assigned inventory lead a `tenant_admin`.
 
 Platform admin access is granted when either condition is true:
 
@@ -97,7 +97,7 @@ The API stores a pending invite, returns the invite URL, and sends email through
 
 Invite roles:
 
-- `tenant_admin`: LT or delegated inventory lead.
+- `tenant_admin`: platoon owner or delegated inventory lead.
 - `contributor`: NCO/soldier who can submit findings and proof.
 - `viewer`: read-only access.
 

@@ -61,7 +61,7 @@ For the current mission, the highest-value work is:
 - 2026-06-29: Viewer search now shows closest-match suggestions when a strict packet search returns no exact results.
 - 2026-06-29: Result cards now have a one-tap copy action for friendly name, LIN, Army name, NSN, and location.
 - 2026-07-01: Added a separate Vite/React app under `react-app/` for the future Coolify deployment while leaving the root static GitHub Pages app intact.
-- 2026-07-01: Added a SaaS architecture doc and backend scaffold for Authentik login, tenant subdomains, LT/NCO inventory sessions, evidence submissions, and LT review.
+- 2026-07-01: Added a SaaS architecture doc and backend scaffold for Authentik login, tenant subdomains, platoon inventory sessions, evidence submissions, and platoon admin review.
 - 2026-07-01: Switched the backend scaffold to Express, added a monorepo package, and drafted inactive Coolify GitHub Actions plus the `876en.org` deployment plan.
 
 ## Phase 1: Make Packet Lookup Excellent

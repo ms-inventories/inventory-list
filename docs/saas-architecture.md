@@ -55,7 +55,7 @@ Suggested Authentik group:
 
 ### Tenant Admin
 
-Usually the LT, PSG, or delegated inventory lead for a platoon.
+Usually the platoon owner, PSG, or delegated inventory lead.
 
 Can:
 
