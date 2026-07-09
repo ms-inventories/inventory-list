@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
+  BookOpen,
   Building2,
   Camera,
   CheckCircle2,
@@ -17,6 +18,7 @@ import {
   LogIn,
   LogOut,
   MailPlus,
+  Megaphone,
   Menu,
   MessageSquare,
   Plus,
@@ -41,6 +43,12 @@ import {
   saveAuthSession
 } from "../lib/auth.js";
 import { readPacketFileText } from "../lib/ocr.js";
+import {
+  createPacketDraftRows,
+  packetMimeTypeForFile,
+  parsePacketRows,
+  sanitizePacketDraftRows
+} from "../lib/packetParser.js";
 
 const roleLabels = {
   tenant_admin: "Platoon admin",
@@ -48,8 +56,35 @@ const roleLabels = {
   viewer: "Viewer"
 };
 
+const tenantRoleOptions = [
+  { value: "tenant_admin", label: "Platoon admin" },
+  { value: "contributor", label: "Contributor" },
+  { value: "viewer", label: "Viewer" }
+];
+
 function formatRole(role) {
   return roleLabels[role] || role || "Member";
+}
+
+function formatMemberStatus(status) {
+  return {
+    active: "Active",
+    invited: "Invited",
+    disabled: "Disabled"
+  }[status] || status || "Unknown";
+}
+
+function formatAccessSource(source) {
+  return {
+    database: "App database",
+    authentik: "Authentik group",
+    platform_admin: "Platform admin override"
+  }[source] || "No tenant access";
+}
+
+function formatAccessMembership(membership) {
+  if (!membership) return "Not assigned";
+  return `${formatRole(membership.role)} - ${formatMemberStatus(membership.status)}`;
 }
 
 function formatDate(value) {
@@ -68,6 +103,48 @@ function formatShortDate(value) {
   } catch {
     return String(value);
   }
+}
+
+function formatRelativeTime(value) {
+  if (!value) return "";
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return "";
+
+  const diffSeconds = Math.round((timestamp - Date.now()) / 1000);
+  const absSeconds = Math.abs(diffSeconds);
+  const units = [
+    ["year", 60 * 60 * 24 * 365],
+    ["month", 60 * 60 * 24 * 30],
+    ["week", 60 * 60 * 24 * 7],
+    ["day", 60 * 60 * 24],
+    ["hour", 60 * 60],
+    ["minute", 60],
+    ["second", 1]
+  ];
+  const [unit, secondsPerUnit] = units.find(([, seconds]) => absSeconds >= seconds) || ["second", 1];
+  const amount = Math.round(diffSeconds / secondsPerUnit);
+
+  try {
+    return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, unit);
+  } catch {
+    return formatDate(value);
+  }
+}
+
+function notificationIconFor(type) {
+  return {
+    proof_submitted: ClipboardList,
+    proof_request: MessageSquare,
+    assignment: ListChecks,
+    packet_import: FileUp,
+    session_closed: CheckCircle2
+  }[type] || Bell;
+}
+
+function notificationSummaryText(count, isLoading) {
+  if (isLoading) return "Checking...";
+  if (!count) return "No unread items";
+  return `${count} unread`;
 }
 
 function formatInviteStatus(status) {
@@ -97,9 +174,32 @@ function inviteTimeline(invite) {
 }
 
 async function copyText(value) {
-  if (!globalThis.navigator?.clipboard || !globalThis.window?.isSecureContext) return false;
-  await globalThis.navigator.clipboard.writeText(value);
-  return true;
+  const text = String(value || "");
+  try {
+    if (globalThis.navigator?.clipboard && globalThis.window?.isSecureContext) {
+      await globalThis.navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the textarea copy path.
+  }
+
+  if (!globalThis.document) return false;
+  const textarea = globalThis.document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  globalThis.document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return globalThis.document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
 }
 
 function EmptyPanel({ title, body }) {
@@ -216,137 +316,6 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
 function StatusLine({ status }) {
   if (!status?.text) return null;
   return <div className={`admin-status ${status.isError ? "error" : ""}`}>{status.text}</div>;
-}
-
-function normalizePacketImportLine(line) {
-  return String(line || "")
-    .replace(/[|]/g, " ")
-    .replace(/\bMPO\s+Description\b/gi, "")
-    .replace(/\bNSN\s+Description\b/gi, "")
-    .replace(/\bSerNo\/RegNo\/LotNo\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function isPacketImportNoiseLine(line) {
-  const value = normalizePacketImportLine(line).toLowerCase();
-  if (!value || value.length < 4) return true;
-  if (/^(from|to|fe|uic|date|time|page|sysno|nsn|ui|ciic|dla|buom|oh qty)\b/.test(value)) return true;
-  if (/(sub hand receipt|responsible officer|national guard|department of the army)/.test(value)) return true;
-  if (/^(mpo|serno|regno|lotno)\b/.test(value)) return true;
-  if (/^\d+$/.test(value.replace(/\s+/g, ""))) return true;
-  if (/^[a-z]{1,3}$/i.test(value)) return true;
-  return false;
-}
-
-function scorePacketImportLine(line) {
-  const value = normalizePacketImportLine(line);
-  if (isPacketImportNoiseLine(value)) return -999;
-
-  let score = 0;
-  if (/^\d{6,10}\s+[a-z0-9]{5,8}\b/i.test(value)) score += 120;
-  if (/^[a-z]\d{5}\b/i.test(value)) score += 110;
-  if (/^[a-z0-9]{5,8}\s+.+/i.test(value) && /\d/.test(value.split(/\s+/)[0] || "")) score += 80;
-  if (/\b[a-z]\d{5}\b/i.test(value)) score += 55;
-  if (/\b(armament|antenna|battlefield|binocular|chemical|cutting|detector|device|group|kit|load|machine|navigation|radiac|radio|set|subsys|system|tamper|tool|trailer|training)\b/i.test(value)) score += 35;
-  if (/:/.test(value)) score += 15;
-  if (value.length >= 16) score += 10;
-  if (/\b(ea|u|j|7|0)\s+\d{3,5}\s+ea\s+\d+\b/i.test(value)) score += 10;
-  if (/^(nsn|na|ncm|sca|228-|01901|10tdc|1007|6665|3805|5985|6350|1240|3433|5825|5865|6660|6902)\b/i.test(value)) score -= 80;
-
-  return score;
-}
-
-function confidenceFromPacketScore(score) {
-  if (score >= 120) return "high";
-  if (score >= 70) return "medium";
-  return "low";
-}
-
-function parseDelimitedPacketLine(line) {
-  const parts = String(line || "")
-    .split(/\t|\s+\|\s+/)
-    .map(part => normalizePacketImportLine(part))
-    .filter(Boolean);
-
-  if (parts.length < 2) return null;
-
-  const maybeQty = Number(parts[1]);
-  return {
-    packetLine: parts[0],
-    expectedQty: Number.isInteger(maybeQty) && maybeQty >= 0 ? maybeQty : undefined,
-    locationHint: parts.length > 2 ? parts.slice(2).join(" ") : undefined,
-    confidence: "high"
-  };
-}
-
-function parsePacketRows(text) {
-  const seen = new Set();
-
-  return String(text || "")
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => parseDelimitedPacketLine(line) || {
-      packetLine: normalizePacketImportLine(line),
-      confidence: confidenceFromPacketScore(scorePacketImportLine(line))
-    })
-    .map(row => ({
-      ...row,
-      packetLine: normalizePacketImportLine(row.packetLine)
-    }))
-    .filter(row => {
-      if (!row.packetLine || isPacketImportNoiseLine(row.packetLine)) return false;
-      if (scorePacketImportLine(row.packetLine) < 55 && !row.expectedQty && !row.locationHint) return false;
-
-      const key = row.packetLine.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 250);
-}
-
-function createPacketDraftRows(rows) {
-  return rows.map((row, index) => ({
-    id: globalThis.crypto?.randomUUID?.() || `packet-row-${Date.now()}-${index}`,
-    packetLine: row.packetLine || "",
-    expectedQty: row.expectedQty ?? "",
-    locationHint: row.locationHint || "",
-    confidence: row.confidence || "low"
-  }));
-}
-
-function sanitizePacketDraftRows(rows) {
-  return rows
-    .map(row => {
-      const expectedQty = Number(row.expectedQty);
-      const item = {
-        packetLine: String(row.packetLine || "").trim(),
-        locationHint: String(row.locationHint || "").trim() || undefined
-      };
-
-      if (String(row.expectedQty ?? "").trim() && Number.isInteger(expectedQty) && expectedQty >= 0) {
-        item.expectedQty = expectedQty;
-      }
-
-      return item;
-    })
-    .filter(row => row.packetLine.length >= 2);
-}
-
-function packetMimeTypeForFile(file) {
-  const type = String(file?.type || "").toLowerCase();
-  const name = String(file?.name || "").toLowerCase();
-  if (type) return type;
-  if (name.endsWith(".pdf")) return "application/pdf";
-  if (name.endsWith(".csv")) return "text/csv";
-  if (name.endsWith(".txt")) return "text/plain";
-  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
-  if (name.endsWith(".png")) return "image/png";
-  if (name.endsWith(".webp")) return "image/webp";
-  if (name.endsWith(".gif")) return "image/gif";
-  return "application/octet-stream";
 }
 
 function formatFileSize(bytes) {
@@ -773,12 +742,77 @@ const newsletterDraftTemplate = {
   ].join("\n")
 };
 
+const contentBlockTypes = [
+  { value: "announcement", label: "Announcement" },
+  { value: "event", label: "Event" },
+  { value: "resource", label: "Resource" }
+];
+
+const contentBlockStatuses = [
+  { value: "draft", label: "Draft" },
+  { value: "published", label: "Published" },
+  { value: "hidden", label: "Hidden" }
+];
+
+const frgContentTemplate = {
+  blockType: "announcement",
+  title: "",
+  summary: "",
+  body: "",
+  href: "",
+  linkLabel: "",
+  eventAt: "",
+  sortOrder: 100,
+  status: "draft"
+};
+
+function contentTypeLabel(value) {
+  return contentBlockTypes.find(type => type.value === value)?.label || value || "Content";
+}
+
+function dateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - offset * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 function newsletterIssueForm(issue = newsletterDraftTemplate) {
   return {
     title: issue.title || "",
     editionLabel: issue.editionLabel || "",
     summary: issue.summary || "",
     body: issue.body || ""
+  };
+}
+
+function frgContentForm(block = frgContentTemplate) {
+  return {
+    blockType: block.blockType || "announcement",
+    title: block.title || "",
+    summary: block.summary || "",
+    body: block.body || "",
+    href: block.href || "",
+    linkLabel: block.linkLabel || "",
+    eventAt: dateTimeLocalValue(block.eventAt),
+    sortOrder: Number(block.sortOrder ?? 100),
+    status: block.status || "draft"
+  };
+}
+
+function frgContentPayload(form) {
+  return {
+    blockType: form.blockType,
+    title: form.title.trim(),
+    summary: form.summary.trim() || undefined,
+    body: form.body.trim() || undefined,
+    href: form.href.trim() || undefined,
+    linkLabel: form.linkLabel.trim() || undefined,
+    eventAt: form.eventAt ? new Date(form.eventAt).toISOString() : undefined,
+    sortOrder: Number(form.sortOrder || 100),
+    status: form.status
   };
 }
 
@@ -1031,7 +1065,7 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
   );
 }
 
-function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, onUploadIntentHandled }) {
+function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, onUploadIntentHandled, onOpenGuidance }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [detail, setDetail] = useState(null);
@@ -1521,6 +1555,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
           <p className="eyebrow">Inventory tasking</p>
           <h2>Sessions</h2>
         </div>
+        {onOpenGuidance ? (
+          <button className="btn btn-secondary btn-small admin-card-heading-action" type="button" onClick={onOpenGuidance}>
+            <BookOpen aria-hidden="true" />
+            <span>Guidance</span>
+          </button>
+        ) : null}
       </div>
 
       <div className="session-layout">
@@ -1990,7 +2030,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
               ) : null}
 
               {packetWizardStep === 3 ? (
-                <div className="packet-wizard-section">
+                <div className="packet-wizard-section packet-wizard-section-review">
                   <div>
                     <h3>Review before saving</h3>
                     <p>Clean up anything the parser guessed wrong. Low confidence rows can still be saved if the text is useful.</p>
@@ -2334,24 +2374,45 @@ function ReviewPanel({ token, tenantSlug }) {
 
 function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [issues, setIssues] = useState([]);
+  const [contentBlocks, setContentBlocks] = useState([]);
   const [subscribers, setSubscribers] = useState([]);
   const [subscriberStats, setSubscriberStats] = useState({ pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
   const [deliverySettings, setDeliverySettings] = useState({ emailConfigured: false });
+  const [activeSection, setActiveSection] = useState("content");
   const [selectedIssueId, setSelectedIssueId] = useState("");
+  const [selectedContentBlockId, setSelectedContentBlockId] = useState("");
   const [form, setForm] = useState(() => newsletterIssueForm());
+  const [contentForm, setContentForm] = useState(() => frgContentForm());
   const [query, setQuery] = useState("");
+  const [contentQuery, setContentQuery] = useState("");
+  const [contentTypeFilter, setContentTypeFilter] = useState("all");
   const [subscriberQuery, setSubscriberQuery] = useState("");
   const [subscriberStatusFilter, setSubscriberStatusFilter] = useState("all");
   const [reviewNotes, setReviewNotes] = useState({});
   const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isSavingContent, setIsSavingContent] = useState(false);
+  const [isDeletingContent, setIsDeletingContent] = useState(false);
   const [reviewingSubscriberId, setReviewingSubscriberId] = useState("");
   const [reviewingSubscriberDecision, setReviewingSubscriberDecision] = useState("");
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
+  const selectedContentBlock = contentBlocks.find(block => block.id === selectedContentBlockId) || null;
   const normalizedQuery = query.trim().toLowerCase();
+  const normalizedContentQuery = contentQuery.trim().toLowerCase();
   const normalizedSubscriberQuery = subscriberQuery.trim().toLowerCase();
+  const filteredContentBlocks = contentBlocks.filter(block => {
+    const matchesType = contentTypeFilter === "all" || block.blockType === contentTypeFilter;
+    const matchesQuery = !normalizedContentQuery || [
+      block.title,
+      block.summary,
+      block.body,
+      block.status,
+      contentTypeLabel(block.blockType)
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedContentQuery);
+    return matchesType && matchesQuery;
+  });
   const filteredIssues = issues.filter(issue => {
     if (!normalizedQuery) return true;
     return [
@@ -2380,11 +2441,20 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setStatus({ text: "Loading newsletter...", isError: false });
       const data = await apiRequest("/newsletter/admin", { token });
       const nextIssues = data.issues || [];
+      const nextContentBlocks = data.contentBlocks || [];
       const nextSubscribers = data.subscribers || [];
       setIssues(nextIssues);
+      setContentBlocks(nextContentBlocks);
       setSubscribers(nextSubscribers);
       setSubscriberStats(data.subscriberStats || { pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
       setDeliverySettings(data.deliverySettings || { emailConfigured: false });
+
+      const hasSelectedContentBlock = selectedContentBlockId && nextContentBlocks.some(block => block.id === selectedContentBlockId);
+      if (!hasSelectedContentBlock) {
+        const firstBlock = nextContentBlocks[0] || null;
+        setSelectedContentBlockId(firstBlock?.id || "");
+        setContentForm(frgContentForm(firstBlock || frgContentTemplate));
+      }
 
       const hasSelectedIssue = selectedIssueId && nextIssues.some(issue => issue.id === selectedIssueId);
       if (!hasSelectedIssue) {
@@ -2407,6 +2477,23 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setForm(current => ({ ...current, [key]: value }));
   }
 
+  function updateContentForm(key, value) {
+    setContentForm(current => ({ ...current, [key]: value }));
+  }
+
+  function selectContentBlock(block) {
+    setSelectedContentBlockId(block.id);
+    setContentForm(frgContentForm(block));
+    setStatus({ text: "", isError: false });
+  }
+
+  function startNewContentBlock() {
+    setSelectedContentBlockId("");
+    setContentForm(frgContentForm());
+    setActiveSection("content");
+    setStatus({ text: "New public content block ready", isError: false });
+  }
+
   function selectIssue(issue) {
     setSelectedIssueId(issue.id);
     setForm(newsletterIssueForm(issue));
@@ -2417,6 +2504,57 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setSelectedIssueId("");
     setForm(newsletterIssueForm());
     setStatus({ text: "New draft ready", isError: false });
+  }
+
+  async function saveContentBlock(event) {
+    event.preventDefault();
+    setIsSavingContent(true);
+    try {
+      const payload = frgContentPayload(contentForm);
+      const data = await apiRequest(
+        selectedContentBlockId ? `/newsletter/admin/content-blocks/${selectedContentBlockId}` : "/newsletter/admin/content-blocks",
+        {
+          method: selectedContentBlockId ? "PATCH" : "POST",
+          token,
+          body: payload
+        }
+      );
+      const savedBlock = data.contentBlock;
+      setContentBlocks(current => {
+        const exists = current.some(block => block.id === savedBlock.id);
+        return exists
+          ? current.map(block => block.id === savedBlock.id ? savedBlock : block)
+          : [savedBlock, ...current];
+      });
+      setSelectedContentBlockId(savedBlock.id);
+      setContentForm(frgContentForm(savedBlock));
+      setStatus({ text: savedBlock.status === "published" ? "Public content published" : "Public content saved", isError: false });
+      await loadNewsletter();
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSavingContent(false);
+    }
+  }
+
+  async function deleteContentBlock() {
+    if (!selectedContentBlockId) return;
+    setIsDeletingContent(true);
+    try {
+      await apiRequest(`/newsletter/admin/content-blocks/${selectedContentBlockId}`, {
+        method: "DELETE",
+        token
+      });
+      setContentBlocks(current => current.filter(block => block.id !== selectedContentBlockId));
+      setSelectedContentBlockId("");
+      setContentForm(frgContentForm());
+      setStatus({ text: "Public content removed", isError: false });
+      await loadNewsletter();
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsDeletingContent(false);
+    }
   }
 
   function updateReviewNote(subscriberId, value) {
@@ -2541,6 +2679,23 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     onRefresh?.();
   }
 
+  const sectionMeta = {
+    content: {
+      title: "Public content",
+      copy: "Manage public announcements, events, and resources for the homepage."
+    },
+    issues: {
+      title: "Newsletter issues",
+      copy: "Write, publish, and track Black Shadow Company newsletter updates."
+    },
+    subscribers: {
+      title: "Subscribers",
+      copy: "Review public signup requests and export newsletter contacts."
+    }
+  };
+  const activeMeta = sectionMeta[activeSection] || sectionMeta.content;
+  const publishedContentCount = contentBlocks.filter(block => block.status === "published").length;
+
   return (
     <div className="platform-shell newsletter-shell">
       <aside className="platform-sidebar newsletter-sidebar">
@@ -2550,9 +2705,17 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         </div>
 
         <nav className="platform-nav" aria-label="Newsletter admin">
-          <button className="active" type="button">
+          <button className={activeSection === "content" ? "active" : ""} type="button" onClick={() => setActiveSection("content")}>
+            <Megaphone aria-hidden="true" />
+            <span>Public content</span>
+          </button>
+          <button className={activeSection === "issues" ? "active" : ""} type="button" onClick={() => setActiveSection("issues")}>
             <FileText aria-hidden="true" />
             <span>Issues</span>
+          </button>
+          <button className={activeSection === "subscribers" ? "active" : ""} type="button" onClick={() => setActiveSection("subscribers")}>
+            <Users aria-hidden="true" />
+            <span>Subscribers</span>
           </button>
           {me?.isPlatformAdmin ? (
             <button type="button" onClick={() => window.location.assign("/#/admin")}>
@@ -2599,24 +2762,32 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         <div className="platform-content newsletter-content">
           <div className="platform-page-heading">
             <div>
-              <h1>Newsletter</h1>
-              <p>Write, publish, and track public Black Shadow Company updates.</p>
+              <h1>{activeMeta.title}</h1>
+              <p>{activeMeta.copy}</p>
             </div>
             <div className="newsletter-heading-actions">
               <a className="btn btn-secondary" href={`https://${appConfig.baseDomain}/`} target="_blank" rel="noreferrer">
                 <Home aria-hidden="true" />
                 <span>View public site</span>
               </a>
-              <button className="btn btn-primary" type="button" onClick={startNewDraft}>
-                <Plus aria-hidden="true" />
-                <span>New issue</span>
-              </button>
+              {activeSection === "content" ? (
+                <button className="btn btn-primary" type="button" onClick={startNewContentBlock}>
+                  <Plus aria-hidden="true" />
+                  <span>New block</span>
+                </button>
+              ) : null}
+              {activeSection === "issues" ? (
+                <button className="btn btn-primary" type="button" onClick={startNewDraft}>
+                  <Plus aria-hidden="true" />
+                  <span>New issue</span>
+                </button>
+              ) : null}
             </div>
           </div>
 
           <StatusLine status={status} />
 
-          {!deliverySettings.emailConfigured ? (
+          {activeSection !== "content" && !deliverySettings.emailConfigured ? (
             <div className="newsletter-delivery-note" role="note">
               <MailPlus aria-hidden="true" />
               <span>Email delivery is not configured in this environment. Reviews still update subscriber status, but notification emails will be skipped.</span>
@@ -2624,44 +2795,283 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
           ) : null}
 
           <section className="platform-stat-grid newsletter-stat-grid" aria-label="Newsletter totals">
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon blue">
-                <ShieldCheck aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{subscriberStats.pending || 0}</strong>
-                <span>Pending requests</span>
-              </div>
-            </div>
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon green">
-                <Users aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{subscriberStats.active || 0}</strong>
-                <span>Approved subscribers</span>
-              </div>
-            </div>
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon amber">
-                <Send aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{issues.reduce((sum, issue) => sum + Number(issue.sentCount || 0), 0)}</strong>
-                <span>Emails sent</span>
-              </div>
-            </div>
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon purple">
-                <CheckCircle2 aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{issues.filter(issue => issue.status === "published").length}</strong>
-                <span>Published</span>
-              </div>
-            </div>
+            {activeSection === "content" ? (
+              <>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon blue">
+                    <Megaphone aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{contentBlocks.length}</strong>
+                    <span>Total blocks</span>
+                  </div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon green">
+                    <CheckCircle2 aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{publishedContentCount}</strong>
+                    <span>Published</span>
+                  </div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon amber">
+                    <CalendarDays aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{contentBlocks.filter(block => block.blockType === "event").length}</strong>
+                    <span>Events</span>
+                  </div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon purple">
+                    <ShieldCheck aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{contentBlocks.filter(block => block.blockType === "resource").length}</strong>
+                    <span>Resources</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon blue">
+                    <ShieldCheck aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{subscriberStats.pending || 0}</strong>
+                    <span>Pending requests</span>
+                  </div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon green">
+                    <Users aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{subscriberStats.active || 0}</strong>
+                    <span>Approved subscribers</span>
+                  </div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon amber">
+                    <Send aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{issues.reduce((sum, issue) => sum + Number(issue.sentCount || 0), 0)}</strong>
+                    <span>Emails sent</span>
+                  </div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon purple">
+                    <CheckCircle2 aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>{issues.filter(issue => issue.status === "published").length}</strong>
+                    <span>Published issues</span>
+                  </div>
+                </div>
+              </>
+            )}
           </section>
 
+          {activeSection === "content" ? (
+            <div className="newsletter-admin-grid frg-content-admin-grid">
+              <section className="platform-table-card newsletter-issue-list-card">
+                <div className="platform-table-toolbar">
+                  <label className="platform-search">
+                    <Search aria-hidden="true" />
+                    <input
+                      value={contentQuery}
+                      placeholder="Search public content..."
+                      onChange={event => setContentQuery(event.target.value)}
+                    />
+                  </label>
+                  <select
+                    className="select newsletter-status-filter"
+                    value={contentTypeFilter}
+                    onChange={event => setContentTypeFilter(event.target.value)}
+                    aria-label="Filter public content"
+                  >
+                    <option value="all">All types</option>
+                    {contentBlockTypes.map(type => (
+                      <option key={type.value} value={type.value}>{type.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="newsletter-issue-list frg-content-list">
+                  {filteredContentBlocks.length ? filteredContentBlocks.map(block => (
+                    <button
+                      className={block.id === selectedContentBlockId ? "newsletter-issue-button active" : "newsletter-issue-button"}
+                      type="button"
+                      key={block.id}
+                      onClick={() => selectContentBlock(block)}
+                    >
+                      <span>
+                        <strong>{block.title}</strong>
+                        <small>{contentTypeLabel(block.blockType)} · {formatShortDate(block.updatedAt)}</small>
+                      </span>
+                      <span className={`status-pill ${block.status}`}>{block.status}</span>
+                    </button>
+                  )) : (
+                    <EmptyPanel title="No public content" body="Create announcements, events, or resources for the public homepage." />
+                  )}
+                </div>
+              </section>
+
+              <section className="platform-table-card newsletter-editor-card">
+                <div className="newsletter-editor-layout">
+                  <form className="newsletter-editor-form" onSubmit={saveContentBlock}>
+                    <div className="newsletter-editor-heading">
+                      <div>
+                        <p className="eyebrow">{selectedContentBlock ? contentTypeLabel(selectedContentBlock.blockType) : "Public content"}</p>
+                        <h2>{selectedContentBlockId ? "Edit block" : "New block"}</h2>
+                      </div>
+                      {selectedContentBlock ? <span className={`status-pill ${selectedContentBlock.status}`}>{selectedContentBlock.status}</span> : null}
+                    </div>
+
+                    <div className="newsletter-form-row">
+                      <div>
+                        <label className="field-label" htmlFor="frgContentType">Type</label>
+                        <select
+                          id="frgContentType"
+                          className="select"
+                          value={contentForm.blockType}
+                          onChange={event => updateContentForm("blockType", event.target.value)}
+                        >
+                          {contentBlockTypes.map(type => (
+                            <option key={type.value} value={type.value}>{type.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="field-label" htmlFor="frgContentStatus">Status</label>
+                        <select
+                          id="frgContentStatus"
+                          className="select"
+                          value={contentForm.status}
+                          onChange={event => updateContentForm("status", event.target.value)}
+                        >
+                          {contentBlockStatuses.map(type => (
+                            <option key={type.value} value={type.value}>{type.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <label className="field-label" htmlFor="frgContentTitle">Title</label>
+                    <input
+                      id="frgContentTitle"
+                      className="input"
+                      value={contentForm.title}
+                      placeholder="Family readiness update"
+                      onChange={event => updateContentForm("title", event.target.value)}
+                      required
+                    />
+
+                    <label className="field-label" htmlFor="frgContentSummary">Summary</label>
+                    <input
+                      id="frgContentSummary"
+                      className="input"
+                      value={contentForm.summary}
+                      placeholder="Short public-safe summary"
+                      onChange={event => updateContentForm("summary", event.target.value)}
+                    />
+
+                    <label className="field-label" htmlFor="frgContentBody">Details</label>
+                    <textarea
+                      id="frgContentBody"
+                      className="input newsletter-body-input frg-content-body-input"
+                      value={contentForm.body}
+                      placeholder="Optional public details..."
+                      onChange={event => updateContentForm("body", event.target.value)}
+                    />
+
+                    <div className="newsletter-form-row">
+                      <div>
+                        <label className="field-label" htmlFor="frgContentEventAt">Event date</label>
+                        <input
+                          id="frgContentEventAt"
+                          className="input"
+                          type="datetime-local"
+                          value={contentForm.eventAt}
+                          onChange={event => updateContentForm("eventAt", event.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="field-label" htmlFor="frgContentSortOrder">Sort order</label>
+                        <input
+                          id="frgContentSortOrder"
+                          className="input"
+                          type="number"
+                          min="0"
+                          max="999"
+                          value={contentForm.sortOrder}
+                          onChange={event => updateContentForm("sortOrder", event.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="newsletter-form-row">
+                      <div>
+                        <label className="field-label" htmlFor="frgContentHref">Link</label>
+                        <input
+                          id="frgContentHref"
+                          className="input"
+                          value={contentForm.href}
+                          placeholder="https://..."
+                          onChange={event => updateContentForm("href", event.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="field-label" htmlFor="frgContentLinkLabel">Link label</label>
+                        <input
+                          id="frgContentLinkLabel"
+                          className="input"
+                          value={contentForm.linkLabel}
+                          placeholder="Open resource"
+                          onChange={event => updateContentForm("linkLabel", event.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="button-row">
+                      <button className="btn btn-primary" type="submit" disabled={isSavingContent}>
+                        <FileText aria-hidden="true" />
+                        <span>{isSavingContent ? "Saving..." : selectedContentBlockId ? "Save block" : "Create block"}</span>
+                      </button>
+                      {selectedContentBlockId ? (
+                        <button className="btn btn-danger-soft" type="button" onClick={deleteContentBlock} disabled={isDeletingContent}>
+                          <Trash2 aria-hidden="true" />
+                          <span>{isDeletingContent ? "Removing..." : "Remove"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </form>
+
+                  <aside className="newsletter-preview frg-content-preview" aria-label="Public content preview">
+                    <p className="eyebrow">{contentTypeLabel(contentForm.blockType)}</p>
+                    <h2>{contentForm.title || "Public content title"}</h2>
+                    <div className="public-newsletter-meta">
+                      <span>{contentBlockStatuses.find(type => type.value === contentForm.status)?.label || "Draft"}</span>
+                      {contentForm.eventAt ? <span>{formatShortDate(contentForm.eventAt)}</span> : null}
+                    </div>
+                    {contentForm.summary ? <p className="newsletter-preview-summary">{contentForm.summary}</p> : null}
+                    <div className="newsletter-preview-body">
+                      {newsletterBodyParagraphs(contentForm.body).length ? newsletterBodyParagraphs(contentForm.body).map((line, index) => (
+                        <p key={`${line}-${index}`}>{line}</p>
+                      )) : <p className="muted-copy">Preview appears as public-safe content is entered.</p>}
+                    </div>
+                    {contentForm.href ? <span className="frg-content-preview-link">{contentForm.linkLabel || "Open link"}</span> : null}
+                  </aside>
+                </div>
+              </section>
+            </div>
+          ) : null}
+
+          {activeSection === "issues" ? (
           <div className="newsletter-admin-grid">
             <section className="platform-table-card newsletter-issue-list-card">
               <div className="platform-table-toolbar">
@@ -2778,7 +3188,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               </div>
             </section>
           </div>
+          ) : null}
 
+          {activeSection === "subscribers" ? (
           <section className="platform-table-card newsletter-subscriber-card">
             <div className="newsletter-subscriber-heading">
               <div>
@@ -2883,6 +3295,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               />
             )}
           </section>
+          ) : null}
         </div>
       </main>
     </div>
@@ -2995,14 +3408,23 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     }
   ];
 
-  function tenantAdminHref(tenant) {
+  function tenantWorkspaceHref(tenant) {
     const host = tenantHost(tenant);
     const isLocal = appConfig.baseDomain === "localhost" || window.location.hostname.endsWith(".localhost") || window.location.hostname === "localhost";
     if (isLocal) {
       const port = window.location.port ? `:${window.location.port}` : "";
-      return `${window.location.protocol}//${host}${port}/#/admin`;
+      return `${window.location.protocol}//${host}${port}/`;
     }
-    return `https://${host}/#/admin`;
+    return `https://${host}/`;
+  }
+
+  async function copyTenantLink(tenant) {
+    const host = tenantHost(tenant);
+    const copied = await copyText(tenantWorkspaceHref(tenant));
+    setStatus({
+      text: copied ? `Copied workspace link for ${host}` : "Could not copy the workspace link from this browser.",
+      isError: !copied
+    });
   }
 
   async function loadTenants() {
@@ -3147,9 +3569,13 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
               <span className="platform-table-date">{formatShortDate(tenant.createdAt)}</span>
               <div className="platform-actions">
-                <a className="btn btn-secondary btn-small platform-open-link" href={tenantAdminHref(tenant)}>
+                <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${host} workspace`}>
                   <span>Open workspace</span>
                 </a>
+                <button className="btn btn-secondary btn-small platform-copy-link" type="button" onClick={() => copyTenantLink(tenant)}>
+                  <Copy aria-hidden="true" />
+                  <span>Copy link</span>
+                </button>
               </div>
             </article>
           );
@@ -3347,9 +3773,13 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                     <span className="platform-table-number">{tenant.adminCount || 0}</span>
                     <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
                     <div className="platform-actions">
-                      <a className="btn btn-secondary btn-small platform-open-link" href={tenantAdminHref(tenant)}>
+                      <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${tenantHost(tenant)} workspace`}>
                         <span>Open workspace</span>
                       </a>
+                      <button className="btn btn-secondary btn-small platform-copy-link" type="button" onClick={() => copyTenantLink(tenant)}>
+                        <Copy aria-hidden="true" />
+                        <span>Copy link</span>
+                      </button>
                     </div>
                   </article>
                 ))}
@@ -3725,22 +4155,271 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
   );
 }
 
+function AccessSourcePanel({ access }) {
+  if (!access) return null;
+
+  const warnings = access.warnings || [];
+  const matchedGroups = access.matchedGroups || [];
+
+  return (
+    <section className="access-source-panel admin-card">
+      <div className="subsection-heading-row">
+        <div>
+          <p className="eyebrow">Access source</p>
+          <h3>Why you can access this platoon</h3>
+        </div>
+        <span className={`status-pill ${access.source || "disabled"}`}>{formatAccessSource(access.source)}</span>
+      </div>
+
+      <div className="access-source-grid">
+        <div>
+          <span>Effective role</span>
+          <strong>{access.effectiveRole ? formatRole(access.effectiveRole) : "None"}</strong>
+        </div>
+        <div>
+          <span>Database</span>
+          <strong>{formatAccessMembership(access.databaseMembership)}</strong>
+        </div>
+        <div>
+          <span>Authentik</span>
+          <strong>{formatAccessMembership(access.authentikMembership)}</strong>
+        </div>
+      </div>
+
+      <div className="access-group-list">
+        <span>Expected groups</span>
+        <code>{access.expectedTenantGroup || "none"}</code>
+        {access.expectedTenantAdminGroup ? <code>{access.expectedTenantAdminGroup}</code> : null}
+      </div>
+
+      {matchedGroups.length ? (
+        <div className="access-group-list">
+          <span>Matched groups</span>
+          {matchedGroups.map(group => <code key={group}>{group}</code>)}
+        </div>
+      ) : null}
+
+      {warnings.length ? (
+        <div className="access-warning-list">
+          {warnings.map(warning => (
+            <p className={`access-warning ${warning.severity || "info"}`} key={warning.type || warning.message}>
+              {warning.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function TenantGuidancePanel({ token, tenantSlug, canManage, onOpenSessions, onOpenUpload }) {
+  const starterGuidance = [
+    "Inventory guidance",
+    "",
+    "- Start with the packet line and search by LIN, NSN, serial, or the plain item name.",
+    "- Check the location hint and any existing photos before asking for help.",
+    "- Take a wide photo first, then serial number or data plate photos when available.",
+    "- If an item does not match the packet line, submit it as a mismatch and add a short note."
+  ].join("\n");
+  const [guidance, setGuidance] = useState({ body: "", updatedAt: null, updatedByName: "", updatedByEmail: "" });
+  const [draft, setDraft] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [status, setStatus] = useState({ text: "Loading guidance...", isError: false });
+
+  async function loadGuidance() {
+    try {
+      setStatus({ text: "Loading guidance...", isError: false });
+      const data = await apiRequest("/tenant/guidance", { token, tenantSlug });
+      const loaded = data.guidance || {};
+      setGuidance({
+        body: loaded.body || "",
+        updatedAt: loaded.updatedAt || null,
+        updatedByName: loaded.updatedByName || "",
+        updatedByEmail: loaded.updatedByEmail || ""
+      });
+      setDraft(loaded.body || starterGuidance);
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  useEffect(() => {
+    loadGuidance();
+  }, [tenantSlug, token]);
+
+  function startEditing() {
+    setDraft(guidance.body || starterGuidance);
+    setIsEditing(true);
+    setStatus({ text: "", isError: false });
+  }
+
+  async function saveGuidance(event) {
+    event.preventDefault();
+
+    try {
+      setIsSaving(true);
+      const data = await apiRequest("/tenant/guidance", {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { body: draft }
+      });
+      const saved = data.guidance || {};
+      setGuidance({
+        body: saved.body || "",
+        updatedAt: saved.updatedAt || null,
+        updatedByName: saved.updatedByName || "",
+        updatedByEmail: saved.updatedByEmail || ""
+      });
+      setDraft(saved.body || starterGuidance);
+      setIsEditing(false);
+      setStatus({ text: "Guidance saved", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const hasGuidance = Boolean(guidance.body?.trim());
+  const updatedBy = guidance.updatedByName || guidance.updatedByEmail;
+
+  return (
+    <div className="leader-dashboard guidance-page">
+      <div className="leader-page-heading">
+        <div>
+          <h1>Inventory Guidance</h1>
+          <p>{tenantSlug}.{appConfig.baseDomain}</p>
+        </div>
+        <div className="leader-page-actions">
+          <button className="btn btn-secondary" type="button" onClick={onOpenSessions}>
+            <ListChecks aria-hidden="true" />
+            <span>Open sessions</span>
+          </button>
+          {canManage ? (
+            <button className="btn btn-primary" type="button" onClick={onOpenUpload}>
+              <FileUp aria-hidden="true" />
+              <span>Upload packet</span>
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="guidance-grid">
+        <section className="leader-card guidance-card">
+          <div className="leader-card-header">
+            <span className="leader-card-icon">
+              <BookOpen aria-hidden="true" />
+            </span>
+            <div>
+              <h2>Local instructions</h2>
+              <p>{updatedBy ? `Updated by ${updatedBy}${guidance.updatedAt ? ` - ${formatDate(guidance.updatedAt)}` : ""}` : "Shared with everyone in this workspace."}</p>
+            </div>
+            {canManage && !isEditing ? (
+              <button className="btn btn-secondary btn-small" type="button" onClick={startEditing}>
+                <span>{hasGuidance ? "Edit" : "Add"}</span>
+              </button>
+            ) : null}
+          </div>
+
+          {isEditing ? (
+            <form className="guidance-editor" onSubmit={saveGuidance}>
+              <label className="field-label" htmlFor="tenantGuidanceBody">Guidance</label>
+              <textarea
+                id="tenantGuidanceBody"
+                className="input guidance-textarea"
+                value={draft}
+                maxLength={12000}
+                onChange={event => setDraft(event.target.value)}
+              />
+              <div className="guidance-editor-footer">
+                <span>{draft.length.toLocaleString()} / 12,000</span>
+                <div className="button-row">
+                  <button className="btn btn-secondary" type="button" onClick={() => setIsEditing(false)} disabled={isSaving}>
+                    <span>Cancel</span>
+                  </button>
+                  <button className="btn btn-primary" type="submit" disabled={isSaving}>
+                    <CheckCircle2 aria-hidden="true" />
+                    <span>{isSaving ? "Saving..." : "Save guidance"}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : hasGuidance ? (
+            <div className="guidance-body">{guidance.body}</div>
+          ) : (
+            <EmptyPanel
+              title="No guidance yet"
+              body={canManage ? "Add local instructions for how your platoon should handle photos, notes, and packet rows." : "A platoon admin has not published guidance yet."}
+            />
+          )}
+        </section>
+
+        <aside className="leader-card guidance-workflow-card">
+          <div className="leader-card-header">
+            <span className="leader-card-icon">
+              <ShieldCheck aria-hidden="true" />
+            </span>
+            <div>
+              <h2>Use during inventory</h2>
+              <p>Keep the packet and proof flow moving.</p>
+            </div>
+          </div>
+          <div className="guidance-step-list">
+            <div className="guidance-step">
+              <Search aria-hidden="true" />
+              <div>
+                <strong>Search the packet row</strong>
+                <span>Try the common name, LIN, NSN, serial, and location hints.</span>
+              </div>
+            </div>
+            <div className="guidance-step">
+              <Camera aria-hidden="true" />
+              <div>
+                <strong>Capture proof</strong>
+                <span>Use a wide photo first. Add serial or data plate photos when requested.</span>
+              </div>
+            </div>
+            <div className="guidance-step">
+              <MessageSquare aria-hidden="true" />
+              <div>
+                <strong>Leave a short note</strong>
+                <span>Call out mismatches, missing pieces, or weird locations before review.</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <StatusLine status={status} />
+    </div>
+  );
+}
+
 function TenantPeoplePanel({
   tenant,
   tenantSlug,
+  access,
   members,
   invitations,
   inviteForm,
   onInviteFormChange,
   onCreateInvite,
+  onUpdateMember,
+  onDisableMember,
   onCopyInviteLink,
   onResendInvitation,
   onRevokeInvitation,
   inviteLinksById,
   inviteActionId,
+  memberActionId,
   lastInviteUrl,
   isSaving
 }) {
+  const activeAdminCount = members.filter(member => member.role === "tenant_admin" && member.status === "active").length;
+
   return (
     <div className="people-panel">
       <section className="people-hero admin-card">
@@ -3755,6 +4434,8 @@ function TenantPeoplePanel({
           </div>
         </div>
       </section>
+
+      <AccessSourcePanel access={access} />
 
       <div className="admin-grid people-grid">
         <section className="admin-card">
@@ -3796,9 +4477,9 @@ function TenantPeoplePanel({
               value={inviteForm.role}
               onChange={e => onInviteFormChange(current => ({ ...current, role: e.target.value }))}
             >
-              <option value="contributor">Contributor</option>
-              <option value="viewer">Viewer</option>
-              <option value="tenant_admin">Platoon admin</option>
+              {tenantRoleOptions.map(option => (
+                <option value={option.value} key={option.value}>{option.label}</option>
+              ))}
             </select>
 
             <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
@@ -3828,18 +4509,50 @@ function TenantPeoplePanel({
 
           {members.length ? (
             <div className="admin-list people-member-list">
-              {members.map(member => (
-                <article className="admin-list-row" key={member.id}>
-                  <div>
-                    <strong>{member.displayName || member.email}</strong>
-                    <span>{member.email}</span>
-                  </div>
-                  <div className="admin-row-meta">
-                    <span className="badge">{formatRole(member.role)}</span>
-                    <span className={`status-pill ${member.status}`}>{member.status}</span>
-                  </div>
-                </article>
-              ))}
+              {members.map(member => {
+                const isWorking = memberActionId === member.id;
+                const isLastActiveAdmin = member.role === "tenant_admin" && member.status === "active" && activeAdminCount <= 1;
+                const statusLabel = formatMemberStatus(member.status);
+
+                return (
+                  <article className="admin-list-row member-row" key={member.id}>
+                    <div className="member-main">
+                      <strong>{member.displayName || member.email}</strong>
+                      <span>{member.email}</span>
+                    </div>
+                    <div className="admin-row-meta member-controls">
+                      <span className={`status-pill ${member.status}`}>{statusLabel}</span>
+                      <select
+                        className="select member-role-select"
+                        value={member.role}
+                        aria-label={`Role for ${member.displayName || member.email}`}
+                        disabled={isWorking || isLastActiveAdmin}
+                        title={isLastActiveAdmin ? "Add another active platoon admin before changing this role." : "Change member role"}
+                        onChange={event => onUpdateMember(member, { role: event.target.value })}
+                      >
+                        {tenantRoleOptions.map(option => (
+                          <option value={option.value} key={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        className={member.status === "disabled" ? "btn btn-secondary btn-small" : "btn btn-danger-soft btn-small"}
+                        type="button"
+                        disabled={isWorking || isLastActiveAdmin}
+                        title={isLastActiveAdmin ? "Add another active platoon admin before disabling this member." : ""}
+                        onClick={() => {
+                          if (member.status === "disabled") {
+                            onUpdateMember(member, { status: "active" });
+                          } else {
+                            onDisableMember(member);
+                          }
+                        }}
+                      >
+                        <span>{isWorking ? "Saving..." : member.status === "disabled" ? "Enable" : "Disable"}</span>
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <EmptyPanel title="No members loaded" body="Create an invite to give someone access." />
@@ -3920,6 +4633,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: Home },
     { id: "tasks", label: "Inventory Sessions", icon: CalendarDays },
+    { id: "guidance", label: "Inventory Guidance", icon: BookOpen },
     ...(isTenantAdmin ? [{ id: "review", label: "Review Queue", icon: ClipboardList }] : []),
     ...(isTenantAdmin ? [{ id: "people", label: "People & Invites", icon: Users }] : [])
   ];
@@ -3927,6 +4641,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [sessionIntent, setSessionIntent] = useState("");
   const [leaderQuery, setLeaderQuery] = useState("");
   const [tenant, setTenant] = useState(null);
+  const [access, setAccess] = useState(me?.access || null);
   const [members, setMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [inviteForm, setInviteForm] = useState({ email: "", displayName: "", role: "contributor" });
@@ -3934,6 +4649,11 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [lastInviteUrl, setLastInviteUrl] = useState("");
   const [inviteLinksById, setInviteLinksById] = useState({});
   const [inviteActionId, setInviteActionId] = useState("");
+  const [memberActionId, setMemberActionId] = useState("");
+  const [notifications, setNotifications] = useState([]);
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [notificationStatus, setNotificationStatus] = useState("");
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -3991,6 +4711,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setStatus({ text: "Loading tenant...", isError: false });
       const tenantData = await apiRequest("/tenant", { token, tenantSlug });
       setTenant(tenantData.tenant);
+      setAccess(tenantData.access || me?.access || null);
 
       if (isTenantAdmin) {
         const [memberData, inviteData] = await Promise.all([
@@ -4007,11 +4728,33 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setStatus({ text: "", isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+      setAccess(me?.access || null);
+    }
+  }
+
+  async function loadNotifications() {
+    if (!tenantSlug || !token) return;
+
+    setIsLoadingNotifications(true);
+    try {
+      const data = await apiRequest("/tenant/notifications", { token, tenantSlug });
+      setNotifications(data.notifications || []);
+      setNotificationUnreadCount(Number(data.unreadCount || 0));
+      setNotificationStatus("");
+    } catch (error) {
+      setNotifications([]);
+      setNotificationUnreadCount(0);
+      setNotificationStatus(getApiErrorMessage(error));
+    } finally {
+      setIsLoadingNotifications(false);
     }
   }
 
   useEffect(() => {
-    if (tenantSlug) loadTenant();
+    if (tenantSlug) {
+      loadTenant();
+      loadNotifications();
+    }
   }, [tenantSlug, token, isTenantAdmin]);
 
   async function createInvite(e) {
@@ -4043,6 +4786,64 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function updateMember(member, patch) {
+    const hasChange = Object.entries(patch).some(([key, value]) => value && member[key] !== value);
+    if (!hasChange) return;
+
+    setMemberActionId(member.id);
+    try {
+      const data = await apiRequest(`/tenant/members/${member.id}`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: patch
+      });
+
+      if (data.member) {
+        setMembers(current => current.map(item => item.id === data.member.id ? data.member : item));
+      }
+
+      await loadTenant();
+      if (member.userId === me?.user?.id) await onRefresh?.();
+
+      const message = patch.role
+        ? "Member role updated"
+        : patch.status === "active"
+          ? "Member enabled"
+          : "Member updated";
+      setStatus({ text: message, isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setMemberActionId("");
+    }
+  }
+
+  async function disableMember(member) {
+    if (member.status === "disabled") return;
+
+    setMemberActionId(member.id);
+    try {
+      const data = await apiRequest(`/tenant/members/${member.id}/disable`, {
+        method: "POST",
+        token,
+        tenantSlug
+      });
+
+      if (data.member) {
+        setMembers(current => current.map(item => item.id === data.member.id ? data.member : item));
+      }
+
+      await loadTenant();
+      if (member.userId === me?.user?.id) await onRefresh?.();
+      setStatus({ text: "Member disabled", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setMemberActionId("");
     }
   }
 
@@ -4129,6 +4930,16 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     selectTenantTab("tasks");
   }
 
+  function openNotification(notification) {
+    const tab = notification?.action?.tab;
+    if (tab === "review" && isTenantAdmin) {
+      selectTenantTab("review");
+      return;
+    }
+
+    selectTenantTab("tasks");
+  }
+
   if (!tenantSlug) {
     return <EmptyPanel title="No platoon selected" body="Open a platoon subdomain to manage members." />;
   }
@@ -4207,36 +5018,85 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             />
           </label>
           <div className="leader-user-actions">
-            <button className="icon-button" type="button" onClick={() => { loadTenant(); onRefresh?.(); }} aria-label="Refresh">
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => {
+                loadTenant();
+                loadNotifications();
+                onRefresh?.();
+              }}
+              aria-label="Refresh"
+            >
               <RefreshCw aria-hidden="true" />
             </button>
             <div className="leader-popover-anchor" ref={notificationsRef}>
               <button
-                className="icon-button"
+                className="icon-button leader-notification-button"
                 type="button"
                 aria-label="Notifications"
                 aria-expanded={isNotificationsOpen}
                 onClick={() => {
-                  setIsNotificationsOpen(current => !current);
+                  const nextOpen = !isNotificationsOpen;
+                  setIsNotificationsOpen(nextOpen);
+                  if (nextOpen) loadNotifications();
                   setIsUserMenuOpen(false);
                 }}
               >
                 <Bell aria-hidden="true" />
+                {notificationUnreadCount ? (
+                  <span className="leader-notification-badge">
+                    {notificationUnreadCount > 9 ? "9+" : notificationUnreadCount}
+                  </span>
+                ) : null}
               </button>
               {isNotificationsOpen ? (
                 <section className="leader-popover leader-notification-panel" aria-label="Notifications">
                   <div className="leader-popover-heading">
                     <strong>Notifications</strong>
-                    <span>No unread items</span>
+                    <span>{notificationSummaryText(notificationUnreadCount, isLoadingNotifications)}</span>
                   </div>
-                  <div className="leader-notification-empty">
-                    <ShieldCheck aria-hidden="true" />
-                    <div>
-                      <strong>Workspace is clear</strong>
-                      <span>{isTenantAdmin ? "New proof submissions and packet imports will appear here." : "Assignments and proof requests will appear here."}</span>
+                  {notificationStatus ? (
+                    <div className="leader-notification-error">{notificationStatus}</div>
+                  ) : null}
+                  {notifications.length ? (
+                    <div className="leader-notification-list">
+                      {notifications.map(notification => {
+                        const Icon = notificationIconFor(notification.type);
+                        const meta = [notification.sessionName, formatRelativeTime(notification.createdAt)].filter(Boolean).join(" - ");
+                        return (
+                          <button
+                            className={`leader-notification-item ${notification.priority || "low"}`}
+                            type="button"
+                            key={notification.id}
+                            onClick={() => openNotification(notification)}
+                          >
+                            <span className="leader-notification-icon">
+                              <Icon aria-hidden="true" />
+                            </span>
+                            <span className="leader-notification-copy">
+                              <strong>{notification.title}</strong>
+                              <span>{notification.body}</span>
+                              {meta ? <small>{meta}</small> : null}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="leader-notification-empty">
+                      <ShieldCheck aria-hidden="true" />
+                      <div>
+                        <strong>{isLoadingNotifications ? "Checking workspace" : "No action needed"}</strong>
+                        <span>{isTenantAdmin ? "New proof submissions, imports, and closed sessions will appear here." : "Proof requests and open session work will appear here."}</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="leader-menu-actions">
+                    <button type="button" onClick={loadNotifications}>
+                      <RefreshCw aria-hidden="true" />
+                      <span>Refresh alerts</span>
+                    </button>
                     <button type="button" onClick={() => selectTenantTab("tasks")}>
                       <CalendarDays aria-hidden="true" />
                       <span>Open sessions</span>
@@ -4348,6 +5208,17 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               canSubmit={canSubmitProof}
               uploadIntent={sessionIntent}
               onUploadIntentHandled={() => setSessionIntent("")}
+              onOpenGuidance={() => selectTenantTab("guidance")}
+            />
+          ) : null}
+
+          {activeTab === "guidance" ? (
+            <TenantGuidancePanel
+              token={token}
+              tenantSlug={tenantSlug}
+              canManage={isTenantAdmin}
+              onOpenSessions={() => openSessions()}
+              onOpenUpload={() => openSessions("packet")}
             />
           ) : null}
 
@@ -4359,16 +5230,20 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             <TenantPeoplePanel
               tenant={tenant}
               tenantSlug={tenantSlug}
+              access={access}
               members={members}
               invitations={invitations}
               inviteForm={inviteForm}
               onInviteFormChange={setInviteForm}
               onCreateInvite={createInvite}
+              onUpdateMember={updateMember}
+              onDisableMember={disableMember}
               onCopyInviteLink={copyInviteLink}
               onResendInvitation={resendInvitation}
               onRevokeInvitation={revokeInvitation}
               inviteLinksById={inviteLinksById}
               inviteActionId={inviteActionId}
+              memberActionId={memberActionId}
               lastInviteUrl={lastInviteUrl}
               isSaving={isSaving}
             />

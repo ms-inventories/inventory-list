@@ -351,6 +351,10 @@ function StatusText({ status, className = "" }) {
   );
 }
 
+function looksLikeEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
 function isBaseHostname(hostname = window.location.hostname) {
   const cleanHost = String(hostname || "").split(":")[0].toLowerCase();
   return cleanHost === appConfig.baseDomain.toLowerCase();
@@ -560,8 +564,13 @@ function PublicHome() {
   });
   const [isSubscriberModalOpen, setIsSubscriberModalOpen] = useState(false);
   const [status, setStatus] = useState({ text: "", isError: false });
-  const [newsletter, setNewsletter] = useState({ latestIssue: null, issues: [] });
+  const [newsletter, setNewsletter] = useState({
+    latestIssue: null,
+    issues: [],
+    contentBlocks: { announcements: [], events: [], resources: [] }
+  });
   const [newsletterStatus, setNewsletterStatus] = useState({ text: "Loading latest newsletter...", isError: false });
+  const [isSubscriberSubmitting, setIsSubscriberSubmitting] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -572,7 +581,8 @@ function PublicHome() {
         if (ignore) return;
         setNewsletter({
           latestIssue: data.latestIssue || null,
-          issues: data.issues || []
+          issues: data.issues || [],
+          contentBlocks: data.contentBlocks || { announcements: [], events: [], resources: [] }
         });
         setNewsletterStatus({ text: "", isError: false });
       } catch (error) {
@@ -597,16 +607,31 @@ function PublicHome() {
 
   async function submitNewsletter(event) {
     event.preventDefault();
+    const displayName = subscriberForm.displayName.trim();
+    const email = subscriberForm.email.trim();
+    const platoon = subscriberForm.platoon.trim();
+    const supervisorName = subscriberForm.supervisorName.trim();
+
+    if (!displayName || !email || !platoon || !supervisorName) {
+      setStatus({ text: "Fill out each field so an admin can verify the request.", isError: true });
+      return;
+    }
+
+    if (!looksLikeEmail(email)) {
+      setStatus({ text: "Enter a valid email address.", isError: true });
+      return;
+    }
 
     try {
+      setIsSubscriberSubmitting(true);
       setStatus({ text: "Submitting request...", isError: false });
       const data = await apiRequest("/newsletter/subscribers", {
         method: "POST",
         body: {
-          displayName: subscriberForm.displayName.trim(),
-          email: subscriberForm.email.trim(),
-          platoon: subscriberForm.platoon.trim(),
-          supervisorName: subscriberForm.supervisorName.trim()
+          displayName,
+          email,
+          platoon,
+          supervisorName
         }
       });
       const isApproved = data.subscriber?.status === "active";
@@ -615,16 +640,51 @@ function PublicHome() {
       setStatus({
         text: isApproved
           ? "You are already approved for the Black Shadow Company newsletter."
-          : "Request submitted. A newsletter admin will verify your company connection before emails are sent.",
+          : "Request submitted for review. Newsletter emails begin after an admin approves the request.",
         isError: false
       });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSubscriberSubmitting(false);
     }
   }
 
   const latestIssue = newsletter.latestIssue;
   const issuePreviewLines = getIssueBodyPreview(latestIssue?.body);
+  const publicContentSections = [
+    {
+      key: "announcements",
+      label: "Announcements",
+      Icon: Megaphone,
+      fallback: {
+        title: "Announcements",
+        summary: "Public unit and family updates without exposing internal inventory work."
+      }
+    },
+    {
+      key: "events",
+      label: "Events",
+      Icon: CalendarDays,
+      fallback: {
+        title: "Events",
+        summary: "Upcoming FRG reminders, drill weekend notes, and family support dates."
+      }
+    },
+    {
+      key: "resources",
+      label: "Resources",
+      Icon: ShieldCheck,
+      fallback: {
+        title: "Resources",
+        summary: "Helpful links and points of contact for the 876 EN community."
+      }
+    }
+  ].flatMap(section => {
+    const blocks = newsletter.contentBlocks?.[section.key] || [];
+    const cards = blocks.length ? blocks : [section.fallback];
+    return cards.map(block => ({ ...block, section }));
+  });
   const canSubmitSubscriberRequest = Boolean(
     subscriberForm.displayName.trim()
     && subscriberForm.email.trim()
@@ -676,21 +736,23 @@ function PublicHome() {
 
       <section className="public-info-band" aria-label="Site sections">
         <div className="public-info-grid">
-          <article className="public-info-item">
-            <span><Megaphone aria-hidden="true" /></span>
-            <strong>Announcements</strong>
-            <p>Public unit and family updates without exposing internal inventory work.</p>
-          </article>
-          <article className="public-info-item">
-            <span><CalendarDays aria-hidden="true" /></span>
-            <strong>Events</strong>
-            <p>Upcoming FRG reminders, drill weekend notes, and family support dates.</p>
-          </article>
-          <article className="public-info-item">
-            <span><ShieldCheck aria-hidden="true" /></span>
-            <strong>Resources</strong>
-            <p>Helpful links and points of contact for the 876 EN community.</p>
-          </article>
+          {publicContentSections.map(block => {
+            const Icon = block.section.Icon;
+            return (
+              <article className="public-info-item" key={`${block.section.key}-${block.id || block.title}`}>
+                <span><Icon aria-hidden="true" /></span>
+                <small>{block.section.label}</small>
+                <strong>{block.title}</strong>
+                <p>{block.summary || getIssueBodyPreview(block.body).join(" ") || block.section.fallback.summary}</p>
+                {block.eventAt ? <em>{formatPublicDate(block.eventAt)}</em> : null}
+                {block.href ? (
+                  <a href={block.href} target={block.href.startsWith("/") || block.href.startsWith("#") ? undefined : "_blank"} rel="noreferrer">
+                    {block.linkLabel || "Open link"}
+                  </a>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       </section>
 
@@ -722,7 +784,7 @@ function PublicHome() {
               <p className="eyebrow">Company verification</p>
               <h3>Request newsletter access</h3>
               <p>
-                Submit your company details so an admin can approve newsletter delivery.
+                Submit a short request so an admin can approve newsletter delivery.
               </p>
             </div>
             <button className="btn btn-primary btn-full" type="button" onClick={openSubscriberModal}>
@@ -801,9 +863,9 @@ function PublicHome() {
               />
 
               <div className="button-row public-newsletter-modal-actions">
-                <button className="btn btn-primary" type="submit" disabled={!canSubmitSubscriberRequest}>
+                <button className="btn btn-primary" type="submit" disabled={!canSubmitSubscriberRequest || isSubscriberSubmitting}>
                   <Mail aria-hidden="true" />
-                  <span>Submit request</span>
+                  <span>{isSubscriberSubmitting ? "Submitting..." : "Submit request"}</span>
                 </button>
                 <button className="btn btn-secondary" type="button" onClick={() => setIsSubscriberModalOpen(false)}>
                   <span>Cancel</span>

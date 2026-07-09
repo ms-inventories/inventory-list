@@ -3,7 +3,7 @@ import { config } from "./config.js";
 
 let transporter;
 
-function isEmailConfigured() {
+export function isEmailConfigured() {
   return Boolean(config.email.host && config.email.user && config.email.pass && config.email.fromAddress);
 }
 
@@ -150,6 +150,38 @@ export async function sendNewsletterIssueEmail({ to, issue, unsubscribeUrl }) {
     issue.body,
     "",
     unsubscribeUrl ? `Unsubscribe: ${unsubscribeUrl}` : null
+  ]);
+
+  await getTransporter().sendMail({
+    from: senderAddress(),
+    to,
+    subject,
+    text
+  });
+
+  return { sent: true };
+}
+
+export async function sendNewsletterSubscriberReviewEmail({ to, displayName, decision, publicUrl }) {
+  if (!isEmailConfigured()) {
+    return { sent: false, reason: "smtp_not_configured" };
+  }
+
+  const approved = decision === "approved";
+  const subject = approved
+    ? "Newsletter request approved"
+    : "Newsletter request update";
+  const greeting = displayName ? `${displayName},` : "Hello,";
+  const text = compactLines([
+    greeting,
+    "",
+    approved
+      ? "Your request for Black Shadow Company newsletter updates was approved. Future updates will be sent to this address."
+      : "Your request for Black Shadow Company newsletter updates was reviewed and was not approved at this time.",
+    "",
+    publicUrl ? `Public site: ${publicUrl}` : null,
+    "",
+    "If you have questions, contact the company FRG team."
   ]);
 
   await getTransporter().sendMail({

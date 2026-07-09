@@ -155,9 +155,9 @@ Definition of done:
 
 Goal: turn `Upload packet` into a guided, obvious workflow.
 
-Status: in progress by current Codex thread, started 2026-07-08.
+Status: completed by current Codex thread, 2026-07-08.
 
-Coordination note: this task owns the packet upload wizard UI, packet import entry points, and session handoff around packet imports. Avoid overlapping changes in `PACKET-002`, `PACKET-003`, and `SESSION-001` until this status changes.
+Coordination note: packet upload wizard UI and session handoff are complete. `PACKET-002` and `PACKET-003` can start; coordinate with `SESSION-001` only if changing the shared new-session flow.
 
 Primary files:
 
@@ -167,13 +167,13 @@ Primary files:
 
 Subtasks:
 
-- [ ] Replace the current session handoff with a modal/drawer wizard.
-- [ ] Step 1: create or select inventory session.
-- [ ] Step 2: choose PDF, spreadsheet, image, or paste text.
-- [ ] Step 3: review parsed rows.
-- [ ] Step 4: import rows and show success summary.
-- [ ] Preserve the current session import history.
-- [ ] Verify mobile layout.
+- [x] Replace the current session handoff with a modal/drawer wizard.
+- [x] Step 1: create or select inventory session.
+- [x] Step 2: choose PDF, CSV/text, image, or paste text.
+- [x] Step 3: review parsed rows.
+- [x] Step 4: import rows and show success summary.
+- [x] Preserve the current session import history.
+- [x] Verify mobile layout.
 
 Definition of done:
 
@@ -182,6 +182,8 @@ Definition of done:
 ### PACKET-002: PDF Parser Reliability
 
 Goal: support clean Army-style packet PDFs and weird layout variants.
+
+Status: completed by current Codex thread, 2026-07-08. Safe for `PACKET-003` to start; coordinate before changing `react-app/src/lib/packetParser.js` or generated packet fixtures again.
 
 Primary files:
 
@@ -192,12 +194,12 @@ Primary files:
 
 Subtasks:
 
-- [ ] Build parser fixtures from generated Army-style PDFs.
-- [ ] Extract MPO, LIN, NSN, description, and OH Qty when present.
-- [ ] Ignore page headers, footers, signatures, stamps, and embedded photos.
-- [ ] Flag low-confidence rows for review.
-- [ ] Support one-line fallback import.
-- [ ] Add parser notes to docs.
+- [x] Build parser fixtures from generated Army-style PDFs.
+- [x] Extract MPO, LIN, NSN, description, and OH Qty when present.
+- [x] Ignore page headers, footers, signatures, stamps, and embedded photos.
+- [x] Flag low-confidence rows for review.
+- [x] Support one-line fallback import.
+- [x] Add parser notes to docs.
 
 Definition of done:
 
@@ -230,7 +232,7 @@ Definition of done:
 
 Goal: remove dead platform sidebar controls and replace them with real views.
 
-Status: in progress by current Codex thread. Avoid overlapping edits to platform navigation, platform overview, sidebar state, or platform-only admin views until this status is cleared.
+Status: complete for this pass. Platform navigation, overview, sidebar state, and platform-only admin views are safe for follow-up work; coordinate before changing the same section router.
 
 Primary files:
 
@@ -240,11 +242,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Create a real platform dashboard view.
-- [ ] Decide whether `Users`, `Roles`, and `Organizations` are real routes now or hidden until later.
-- [ ] Add active nav state instead of hardcoded `Platoons`.
-- [ ] Keep mobile behavior usable.
-- [ ] Add empty states for unimplemented sections if they stay visible.
+- [x] Create a real platform dashboard view.
+- [x] Decide whether `Users`, `Roles`, and `Organizations` are real routes now or hidden until later.
+- [x] Add active nav state instead of hardcoded `Platoons`.
+- [x] Keep mobile behavior usable.
+- [x] Add empty states for unimplemented sections if they stay visible.
 
 Definition of done:
 
@@ -254,6 +256,8 @@ Definition of done:
 
 Goal: make tenant row actions explicit.
 
+Status: complete for this pass. Platform tenant row actions, copy-link behavior, workspace links, and row/card mobile action layout are safe for follow-up work; no separate admin destination exists yet.
+
 Primary files:
 
 - `react-app/src/components/AdminConsole.jsx`
@@ -261,11 +265,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Replace ambiguous `Open` with `Open workspace`.
-- [ ] Add `Admin view` if separate from workspace.
-- [ ] Add `Copy link`.
-- [ ] Add overflow menu only if there are more than two actions.
-- [ ] Test mobile row/card layout.
+- [x] Replace ambiguous `Open` with `Open workspace`.
+- [x] Keep `Admin view` out until it is a distinct destination.
+- [x] Add `Copy link`.
+- [x] Add overflow menu only if there are more than two actions.
+- [x] Test mobile row/card layout.
 
 Definition of done:
 
@@ -318,7 +322,7 @@ Definition of done:
 
 Goal: make the tenant shell controls real.
 
-Status: in progress by current Codex thread. Avoid overlapping edits to the tenant dashboard shell, mobile sidebar behavior, tenant top bar, notification bell placeholder, or user menu until this status is cleared.
+Status: completed by current Codex thread, 2026-07-08. Safe for follow-up tenant tasks to start; coordinate before changing the tenant shell, mobile drawer, notification popover placeholder, or user menu again.
 
 Primary files:
 
@@ -327,11 +331,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Wire hamburger to open/collapse sidebar.
-- [ ] Add overlay drawer behavior on mobile.
-- [ ] Add user menu with profile, app portal, switch workspace, diagnostics, and sign out.
-- [ ] Keyboard and outside-click close behavior.
-- [ ] Verify desktop and mobile screenshots.
+- [x] Wire hamburger to open/collapse sidebar.
+- [x] Add overlay drawer behavior on mobile.
+- [x] Add user menu with profile, app portal, switch workspace, diagnostics, and sign out.
+- [x] Keyboard and outside-click close behavior.
+- [x] Verify desktop and mobile screenshots.
 
 Definition of done:
 
@@ -341,6 +345,8 @@ Definition of done:
 
 Goal: make the bell useful.
 
+Status: completed by current Codex thread, 2026-07-08. Safe for notification persistence and deep-link follow-up work to start.
+
 Primary files:
 
 - `react-app/src/components/AdminConsole.jsx`
@@ -349,11 +355,17 @@ Primary files:
 
 Subtasks:
 
-- [ ] Define notification sources: new proof, proof request, assignment, import complete, session closed.
-- [ ] Add unread count.
-- [ ] Add notification panel UI.
-- [ ] Add mark-read behavior if persisted.
-- [ ] Link notifications to the relevant session/review item.
+- [x] Define notification sources: new proof, proof request, assignment-style open rows, import complete, session closed.
+- [x] Add unread count for high-priority action items.
+- [x] Add notification panel UI.
+- [x] Confirm mark-read is not persisted yet; unread state is derived from live action items.
+- [x] Link notifications to the relevant sessions or review queue, with IDs returned for future row-level deep links.
+
+Remaining follow-ups:
+
+- Add a persisted notification/read-state table if dismissible alerts become important.
+- Add row-level deep links that select a specific session item or proof submission after the target tab opens.
+- Replace assignment-style open-row summaries with true assignee notifications after assignment ownership exists.
 
 Definition of done:
 
@@ -363,6 +375,8 @@ Definition of done:
 
 Goal: give platoon admins a place to publish search/inventory guidance.
 
+Status: completed by current Codex thread, 2026-07-08. Safe for tenant settings, packet import, and session tasking work to continue; coordinate before changing `tenant_guidance` schema or the guidance page editor.
+
 Primary files:
 
 - `react-app/src/components/AdminConsole.jsx`
@@ -371,10 +385,16 @@ Primary files:
 
 Subtasks:
 
-- [ ] Add read-only guidance page first.
-- [ ] Add tenant admin editor.
-- [ ] Store markdown/plain text guidance.
-- [ ] Link guidance to packet/session workflow.
+- [x] Add read-only guidance page first.
+- [x] Add tenant admin editor.
+- [x] Store markdown/plain text guidance.
+- [x] Link guidance to packet/session workflow.
+
+Remaining follow-ups:
+
+- Add revision/history if guidance changes need audit-friendly diff review.
+- Add markdown preview/rendering if plain text is not enough.
+- Add row-level guidance snippets inside packet review if admins need per-session instructions.
 
 Definition of done:
 
@@ -564,6 +584,8 @@ Definition of done:
 
 Goal: let tenant admins manage active members.
 
+Status: completed 2026-07-08. Safe for `USER-MANAGEMENT-003` and `USER-MANAGEMENT-004` to start. Coordinate before changing the same tenant People panel controls.
+
 Primary files:
 
 - `backend/src/routes.js`
@@ -571,11 +593,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Add role update API.
-- [ ] Add disable/remove member API.
-- [ ] Add UI menu for member role and status.
-- [ ] Prevent removing the last tenant admin.
-- [ ] Audit member changes.
+- [x] Add role update API.
+- [x] Add disable/remove member API.
+- [x] Add UI menu for member role and status.
+- [x] Prevent removing the last tenant admin.
+- [x] Audit member changes.
 
 Definition of done:
 
@@ -585,6 +607,8 @@ Definition of done:
 
 Goal: clarify why a user has access.
 
+Status: completed 2026-07-08. Safe for `USER-MANAGEMENT-004` to start. Coordinate before changing tenant access-source diagnostics or the People panel access summary.
+
 Primary files:
 
 - `backend/src/tenant.js`
@@ -593,10 +617,10 @@ Primary files:
 
 Subtasks:
 
-- [ ] Include membership source in API responses.
-- [ ] Show database membership vs Authentik group access.
-- [ ] Show platform admin override.
-- [ ] Add warnings when Authentik group and tenant membership disagree.
+- [x] Include membership source in API responses.
+- [x] Show database membership vs Authentik group access.
+- [x] Show platform admin override.
+- [x] Add warnings when Authentik group and tenant membership disagree.
 
 Definition of done:
 
@@ -656,9 +680,9 @@ Definition of done:
 
 Goal: make the public homepage editable by FRG admins.
 
-Status: in progress by current Codex thread, started 2026-07-08.
+Status: completed by current Codex thread, 2026-07-08. Safe for `NEWSLETTER-003` and `PUBLIC-001` to continue; coordinate before changing the same public content block schema or editor flows.
 
-Coordination note: this task owns public homepage content blocks, the FRG/newsletter content editor UI, related API routes, and published public rendering. Avoid overlapping public content/admin newsletter editor changes until this status is complete.
+Coordination note: public homepage content blocks, the FRG/newsletter content editor UI, related API routes, and published public rendering are implemented. Follow-up threads can build delivery/unsubscribe QA or public polish without owning the content-block CRUD path.
 
 Primary files:
 
@@ -669,11 +693,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Define public content blocks: announcements, events, resources.
-- [ ] Add DB schema for content blocks.
-- [ ] Add admin editor.
-- [ ] Render published content on public homepage.
-- [ ] Keep content vague and public-safe.
+- [x] Define public content blocks: announcements, events, resources.
+- [x] Add DB schema for content blocks.
+- [x] Add admin editor.
+- [x] Render published content on public homepage.
+- [x] Keep content vague and public-safe.
 
 Definition of done:
 

@@ -4,6 +4,8 @@ dist/
 playwright-report/
 test-results/
 qa-artifacts/
+.codex-remote-attachments/
+tmp/
 .env
 .env.*
 !.env.example

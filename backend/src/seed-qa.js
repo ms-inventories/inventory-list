@@ -219,6 +219,30 @@ async function upsertSubmission({ sessionItemId, submittedBy, status, locationTe
   return result.rows[0];
 }
 
+async function seedTenantGuidance(tenantId, updatedBy) {
+  const body = [
+    "Inventory guidance",
+    "",
+    "- Start with the packet line and search by LIN, NSN, serial, or the plain item name.",
+    "- Check the location hint and any existing photos before asking for help.",
+    "- Take a wide photo first, then serial number or data plate photos when available.",
+    "- If an item does not match the packet line, submit it as a mismatch and add a short note.",
+    "- If you are unsure, submit what you found and ask the platoon admin to review it."
+  ].join("\n");
+
+  await query(
+    `
+      INSERT INTO tenant_guidance (tenant_id, body, updated_by)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (tenant_id) DO UPDATE SET
+        body = EXCLUDED.body,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = now()
+    `,
+    [tenantId, body, updatedBy]
+  );
+}
+
 async function seedNewsletter(rootUserId) {
   await query(
     `
@@ -241,6 +265,59 @@ async function seedNewsletter(rootUserId) {
     `,
     [rootUserId]
   );
+
+  const contentBlocks = [
+    {
+      blockType: "announcement",
+      title: "Family readiness updates",
+      summary: "General updates for Black Shadow Company families will be posted here.",
+      body: "This seeded block is safe for public QA testing and can be edited by newsletter admins.",
+      sortOrder: 10
+    },
+    {
+      blockType: "event",
+      title: "Community check-in",
+      summary: "A placeholder family readiness reminder for QA.",
+      body: "Use this event block to verify the public homepage and FRG content editor.",
+      sortOrder: 20
+    },
+    {
+      blockType: "resource",
+      title: "Family resources",
+      summary: "Helpful public resources and contact notes can be linked here.",
+      body: "Keep public content broad and family-focused.",
+      href: "https://www.nationalguard.mil/Resources/Family-Programs/",
+      linkLabel: "Open resource",
+      sortOrder: 30
+    }
+  ];
+
+  for (const block of contentBlocks) {
+    await query(
+      `
+        INSERT INTO frg_content_blocks (
+          block_type, title, summary, body, href, link_label, sort_order, status,
+          created_by, updated_by, published_at
+        )
+        SELECT $1, $2, $3, $4, $5, $6, $7, 'published', $8, $8, now()
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM frg_content_blocks
+          WHERE block_type = $1 AND title = $2
+        )
+      `,
+      [
+        block.blockType,
+        block.title,
+        block.summary,
+        block.body,
+        block.href || null,
+        block.linkLabel || null,
+        block.sortOrder,
+        rootUserId
+      ]
+    );
+  }
 
   const existingIssue = await query(
     "SELECT id FROM newsletter_issues WHERE title = $1 LIMIT 1",
@@ -390,9 +467,10 @@ async function main() {
     serialNumber: "QA-PRC-001"
   });
 
+  await seedTenantGuidance(tenant.id, lead.id);
   await seedNewsletter(root.id);
 
-  console.log("QA seed complete: root, MS tenant, session rows, review item, and newsletter content are ready");
+  console.log("QA seed complete: root, MS tenant, session rows, review item, tenant guidance, and newsletter content are ready");
 }
 
 main()

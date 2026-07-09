@@ -16,6 +16,7 @@ import {
 import { hasTenantRole, tenantContext } from "./tenant.js";
 
 const tenantRoles = ["tenant_admin", "contributor", "viewer"];
+const memberStatuses = ["active", "disabled"];
 const itemStatuses = ["unchecked", "found", "not_found", "mismatch", "needs_review", "approved"];
 const submissionStatuses = ["found", "not_found", "mismatch", "needs_review"];
 const reviewDecisions = ["approved", "request_more_info", "rejected"];
@@ -25,6 +26,20 @@ const newsletterIssueSchema = z.object({
   editionLabel: z.string().max(80).optional(),
   summary: z.string().max(600).optional(),
   body: z.string().min(10).max(10000)
+});
+const frgContentBlockSchema = z.object({
+  blockType: z.enum(["announcement", "event", "resource"]),
+  title: z.string().min(2).max(140),
+  summary: z.string().max(320).optional(),
+  body: z.string().max(1200).optional(),
+  href: z.string().max(400).optional(),
+  linkLabel: z.string().max(80).optional(),
+  eventAt: z.string().max(40).optional(),
+  sortOrder: z.coerce.number().int().min(0).max(999).optional(),
+  status: z.enum(["draft", "published", "hidden"]).optional()
+});
+const tenantGuidanceSchema = z.object({
+  body: z.string().max(12000).optional()
 });
 const imageMimeTypes = new Map([
   ["image/jpeg", ".jpg"],
@@ -75,6 +90,26 @@ function rowToMember(row) {
     displayName: row.display_name,
     createdAt: row.created_at
   };
+}
+
+async function assertMemberCanLoseAdminRole(client, reply, tenantId, member) {
+  if (member.role !== "tenant_admin" || member.status !== "active") return;
+
+  const adminCount = await client.query(
+    `
+      SELECT count(*)::int AS count
+      FROM tenant_memberships
+      WHERE tenant_id = $1
+        AND role = 'tenant_admin'
+        AND status = 'active'
+    `,
+    [tenantId]
+  );
+
+  if ((adminCount.rows[0]?.count || 0) <= 1) {
+    reply.code(409);
+    throw new Error("Add another active platoon admin before changing this member.");
+  }
 }
 
 function rowToInvitation(row) {
@@ -244,6 +279,95 @@ function rowToNewsletterIssue(row, { includeBody = false } = {}) {
 
   if (includeBody) issue.body = row.body;
   return issue;
+}
+
+function rowToFrgContentBlock(row) {
+  return {
+    id: row.id,
+    blockType: row.block_type,
+    title: row.title,
+    summary: row.summary,
+    body: row.body,
+    href: row.href,
+    linkLabel: row.link_label,
+    eventAt: row.event_at,
+    sortOrder: Number(row.sort_order || 0),
+    status: row.status,
+    publishedAt: row.published_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function rowToTenantGuidance(row) {
+  return {
+    body: row?.body || "",
+    updatedAt: row?.updated_at || null,
+    updatedByEmail: row?.updated_by_email || null,
+    updatedByName: row?.updated_by_name || null
+  };
+}
+
+function groupFrgContentBlocks(rows) {
+  const groups = {
+    announcements: [],
+    events: [],
+    resources: []
+  };
+
+  rows.forEach(row => {
+    const block = rowToFrgContentBlock(row);
+    if (block.blockType === "announcement") groups.announcements.push(block);
+    if (block.blockType === "event") groups.events.push(block);
+    if (block.blockType === "resource") groups.resources.push(block);
+  });
+
+  return groups;
+}
+
+function safePublicHref(value) {
+  const href = String(value || "").trim();
+  if (!href) return null;
+  if (href.startsWith("/") || href.startsWith("#")) return href;
+
+  try {
+    const url = new URL(href);
+    return ["https:", "mailto:"].includes(url.protocol) ? href : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeFrgContentPayload(body) {
+  const href = safePublicHref(body.href);
+  if (String(body.href || "").trim() && !href) {
+    const error = new Error("Public links must use https, mailto, /, or #.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let eventAt = null;
+  if (String(body.eventAt || "").trim()) {
+    const date = new Date(body.eventAt);
+    if (Number.isNaN(date.getTime())) {
+      const error = new Error("Event date is invalid");
+      error.statusCode = 400;
+      throw error;
+    }
+    eventAt = date.toISOString();
+  }
+
+  return {
+    blockType: body.blockType,
+    title: body.title.trim(),
+    summary: String(body.summary || "").trim() || null,
+    body: String(body.body || "").trim() || null,
+    href,
+    linkLabel: String(body.linkLabel || "").trim() || null,
+    eventAt,
+    sortOrder: body.sortOrder ?? 100,
+    status: body.status || "draft"
+  };
 }
 
 function safeStorageKey(key) {
@@ -670,6 +794,22 @@ async function notifySubmitterOfProofRequest(context, submissionId, decisionNote
   });
 }
 
+function compactText(value, maxLength = 96) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trim()}...`;
+}
+
+function notificationAction({ label, tab, sessionId = null, sessionItemId = null, submissionId = null }) {
+  return {
+    label,
+    tab,
+    sessionId,
+    sessionItemId,
+    submissionId
+  };
+}
+
 async function requireContext(request, reply, roles = []) {
   const auth = await authContext(request, reply);
   const context = await tenantContext(request, auth);
@@ -851,33 +991,48 @@ export function registerRoutes(app) {
       isPlatformAdmin: context.identity.isPlatformAdmin,
       isFrgAdmin: context.identity.isFrgAdmin,
       tenant: rowToTenant(context.tenant),
-      membership: context.membership
+      membership: context.membership,
+      access: context.access
     };
   });
 
   route(app, "get", "/api/newsletter/public", async () => {
-    const latestResult = await query(
-      `
-        SELECT *
-        FROM newsletter_issues
-        WHERE status = 'published'
-        ORDER BY published_at DESC NULLS LAST, created_at DESC
-        LIMIT 1
-      `
-    );
-    const recentResult = await query(
-      `
-        SELECT *
-        FROM newsletter_issues
-        WHERE status = 'published'
-        ORDER BY published_at DESC NULLS LAST, created_at DESC
-        LIMIT 5
-      `
-    );
+    const [latestResult, recentResult, contentResult] = await Promise.all([
+      query(
+        `
+          SELECT *
+          FROM newsletter_issues
+          WHERE status = 'published'
+          ORDER BY published_at DESC NULLS LAST, created_at DESC
+          LIMIT 1
+        `
+      ),
+      query(
+        `
+          SELECT *
+          FROM newsletter_issues
+          WHERE status = 'published'
+          ORDER BY published_at DESC NULLS LAST, created_at DESC
+          LIMIT 5
+        `
+      ),
+      query(
+        `
+          SELECT *
+          FROM frg_content_blocks
+          WHERE status = 'published'
+          ORDER BY
+            block_type ASC,
+            sort_order ASC,
+            COALESCE(event_at, published_at, updated_at, created_at) ASC
+        `
+      )
+    ]);
 
     return {
       latestIssue: rowToNewsletterIssue(latestResult.rows[0], { includeBody: true }),
-      issues: recentResult.rows.map(row => rowToNewsletterIssue(row))
+      issues: recentResult.rows.map(row => rowToNewsletterIssue(row)),
+      contentBlocks: groupFrgContentBlocks(contentResult.rows)
     };
   });
 
@@ -971,7 +1126,7 @@ export function registerRoutes(app) {
   route(app, "get", "/api/newsletter/admin", async (request, reply) => {
     await requireFrgAdmin(request, reply);
 
-    const [issueResult, statsResult, subscriberResult] = await Promise.all([
+    const [issueResult, statsResult, subscriberResult, contentResult] = await Promise.all([
       query(
         `
           SELECT i.*,
@@ -1015,11 +1170,27 @@ export function registerRoutes(app) {
             updated_at DESC
           LIMIT 40
         `
+      ),
+      query(
+        `
+          SELECT *
+          FROM frg_content_blocks
+          ORDER BY
+            CASE status
+              WHEN 'draft' THEN 0
+              WHEN 'published' THEN 1
+              ELSE 2
+            END,
+            block_type ASC,
+            sort_order ASC,
+            updated_at DESC
+        `
       )
     ]);
 
     return {
       issues: issueResult.rows.map(row => rowToNewsletterIssue(row, { includeBody: true })),
+      contentBlocks: contentResult.rows.map(rowToFrgContentBlock),
       subscriberStats: {
         pending: statsResult.rows[0]?.pending_count || 0,
         active: statsResult.rows[0]?.active_count || 0,
@@ -1032,6 +1203,149 @@ export function registerRoutes(app) {
       },
       subscribers: subscriberResult.rows.map(rowToNewsletterSubscriber)
     };
+  });
+
+  route(app, "post", "/api/newsletter/admin/content-blocks", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+    const payload = normalizeFrgContentPayload(parseBody(frgContentBlockSchema, request.body));
+
+    const created = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          INSERT INTO frg_content_blocks (
+            block_type, title, summary, body, href, link_label, event_at, sort_order, status,
+            created_by, updated_by, published_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, CASE WHEN $9 = 'published' THEN now() ELSE NULL END)
+          RETURNING *
+        `,
+        [
+          payload.blockType,
+          payload.title,
+          payload.summary,
+          payload.body,
+          payload.href,
+          payload.linkLabel,
+          payload.eventAt,
+          payload.sortOrder,
+          payload.status,
+          auth.user.id
+        ]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "frg_content.created",
+        entityType: "frg_content_block",
+        entityId: result.rows[0].id,
+        metadata: { title: payload.title, blockType: payload.blockType, status: payload.status }
+      });
+
+      return result.rows[0];
+    });
+
+    reply.code(201);
+    return { contentBlock: rowToFrgContentBlock(created) };
+  });
+
+  route(app, "patch", "/api/newsletter/admin/content-blocks/:blockId", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+    const payload = normalizeFrgContentPayload(parseBody(frgContentBlockSchema, request.body));
+
+    const updated = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          UPDATE frg_content_blocks
+          SET block_type = $1,
+            title = $2,
+            summary = $3,
+            body = $4,
+            href = $5,
+            link_label = $6,
+            event_at = $7,
+            sort_order = $8,
+            status = $9,
+            updated_by = $10,
+            published_at = CASE
+              WHEN $9 = 'published' AND published_at IS NULL THEN now()
+              WHEN $9 <> 'published' THEN NULL
+              ELSE published_at
+            END,
+            updated_at = now()
+          WHERE id = $11
+          RETURNING *
+        `,
+        [
+          payload.blockType,
+          payload.title,
+          payload.summary,
+          payload.body,
+          payload.href,
+          payload.linkLabel,
+          payload.eventAt,
+          payload.sortOrder,
+          payload.status,
+          auth.user.id,
+          request.params.blockId
+        ]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "frg_content.updated",
+        entityType: "frg_content_block",
+        entityId: result.rows[0].id,
+        metadata: { title: payload.title, blockType: payload.blockType, status: payload.status }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!updated) {
+      reply.code(404);
+      throw new Error("FRG content block not found");
+    }
+
+    return { contentBlock: rowToFrgContentBlock(updated) };
+  });
+
+  route(app, "delete", "/api/newsletter/admin/content-blocks/:blockId", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+
+    const deleted = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          DELETE FROM frg_content_blocks
+          WHERE id = $1
+          RETURNING *
+        `,
+        [request.params.blockId]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "frg_content.deleted",
+        entityType: "frg_content_block",
+        entityId: result.rows[0].id,
+        metadata: { title: result.rows[0].title, blockType: result.rows[0].block_type }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!deleted) {
+      reply.code(404);
+      throw new Error("FRG content block not found");
+    }
+
+    return { ok: true, contentBlock: rowToFrgContentBlock(deleted) };
   });
 
   route(app, "patch", "/api/newsletter/admin/subscribers/:subscriberId/review", async (request, reply) => {
@@ -1329,7 +1643,322 @@ export function registerRoutes(app) {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
     return {
       tenant: rowToTenant(context.tenant),
-      membership: context.membership
+      membership: context.membership,
+      access: context.access
+    };
+  });
+
+  route(app, "get", "/api/tenant/guidance", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
+    const result = await query(
+      `
+        SELECT g.body,
+          g.updated_at,
+          updater.email AS updated_by_email,
+          updater.display_name AS updated_by_name
+        FROM tenant_guidance g
+        LEFT JOIN app_users updater ON updater.id = g.updated_by
+        WHERE g.tenant_id = $1
+        LIMIT 1
+      `,
+      [context.tenant.id]
+    );
+
+    return { guidance: rowToTenantGuidance(result.rows[0]) };
+  });
+
+  route(app, "patch", "/api/tenant/guidance", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(tenantGuidanceSchema, request.body);
+    const guidanceBody = String(body.body || "").trim();
+
+    const guidance = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          INSERT INTO tenant_guidance (tenant_id, body, updated_by)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (tenant_id) DO UPDATE SET
+            body = EXCLUDED.body,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = now()
+          RETURNING body, updated_at
+        `,
+        [context.tenant.id, guidanceBody, context.user.id]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "tenant_guidance.updated",
+        entityType: "tenant_guidance",
+        entityId: context.tenant.id,
+        metadata: { length: guidanceBody.length }
+      });
+
+      return result.rows[0];
+    });
+
+    return {
+      guidance: rowToTenantGuidance({
+        ...guidance,
+        updated_by_email: context.user.email,
+        updated_by_name: context.user.display_name
+      })
+    };
+  });
+
+  route(app, "get", "/api/tenant/notifications", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
+    const notifications = [];
+    const isTenantAdmin = hasTenantRole(context, ["tenant_admin"]);
+
+    if (isTenantAdmin) {
+      const pendingProofResult = await query(
+        `
+          WITH latest_pending AS (
+            SELECT sub.id,
+              sub.created_at,
+              submitter.email AS submitted_by_email,
+              submitter.display_name AS submitted_by_name,
+              si.id AS session_item_id,
+              si.packet_line,
+              s.id AS session_id,
+              s.name AS session_name,
+              row_number() OVER (PARTITION BY si.id ORDER BY sub.created_at DESC) AS queue_rank
+            FROM item_submissions sub
+            JOIN inventory_session_items si ON si.id = sub.session_item_id
+            JOIN inventory_sessions s ON s.id = si.session_id
+            JOIN app_users submitter ON submitter.id = sub.submitted_by
+            WHERE s.tenant_id = $1
+              AND s.status <> 'closed'
+              AND sub.review_state = 'pending'
+          )
+          SELECT *
+          FROM latest_pending
+          WHERE queue_rank = 1
+          ORDER BY created_at DESC
+          LIMIT 6
+        `,
+        [context.tenant.id]
+      );
+
+      pendingProofResult.rows.forEach(row => {
+        const submitterName = displayNameFor({
+          display_name: row.submitted_by_name,
+          email: row.submitted_by_email
+        }) || "Someone";
+
+        notifications.push({
+          id: `proof:${row.id}`,
+          type: "proof_submitted",
+          priority: "high",
+          title: "Proof waiting",
+          body: `${submitterName} submitted ${compactText(row.packet_line || "a packet row", 68)}`,
+          createdAt: row.created_at,
+          tenantSlug: context.tenant.slug,
+          sessionId: row.session_id,
+          sessionName: row.session_name,
+          sessionItemId: row.session_item_id,
+          submissionId: row.id,
+          action: notificationAction({
+            label: "Review proof",
+            tab: "review",
+            sessionId: row.session_id,
+            sessionItemId: row.session_item_id,
+            submissionId: row.id
+          })
+        });
+      });
+    }
+
+    const proofRequestResult = await query(
+      `
+        SELECT sub.id,
+          COALESCE(sub.reviewed_at, sub.created_at) AS created_at,
+          sub.review_note,
+          reviewer.email AS reviewed_by_email,
+          reviewer.display_name AS reviewed_by_name,
+          si.id AS session_item_id,
+          si.packet_line,
+          s.id AS session_id,
+          s.name AS session_name
+        FROM item_submissions sub
+        JOIN inventory_session_items si ON si.id = sub.session_item_id
+        JOIN inventory_sessions s ON s.id = si.session_id
+        LEFT JOIN app_users reviewer ON reviewer.id = sub.reviewed_by
+        WHERE s.tenant_id = $1
+          AND s.status <> 'closed'
+          AND sub.submitted_by = $2
+          AND sub.review_state = 'request_more_info'
+        ORDER BY COALESCE(sub.reviewed_at, sub.created_at) DESC
+        LIMIT 5
+      `,
+      [context.tenant.id, context.user.id]
+    );
+
+    proofRequestResult.rows.forEach(row => {
+      const reviewerName = displayNameFor({
+        display_name: row.reviewed_by_name,
+        email: row.reviewed_by_email
+      });
+
+      notifications.push({
+        id: `proof-request:${row.id}`,
+        type: "proof_request",
+        priority: "high",
+        title: "More proof requested",
+        body: compactText(row.review_note || `${reviewerName || "A platoon admin"} asked for more detail on ${row.packet_line || "a packet row"}`, 112),
+        createdAt: row.created_at,
+        tenantSlug: context.tenant.slug,
+        sessionId: row.session_id,
+        sessionName: row.session_name,
+        sessionItemId: row.session_item_id,
+        submissionId: row.id,
+        action: notificationAction({
+          label: "Open session",
+          tab: "tasks",
+          sessionId: row.session_id,
+          sessionItemId: row.session_item_id,
+          submissionId: row.id
+        })
+      });
+    });
+
+    const uncheckedResult = await query(
+      `
+        SELECT s.id AS session_id,
+          s.name AS session_name,
+          count(si.id)::int AS unchecked_count,
+          max(si.updated_at) AS updated_at
+        FROM inventory_sessions s
+        JOIN inventory_session_items si ON si.session_id = s.id
+        WHERE s.tenant_id = $1
+          AND s.status = 'active'
+          AND si.status = 'unchecked'
+        GROUP BY s.id, s.name
+        HAVING count(si.id) > 0
+        ORDER BY unchecked_count DESC, updated_at DESC
+        LIMIT 3
+      `,
+      [context.tenant.id]
+    );
+
+    uncheckedResult.rows.forEach(row => {
+      const count = Number(row.unchecked_count || 0);
+      notifications.push({
+        id: `unchecked:${row.session_id}`,
+        type: "assignment",
+        priority: count > 0 ? "medium" : "low",
+        title: isTenantAdmin ? "Rows need tasking" : "Rows need attention",
+        body: `${count} unchecked ${count === 1 ? "row" : "rows"} in ${row.session_name}`,
+        createdAt: row.updated_at,
+        tenantSlug: context.tenant.slug,
+        sessionId: row.session_id,
+        sessionName: row.session_name,
+        sessionItemId: null,
+        submissionId: null,
+        action: notificationAction({
+          label: "Open session",
+          tab: "tasks",
+          sessionId: row.session_id
+        })
+      });
+    });
+
+    const closedSessionResult = await query(
+      `
+        SELECT id, name, closed_at
+        FROM inventory_sessions
+        WHERE tenant_id = $1
+          AND status = 'closed'
+          AND closed_at IS NOT NULL
+        ORDER BY closed_at DESC
+        LIMIT 2
+      `,
+      [context.tenant.id]
+    );
+
+    closedSessionResult.rows.forEach(row => {
+      notifications.push({
+        id: `session-closed:${row.id}`,
+        type: "session_closed",
+        priority: "low",
+        title: "Session closed",
+        body: `${row.name} is closed and ready for records.`,
+        createdAt: row.closed_at,
+        tenantSlug: context.tenant.slug,
+        sessionId: row.id,
+        sessionName: row.name,
+        sessionItemId: null,
+        submissionId: null,
+        action: notificationAction({
+          label: "Open sessions",
+          tab: "tasks",
+          sessionId: row.id
+        })
+      });
+    });
+
+    if (isTenantAdmin) {
+      const importTableResult = await query("SELECT to_regclass('public.packet_import_batches') AS table_name");
+      if (importTableResult.rows[0]?.table_name) {
+        const importResult = await query(
+          `
+            SELECT b.id,
+              b.source_name,
+              b.row_count,
+              b.created_at,
+              s.id AS session_id,
+              s.name AS session_name
+            FROM packet_import_batches b
+            JOIN inventory_sessions s ON s.id = b.session_id
+            WHERE b.tenant_id = $1
+            ORDER BY b.created_at DESC
+            LIMIT 3
+          `,
+          [context.tenant.id]
+        );
+
+        importResult.rows.forEach(row => {
+          const rowCount = Number(row.row_count || 0);
+          notifications.push({
+            id: `packet-import:${row.id}`,
+            type: "packet_import",
+            priority: "low",
+            title: "Packet import complete",
+            body: `${rowCount} ${rowCount === 1 ? "row" : "rows"} imported into ${row.session_name}`,
+            createdAt: row.created_at,
+            tenantSlug: context.tenant.slug,
+            sessionId: row.session_id,
+            sessionName: row.session_name,
+            sessionItemId: null,
+            submissionId: null,
+            action: notificationAction({
+              label: "Open session",
+              tab: "tasks",
+              sessionId: row.session_id
+            })
+          });
+        });
+      }
+    }
+
+    const priorityRank = { high: 0, medium: 1, low: 2 };
+    const sortedNotifications = notifications
+      .filter(notification => notification.createdAt)
+      .sort((left, right) => {
+        const leftPriority = priorityRank[left.priority] ?? 9;
+        const rightPriority = priorityRank[right.priority] ?? 9;
+        if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+      })
+      .slice(0, 10);
+
+    return {
+      notifications: sortedNotifications,
+      unreadCount: sortedNotifications.filter(notification => notification.priority === "high").length,
+      persisted: false,
+      generatedAt: new Date().toISOString()
     };
   });
 
@@ -1403,6 +2032,133 @@ export function registerRoutes(app) {
 
     reply.code(201);
     return { member };
+  });
+
+  route(app, "patch", "/api/tenant/members/:memberId", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const memberId = z.string().uuid().parse(request.params.memberId);
+    const body = parseBody(
+      z.object({
+        role: z.enum(tenantRoles).optional(),
+        status: z.enum(memberStatuses).optional()
+      }).refine(value => value.role || value.status, {
+        message: "Provide a role or status change"
+      }),
+      request.body
+    );
+
+    const member = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
+            u.email, u.display_name
+          FROM tenant_memberships m
+          JOIN app_users u ON u.id = m.user_id
+          WHERE m.tenant_id = $1 AND m.id = $2
+          FOR UPDATE OF m
+        `,
+        [context.tenant.id, memberId]
+      );
+
+      const current = currentResult.rows[0];
+      if (!current) {
+        reply.code(404);
+        throw new Error("Member not found");
+      }
+
+      const nextRole = body.role || current.role;
+      const nextStatus = body.status || current.status;
+      if ((nextRole !== "tenant_admin" || nextStatus !== "active")) {
+        await assertMemberCanLoseAdminRole(client, reply, context.tenant.id, current);
+      }
+
+      const updateResult = await client.query(
+        `
+          UPDATE tenant_memberships m
+          SET role = $3, status = $4
+          FROM app_users u
+          WHERE m.tenant_id = $1
+            AND m.id = $2
+            AND u.id = m.user_id
+          RETURNING m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
+            u.email, u.display_name
+        `,
+        [context.tenant.id, memberId, nextRole, nextStatus]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "member.updated",
+        entityType: "tenant_membership",
+        entityId: memberId,
+        metadata: {
+          email: current.email,
+          previousRole: current.role,
+          previousStatus: current.status,
+          role: nextRole,
+          status: nextStatus
+        }
+      });
+
+      return updateResult.rows[0];
+    });
+
+    return { member: rowToMember(member) };
+  });
+
+  route(app, "post", "/api/tenant/members/:memberId/disable", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const memberId = z.string().uuid().parse(request.params.memberId);
+
+    const member = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
+            u.email, u.display_name
+          FROM tenant_memberships m
+          JOIN app_users u ON u.id = m.user_id
+          WHERE m.tenant_id = $1 AND m.id = $2
+          FOR UPDATE OF m
+        `,
+        [context.tenant.id, memberId]
+      );
+
+      const current = currentResult.rows[0];
+      if (!current) {
+        reply.code(404);
+        throw new Error("Member not found");
+      }
+
+      await assertMemberCanLoseAdminRole(client, reply, context.tenant.id, current);
+
+      const updateResult = await client.query(
+        `
+          UPDATE tenant_memberships m
+          SET status = 'disabled'
+          FROM app_users u
+          WHERE m.tenant_id = $1
+            AND m.id = $2
+            AND u.id = m.user_id
+          RETURNING m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
+            u.email, u.display_name
+        `,
+        [context.tenant.id, memberId]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "member.disabled",
+        entityType: "tenant_membership",
+        entityId: memberId,
+        metadata: { email: current.email, role: current.role, previousStatus: current.status }
+      });
+
+      return updateResult.rows[0];
+    });
+
+    return { member: rowToMember(member) };
   });
 
   route(app, "get", "/api/tenant/invitations", async (request, reply) => {

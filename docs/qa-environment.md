@@ -33,6 +33,7 @@ Seeded data includes:
 - `July sensitive items` inventory session.
 - Four packet rows.
 - One pending proof submission for review.
+- Three published public FRG content blocks.
 - One published newsletter issue.
 - One approved newsletter subscriber.
 

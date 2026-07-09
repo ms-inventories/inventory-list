@@ -38,10 +38,18 @@ test.describe("QA smoke", () => {
     await page.goto(NEWSLETTER_URL);
     await signInWithQaPersona(page, "Newsletter admin");
 
-    await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New block" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Family readiness updates" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Issues", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Newsletter issues", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "New issue" })).toBeVisible();
-    await expect(page.getByText("Approved subscribers", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Black Shadow QA Update" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Subscribers", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByText("Approved subscribers", { exact: true }).first()).toBeVisible();
   });
 
   test("platoon admin sees leader dashboard and admin-only controls", async ({ page }) => {
