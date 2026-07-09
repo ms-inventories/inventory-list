@@ -1,0 +1,91 @@
+name: inventory-list-qa
+
+services:
+  qa-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: inventory_qa
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+    ports:
+      - "55432:5432"
+    volumes:
+      - qa-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory -d inventory_qa"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  qa-api:
+    build:
+      context: .
+      dockerfile: docker/qa/Dockerfile
+    command: sh -lc "npm --prefix backend run migrate && npm --prefix backend run seed:qa && npm --prefix backend run dev"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgres://inventory:inventory@qa-db:5432/inventory_qa
+      BASE_DOMAIN: localhost
+      PUBLIC_APP_URL: http://localhost:5175
+      ALLOW_DEV_AUTH: "true"
+      OIDC_CLIENT_ID: qa-inventory-web
+      OIDC_ISSUER: http://auth.localhost/application/o/inventory-web/
+      OIDC_AUDIENCE: qa-inventory-web
+      OIDC_DISCOVERY_URL: http://auth.localhost/application/o/inventory-web/.well-known/openid-configuration
+      OIDC_GROUPS_CLAIM: groups
+      PLATFORM_ADMIN_GROUP: 876en-admins
+      FRG_ADMIN_GROUP: 876en-frg-admins
+      TENANT_ADMIN_GROUP: 876en-platoon-admin
+      TENANT_GROUP_PREFIX: 876en-
+      PLATFORM_ADMIN_EMAILS: qa-root@876en.test
+      CORS_ORIGINS: http://localhost:5175,http://admin.localhost:5175,http://ms.localhost:5175,http://1st.localhost:5175
+      STORAGE_DRIVER: local
+      STORAGE_ROOT: /data/inventory-uploads
+      PUBLIC_MEDIA_BASE_URL: http://localhost:5300/media
+      EMAIL_FROM_NAME: 876 EN Inventory QA
+      EMAIL_FROM_ADDRESS: no-reply@localhost
+    ports:
+      - "5300:3000"
+    volumes:
+      - .:/workspace
+      - qa-root-node-modules:/workspace/node_modules
+      - qa-backend-node-modules:/workspace/backend/node_modules
+      - qa-react-node-modules:/workspace/react-app/node_modules
+      - qa-uploads:/data/inventory-uploads
+    depends_on:
+      qa-db:
+        condition: service_healthy
+
+  qa-web:
+    build:
+      context: .
+      dockerfile: docker/qa/Dockerfile
+    command: sh -lc "npm --prefix react-app run dev -- --host 0.0.0.0"
+    environment:
+      VITE_BASE_DOMAIN: localhost
+      VITE_API_BASE_URL: http://localhost:5300/api
+      VITE_LEGACY_BUCKET_BASE_URL: https://ms-inventories.s3.us-east-1.amazonaws.com
+      VITE_AUTHENTIK_LAUNCH_URL: http://localhost:5175/#/launch
+      VITE_OIDC_CLIENT_ID: qa-inventory-web
+      VITE_OIDC_DISCOVERY_URL: http://auth.localhost/application/o/inventory-web/.well-known/openid-configuration
+      VITE_OIDC_AUTHORIZATION_ENDPOINT: http://auth.localhost/application/o/authorize/
+      VITE_OIDC_TOKEN_ENDPOINT: http://auth.localhost/application/o/token/
+      VITE_ENABLE_QA_AUTH: "true"
+      VITE_ENABLE_DEMO_FALLBACK: "true"
+    ports:
+      - "5175:5173"
+    volumes:
+      - .:/workspace
+      - qa-root-node-modules:/workspace/node_modules
+      - qa-backend-node-modules:/workspace/backend/node_modules
+      - qa-react-node-modules:/workspace/react-app/node_modules
+    depends_on:
+      - qa-api
+
+volumes:
+  qa-postgres-data:
+  qa-root-node-modules:
+  qa-backend-node-modules:
+  qa-react-node-modules:
+  qa-uploads:

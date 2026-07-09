@@ -1,0 +1,406 @@
+import "dotenv/config";
+import { config } from "./config.js";
+import { closePool, query } from "./db.js";
+
+function hostForSlug(slug) {
+  return `${slug}.${config.baseDomain}`;
+}
+
+async function upsertUser({ subject, email, displayName }) {
+  const result = await query(
+    `
+      INSERT INTO app_users (authentik_subject, email, display_name, last_seen_at)
+      VALUES ($1, $2, $3, now())
+      ON CONFLICT (email) DO UPDATE SET
+        authentik_subject = EXCLUDED.authentik_subject,
+        display_name = EXCLUDED.display_name,
+        last_seen_at = now()
+      RETURNING id, email, display_name
+    `,
+    [subject, email, displayName]
+  );
+  return result.rows[0];
+}
+
+async function upsertTenant({ slug, name }) {
+  const tenantResult = await query(
+    `
+      INSERT INTO tenants (slug, name, status)
+      VALUES ($1, $2, 'active')
+      ON CONFLICT (slug) DO UPDATE SET
+        name = EXCLUDED.name,
+        status = 'active'
+      RETURNING id, slug, name
+    `,
+    [slug, name]
+  );
+  const tenant = tenantResult.rows[0];
+
+  await query(
+    `
+      INSERT INTO tenant_domains (tenant_id, hostname, is_primary)
+      VALUES ($1, $2, true)
+      ON CONFLICT (hostname) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        is_primary = EXCLUDED.is_primary
+    `,
+    [tenant.id, hostForSlug(slug)]
+  );
+
+  return tenant;
+}
+
+async function upsertMembership({ tenantId, userId, role }) {
+  await query(
+    `
+      INSERT INTO tenant_memberships (tenant_id, user_id, role, status)
+      VALUES ($1, $2, $3, 'active')
+      ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+        role = EXCLUDED.role,
+        status = 'active'
+    `,
+    [tenantId, userId, role]
+  );
+}
+
+async function upsertInventoryItem(tenantId, item) {
+  const existing = await query(
+    `
+      SELECT id
+      FROM inventory_items
+      WHERE tenant_id = $1 AND title = $2
+      LIMIT 1
+    `,
+    [tenantId, item.title]
+  );
+
+  if (existing.rows[0]) {
+    const result = await query(
+      `
+        UPDATE inventory_items
+        SET common_name = $3,
+            army_name = $4,
+            lin = $5,
+            nsn = $6,
+            description = $7,
+            current_location = $8,
+            metadata = $9,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING id
+      `,
+      [
+        existing.rows[0].id,
+        item.title,
+        item.commonName,
+        item.armyName,
+        item.lin,
+        item.nsn,
+        item.description,
+        item.currentLocation,
+        item.metadata || {}
+      ]
+    );
+    return result.rows[0];
+  }
+
+  const result = await query(
+    `
+      INSERT INTO inventory_items (
+        tenant_id, title, common_name, army_name, lin, nsn, description, current_location, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id
+    `,
+    [
+      tenantId,
+      item.title,
+      item.commonName,
+      item.armyName,
+      item.lin,
+      item.nsn,
+      item.description,
+      item.currentLocation,
+      item.metadata || {}
+    ]
+  );
+  return result.rows[0];
+}
+
+async function upsertSession({ tenantId, createdBy, name }) {
+  const existing = await query(
+    `
+      SELECT id
+      FROM inventory_sessions
+      WHERE tenant_id = $1 AND name = $2
+      LIMIT 1
+    `,
+    [tenantId, name]
+  );
+
+  if (existing.rows[0]) {
+    await query("UPDATE inventory_sessions SET status = 'active' WHERE id = $1", [existing.rows[0].id]);
+    return existing.rows[0];
+  }
+
+  const result = await query(
+    `
+      INSERT INTO inventory_sessions (tenant_id, name, status, packet_source, created_by)
+      VALUES ($1, $2, 'active', 'QA seed packet', $3)
+      RETURNING id
+    `,
+    [tenantId, name, createdBy]
+  );
+  return result.rows[0];
+}
+
+async function upsertSessionItem({ sessionId, inventoryItemId, packetLine, expectedQty, locationHint, status = "unchecked" }) {
+  const existing = await query(
+    `
+      SELECT id
+      FROM inventory_session_items
+      WHERE session_id = $1 AND packet_line = $2
+      LIMIT 1
+    `,
+    [sessionId, packetLine]
+  );
+
+  if (existing.rows[0]) {
+    await query(
+      `
+        UPDATE inventory_session_items
+        SET inventory_item_id = $2,
+            expected_qty = $3,
+            location_hint = $4,
+            status = $5,
+            updated_at = now()
+        WHERE id = $1
+      `,
+      [existing.rows[0].id, inventoryItemId, expectedQty, locationHint, status]
+    );
+    return existing.rows[0];
+  }
+
+  const result = await query(
+    `
+      INSERT INTO inventory_session_items (
+        session_id, inventory_item_id, packet_line, expected_qty, location_hint, status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id
+    `,
+    [sessionId, inventoryItemId, packetLine, expectedQty, locationHint, status]
+  );
+  return result.rows[0];
+}
+
+async function upsertSubmission({ sessionItemId, submittedBy, status, locationText, note, serialNumber }) {
+  const existing = await query(
+    `
+      SELECT id
+      FROM item_submissions
+      WHERE session_item_id = $1 AND submitted_by = $2
+      LIMIT 1
+    `,
+    [sessionItemId, submittedBy]
+  );
+
+  if (existing.rows[0]) return existing.rows[0];
+
+  const result = await query(
+    `
+      INSERT INTO item_submissions (
+        session_item_id, submitted_by, status, location_text, note, serial_number, review_state
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+      RETURNING id
+    `,
+    [sessionItemId, submittedBy, status, locationText, note, serialNumber]
+  );
+  return result.rows[0];
+}
+
+async function seedNewsletter(rootUserId) {
+  await query(
+    `
+      INSERT INTO newsletter_subscribers (
+        email, display_name, platoon, supervisor_name, status, reviewed_by, reviewed_at, review_note
+      )
+      VALUES (
+        'qa-family@example.com', 'QA Family Member', 'MS', 'QA Platoon Admin',
+        'active', $1, now(), 'Seeded approved subscriber'
+      )
+      ON CONFLICT (email) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        platoon = EXCLUDED.platoon,
+        supervisor_name = EXCLUDED.supervisor_name,
+        status = EXCLUDED.status,
+        reviewed_by = EXCLUDED.reviewed_by,
+        reviewed_at = EXCLUDED.reviewed_at,
+        review_note = EXCLUDED.review_note,
+        updated_at = now()
+    `,
+    [rootUserId]
+  );
+
+  const existingIssue = await query(
+    "SELECT id FROM newsletter_issues WHERE title = $1 LIMIT 1",
+    ["Black Shadow QA Update"]
+  );
+  if (existingIssue.rows[0]) return;
+
+  await query(
+    `
+      INSERT INTO newsletter_issues (
+        title, edition_label, summary, body, status, created_by, published_by, published_at
+      )
+      VALUES (
+        'Black Shadow QA Update',
+        'QA',
+        'A seeded public update for local QA testing.',
+        'This is a local QA newsletter issue. Use it to test the public homepage and newsletter admin screens.',
+        'published',
+        $1,
+        $1,
+        now()
+      )
+    `,
+    [rootUserId]
+  );
+}
+
+async function main() {
+  if (config.env === "production") {
+    throw new Error("Refusing to seed QA data in production");
+  }
+
+  const root = await upsertUser({
+    subject: "qa-root",
+    email: "qa-root@876en.test",
+    displayName: "QA Root Admin"
+  });
+  const lead = await upsertUser({
+    subject: "qa-lead",
+    email: "qa-lead@876en.test",
+    displayName: "QA Platoon Admin"
+  });
+  const nco = await upsertUser({
+    subject: "qa-nco",
+    email: "qa-nco@876en.test",
+    displayName: "QA NCO"
+  });
+  await upsertUser({
+    subject: "qa-frg",
+    email: "qa-frg@876en.test",
+    displayName: "QA Newsletter Admin"
+  });
+
+  const tenant = await upsertTenant({ slug: "ms", name: "MS Platoon" });
+  await upsertMembership({ tenantId: tenant.id, userId: lead.id, role: "tenant_admin" });
+  await upsertMembership({ tenantId: tenant.id, userId: nco.id, role: "contributor" });
+
+  const items = [
+    {
+      title: "PRC Radio",
+      commonName: "PRC Radio",
+      armyName: "RADIO SET: AN/PRC",
+      lin: "R20684",
+      nsn: "5820015244763",
+      description: "Handheld tactical radio with accessories.",
+      currentLocation: "Cage 2, left shelf"
+    },
+    {
+      title: "Generator",
+      commonName: "Generator",
+      armyName: "GENERATOR SET DIESEL ENGINE",
+      lin: "G18358",
+      nsn: "6115015476713",
+      description: "Portable generator set.",
+      currentLocation: "Connex B, floor"
+    },
+    {
+      title: "M4 Optic",
+      commonName: "M4 Optic",
+      armyName: "SIGHT REFLEX COLLIMATOR",
+      lin: "M150",
+      nsn: "1240015251648",
+      description: "Rifle optic in protective case.",
+      currentLocation: "Cage 3, right side"
+    },
+    {
+      title: "Tool Kit",
+      commonName: "Tool Kit",
+      armyName: "TOOL KIT CARPENTERS: ENGINEER SQUAD",
+      lin: "W34648",
+      nsn: "5180003923175",
+      description: "Engineer squad carpenter tool kit.",
+      currentLocation: "Connex B, top shelf"
+    }
+  ];
+
+  const seededItems = [];
+  for (const item of items) {
+    seededItems.push(await upsertInventoryItem(tenant.id, item));
+  }
+
+  const session = await upsertSession({
+    tenantId: tenant.id,
+    createdBy: lead.id,
+    name: "July sensitive items"
+  });
+
+  const sessionRows = [
+    {
+      inventoryItemId: seededItems[0].id,
+      packetLine: "000009148 R20684 RADIAC SET: AN/VDR-2",
+      expectedQty: 1,
+      locationHint: "Cage 2, left shelf",
+      status: "needs_review"
+    },
+    {
+      inventoryItemId: seededItems[1].id,
+      packetLine: "0000186033 M05000 TAMPER,VIBRATING TYPE,INTERNAL COMBUST",
+      expectedQty: 2,
+      locationHint: "Connex B, floor"
+    },
+    {
+      inventoryItemId: seededItems[2].id,
+      packetLine: "000004336 N96248 NAVIGATION SET: SATELLITE SIGNALS AN/PSN",
+      expectedQty: 4,
+      locationHint: "Cage 3, right side"
+    },
+    {
+      inventoryItemId: seededItems[3].id,
+      packetLine: "000002115 W34648 TOOL KIT CARPENTERS: ENGINEER SQUAD",
+      expectedQty: 1,
+      locationHint: "Connex B, top shelf"
+    }
+  ];
+
+  const firstSessionItem = await upsertSessionItem({ sessionId: session.id, ...sessionRows[0] });
+  for (const row of sessionRows.slice(1)) {
+    await upsertSessionItem({ sessionId: session.id, ...row });
+  }
+
+  await upsertSubmission({
+    sessionItemId: firstSessionItem.id,
+    submittedBy: nco.id,
+    status: "found",
+    locationText: "Cage 2, left shelf",
+    note: "Found with radio accessories.",
+    serialNumber: "QA-PRC-001"
+  });
+
+  await seedNewsletter(root.id);
+
+  console.log("QA seed complete: root, MS tenant, session rows, review item, and newsletter content are ready");
+}
+
+main()
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await closePool();
+  });

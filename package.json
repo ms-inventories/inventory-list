@@ -9,6 +9,10 @@
   "scripts": {
     "dev:frontend": "npm --prefix react-app run dev",
     "dev:api": "npm --prefix backend run dev",
+    "qa:up": "docker compose -f docker-compose.qa.yml up -d --build",
+    "qa:down": "docker compose -f docker-compose.qa.yml down",
+    "qa:logs": "docker compose -f docker-compose.qa.yml logs -f",
+    "qa:reset": "docker compose -f docker-compose.qa.yml down -v",
     "build:frontend": "npm --prefix react-app run build",
     "check:api": "npm --prefix backend run check",
     "check:static": "node --check ocr.js && node --check script.js && node --check admin.js",

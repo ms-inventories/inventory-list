@@ -1,0 +1,13 @@
+.git
+.github
+.codex-remote-attachments
+tmp
+output
+node_modules
+**/node_modules
+react-app/dist
+react-app/.vite
+.env
+.env.*
+!.env.example
+npm-debug.log*

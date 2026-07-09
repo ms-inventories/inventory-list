@@ -48,6 +48,10 @@ See [docs/coolify-labels.md](docs/coolify-labels.md) for frontend/backend wildca
 
 See [docs/ui-task-list.md](docs/ui-task-list.md) for the current UI backlog, including dead buttons, confusing links, and unfinished flows.
 
+See [docs/forkable-tasks.md](docs/forkable-tasks.md) for labeled task packages that can be handed to separate Codex threads.
+
+See [docs/qa-environment.md](docs/qa-environment.md) for the Docker-based local QA stack.
+
 ## Monorepo Commands
 
 ```bash
@@ -55,4 +59,5 @@ npm install
 npm run check
 npm run dev:frontend
 npm run dev:api
+npm run qa:up
 ```
