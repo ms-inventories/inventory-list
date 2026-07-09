@@ -24,7 +24,7 @@ Each task is designed to be worked mostly independently. If a task needs to touc
 
 Goal: provide a repeatable local stack for testing frontend, API, Postgres, seeded tenants, and QA personas.
 
-Status: scaffolded.
+Status: complete. QA stack, smoke tests, screenshot guidance, and guarded destructive reset are ready for other task threads.
 
 Primary files:
 
@@ -37,9 +37,9 @@ Subtasks:
 
 - [x] Add Docker Compose services for Postgres, API, and Vite frontend.
 - [x] Seed QA users, `ms` tenant, session rows, one review submission, and newsletter content.
-- [ ] Add Playwright smoke checks for platform admin, tenant admin, contributor, and newsletter admin.
-- [ ] Add screenshot capture guidance for UI review.
-- [ ] Add a reset script that is clearly labeled as destructive.
+- [x] Add Playwright smoke checks for platform admin, tenant admin, contributor, and newsletter admin.
+- [x] Add screenshot capture guidance for UI review.
+- [x] Add a reset script that is clearly labeled as destructive.
 
 Definition of done:
 

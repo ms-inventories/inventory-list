@@ -67,6 +67,7 @@ The smoke suite covers:
 - Newsletter admin with the Newsletter admin persona.
 - Tenant dashboard with the Platoon admin persona.
 - Tenant dashboard with the NCO contributor persona.
+- Packet upload review entry point.
 
 Artifacts for failed tests are written under `qa-artifacts/`.
 
@@ -75,6 +76,24 @@ Use headed mode when reviewing UI behavior:
 ```bash
 npm run qa:test:headed
 ```
+
+## UI Screenshots
+
+For quick screenshots during UI review, run Playwright with the QA stack up:
+
+```bash
+npx playwright screenshot --browser=chromium http://localhost:5175 qa-artifacts/public-home.png
+npx playwright screenshot --browser=chromium http://admin.localhost:5175/#/admin qa-artifacts/platform-admin.png
+npx playwright screenshot --browser=chromium http://ms.localhost:5175/#/admin qa-artifacts/ms-workspace.png
+```
+
+For mobile framing, add a viewport:
+
+```bash
+npx playwright screenshot --browser=chromium --viewport-size=390,844 http://ms.localhost:5175/#/admin qa-artifacts/ms-workspace-mobile.png
+```
+
+Screenshots under `qa-artifacts/` are ignored by git.
 
 ## Stop
 
@@ -87,7 +106,7 @@ npm run qa:down
 This deletes the QA Postgres and upload volumes.
 
 ```bash
-npm run qa:reset
+npm run qa:reset:danger -- --yes
 ```
 
 Then start again:
