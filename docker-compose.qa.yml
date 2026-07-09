@@ -66,7 +66,6 @@ services:
       VITE_BASE_DOMAIN: localhost
       VITE_API_BASE_URL: http://localhost:5300/api
       VITE_LEGACY_BUCKET_BASE_URL: https://ms-inventories.s3.us-east-1.amazonaws.com
-      VITE_AUTHENTIK_LAUNCH_URL: http://localhost:5175/#/launch
       VITE_OIDC_CLIENT_ID: qa-inventory-web
       VITE_OIDC_DISCOVERY_URL: http://auth.localhost/application/o/inventory-web/.well-known/openid-configuration
       VITE_OIDC_AUTHORIZATION_ENDPOINT: http://auth.localhost/application/o/authorize/

@@ -8,6 +8,7 @@ Started: 2026-07-09.
 - AUTH-001: Launch routing and role destinations.
 - AUTH-002: Production-safe diagnostics.
 - AUTH-003: Callback and API failure recovery.
+- AUTH-004: Authentik tile strategy.
 - AUTH-005: Safe backend/session health diagnostics.
 
 ## Coordination Notes
@@ -29,8 +30,9 @@ Started: 2026-07-09.
 - [x] Surface health details only in admin/QA diagnostics.
 - [x] Verify launch-router QA smoke on desktop and mobile Chrome.
 - [x] Verify direct auth-health QA responses.
+- [x] Decide Authentik tiles are optional only; normal login uses the app launcher/admin routing.
 - [ ] Run full QA smoke after the unrelated newsletter/UI work in progress settles.
 
 ## Newly Discovered Follow-Ups
 
-- AUTH-004: Decide whether Authentik app tiles should launch only `https://876en.org/#/launch` or also provide separate direct tiles for FRG/admin workflows.
+No open auth follow-ups. Run the full QA smoke once unrelated UI/newsletter work settles.

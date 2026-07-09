@@ -402,7 +402,7 @@ function getLaunchUrl() {
 }
 
 function getApplicationPortalUrl() {
-  return appConfig.authentikLaunchUrl || getLaunchUrl();
+  return getLaunchUrl();
 }
 
 function getTenantUrl(slug) {

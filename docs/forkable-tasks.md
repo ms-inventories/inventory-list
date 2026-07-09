@@ -78,6 +78,8 @@ Definition of done:
 
 Goal: make Authentik launch land every user in the right place.
 
+Status: complete for this pass. Authentik tiles are optional; public login and any tile should use the app launcher at `https://876en.org/#/launch`, not Authentik's dashboard as the destination.
+
 Primary files:
 
 - `react-app/src/App.jsx`
@@ -88,11 +90,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Confirm the app tile launch URL should be `https://876en.org/#/launch`.
-- [ ] Normalize launch behavior for platform admins, FRG admins, single-tenant users, and multi-tenant users.
-- [ ] Make regular platoon users land on their workspace, not platform admin.
-- [ ] Add a friendly no-access state with next steps.
-- [ ] Add QA persona checks for each role.
+- [x] Confirm the app tile launch URL should be `https://876en.org/#/launch` if a tile is kept.
+- [x] Normalize launch behavior for platform admins, FRG admins, single-tenant users, and multi-tenant users.
+- [x] Make regular platoon users land on their workspace, not platform admin.
+- [x] Add a friendly no-access state with next steps.
+- [x] Add QA persona checks for each role.
 
 Definition of done:
 

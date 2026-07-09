@@ -3387,12 +3387,13 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
       return "/health";
     }
   })();
+  const appLauncherUrl = "/#/launch";
   const diagnostics = [
     ["Current URL", window.location.href],
     ["Base domain", appConfig.baseDomain],
     ["API base URL", appConfig.apiBaseUrl],
     ["API health", healthUrl],
-    ["Auth launch", appConfig.authentikLaunchUrl],
+    ["App launcher", appLauncherUrl],
     ["QA auth", appConfig.enableQaAuth ? "enabled" : "disabled"],
     ["Demo fallback", appConfig.enableDemoFallback ? "enabled" : "disabled"],
     ["Signed in as", me?.user?.email || me?.identity?.email || "unknown"]
@@ -5202,10 +5203,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                         <span>Platform admin</span>
                       </button>
                     ) : null}
-                    <button type="button" onClick={() => window.location.assign(appConfig.authentikLaunchUrl)}>
-                      <ShieldCheck aria-hidden="true" />
-                      <span>App portal</span>
-                    </button>
                     <details className="leader-menu-details">
                       <summary>Access details</summary>
                       <dl>

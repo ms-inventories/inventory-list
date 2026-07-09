@@ -79,7 +79,6 @@ Environment variables:
 ```text
 VITE_BASE_DOMAIN=876en.org
 VITE_API_BASE_URL=https://api.876en.org/api
-VITE_AUTHENTIK_LAUNCH_URL=https://auth.876en.org/if/user/
 VITE_OIDC_CLIENT_ID=<authentik inventory client id>
 VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
@@ -225,10 +224,10 @@ Frontend OIDC notes:
 
 - Configure the Authentik application as a public/OIDC client with PKCE.
 - The frontend client ID should match `VITE_OIDC_CLIENT_ID`.
-- Set the Authentik inventory application's Launch URL to `https://876en.org/#/launch`; the app decides whether the user should land in platform admin, a tenant workspace, or a workspace chooser.
+- If you keep an Authentik application tile, set its Launch URL to `https://876en.org/#/launch`. The tile is optional; the normal product flow starts from the site login or a direct app URL.
 - Add redirect URIs for the public app/admin hosts you use, starting with `https://admin.876en.org/`. Tenant admin login on platoon subdomains will also need allowed redirect URIs such as `https://1st.876en.org/` and `https://ms.876en.org/`, or an Authentik wildcard/regex redirect rule if you choose to allow tenant-wide callback URLs.
 - Make sure the provider emits a group claim. The app looks for groups such as `876en-admins` or `876en-ms` in the access token, ID token, and OIDC userinfo response; if `/#/launch` still says `No groups in token`, add or enable the Authentik OAuth/OIDC scope mapping that exposes user groups.
-- The public `876en.org` nav login dropdown should point to the Authentik application portal, `https://auth.876en.org/if/user/`. Authentik can show the FRG content-management app, inventory app, and any future tools based on user access.
+- The public `876en.org` nav login dropdown should point to the app launcher, `https://876en.org/#/launch`. Authentik handles sign-in, but its app dashboard is not the user destination.
 - The frontend can use explicit Authentik OAuth endpoints (`/application/o/authorize/` and `/application/o/token/`) so the browser does not need to fetch the discovery document from `auth.876en.org`.
 - Until Authentik is fully wired, the admin UI includes an access-token field so a valid bearer token can be pasted for testing.
 - Tenant invitation links use `https://<tenant>.876en.org/#/accept-invite?token=...`. Authentik only sees the origin/path portion of that redirect URI, so the allowed redirect entry is the tenant root such as `https://1st.876en.org/`; the app restores the invite hash after login.

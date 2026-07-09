@@ -13,10 +13,10 @@ Use this as the working backlog before turning individual items into implementat
 
 ## P0: Make The Main Flow Reliable
 
-- [ ] **UI-001: Fix Authentik launch routing**
+- [x] **UI-001: Fix Authentik launch routing**
   - Current issue: Authentik can land users on the admin route, which makes regular users hit a platform admin sign-in or access-denied path.
-  - Desired behavior: the Authentik app tile launches `https://876en.org/#/launch`; the app routes platform admins, platoon admins, FRG admins, and regular platoon members to the correct workspace.
-  - Controls affected: public `Login`, Authentik app tile, launch screen.
+  - Desired behavior: the public login and any optional Authentik app tile launch `https://876en.org/#/launch`; the app routes platform admins, platoon admins, FRG admins, and regular platoon members to the correct workspace.
+  - Controls affected: public `Login`, optional Authentik app tile, launch screen.
 
 - [ ] **UI-002: Make token/group diagnostics useful but not user-facing**
   - Current issue: launch errors expose raw-ish group/debug state and users can see `Use access token`.
@@ -124,8 +124,8 @@ Use this as the working backlog before turning individual items into implementat
 ## P1: FRG / Public Site Controls
 
 - [ ] **UI-024: Public login dropdown**
-  - Current issue: it now points to the member portal, but should be verified against final Authentik launch behavior.
-  - Desired behavior: public visitors see vague wording; authorized users land in the app portal or launch router.
+  - Current issue: it should be verified against final launch behavior.
+  - Desired behavior: public visitors see vague wording; authorized users land in the app launcher, not Authentik's tile dashboard.
 
 - [ ] **UI-025: Newsletter signup and approval**
   - Current issue: signup exists, but live operational flow needs approval and email-send verification.
@@ -190,7 +190,7 @@ Use this as the working backlog before turning individual items into implementat
 
 ## First Suggested Work Slice
 
-1. UI-001: Authentik launch routing.
+1. UI-001: Authentik launch routing. Done for this pass; keep future work pointed at the app launcher, not Authentik's tile dashboard.
 2. UI-027: Hide manual token controls in production.
 3. UI-003: Packet upload wizard.
 4. UI-006 through UI-010: hide or wire platform sidebar dead controls.
