@@ -493,7 +493,7 @@ function getLaunchStatusFromError(error) {
 
   return {
     code: code || "unknown",
-    text: getApiErrorMessage(error)
+    text: "We could not open your workspace. Try again, or ask an admin to check access if it keeps happening."
   };
 }
 
@@ -576,7 +576,7 @@ function LaunchRouter() {
     || me?.identity?.email
     || "Signed in";
   const identitySubject = me?.identity?.subject || me?.user?.authentik_subject || "";
-  const canShowDiagnostics = Boolean(appConfig.enableQaAuth || me?.isPlatformAdmin || me?.isFrgAdmin);
+  const canShowDiagnostics = Boolean(appConfig.enableQaAuth || appConfig.enableAuthDiagnostics || me?.isPlatformAdmin || me?.isFrgAdmin);
   const profileBadge = me?.isPlatformAdmin
     ? "Platform admin"
     : me?.isFrgAdmin

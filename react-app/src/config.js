@@ -15,12 +15,17 @@ function getDefaultApiBaseUrl() {
   return "/api";
 }
 
+const enableQaAuth = import.meta.env.VITE_ENABLE_QA_AUTH === "true";
+const enableAuthDiagnostics = import.meta.env.VITE_ENABLE_AUTH_DIAGNOSTICS === "true";
+
 export const appConfig = {
   baseDomain: import.meta.env.VITE_BASE_DOMAIN || "876en.org",
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl(),
   legacyBucketBaseUrl: import.meta.env.VITE_LEGACY_BUCKET_BASE_URL || "https://ms-inventories.s3.us-east-1.amazonaws.com",
   enableDemoFallback: import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== "false",
-  enableQaAuth: import.meta.env.VITE_ENABLE_QA_AUTH === "true",
+  enableQaAuth,
+  enableAuthDiagnostics,
+  enableManualTokenAuth: enableQaAuth || enableAuthDiagnostics,
   oidc: {
     clientId: import.meta.env.VITE_OIDC_CLIENT_ID || "inventory-web",
     discoveryUrl: import.meta.env.VITE_OIDC_DISCOVERY_URL || "https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration",

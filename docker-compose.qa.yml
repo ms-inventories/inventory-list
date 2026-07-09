@@ -71,6 +71,7 @@ services:
       VITE_OIDC_AUTHORIZATION_ENDPOINT: http://auth.localhost/application/o/authorize/
       VITE_OIDC_TOKEN_ENDPOINT: http://auth.localhost/application/o/token/
       VITE_ENABLE_QA_AUTH: "true"
+      VITE_ENABLE_AUTH_DIAGNOSTICS: "true"
       VITE_ENABLE_DEMO_FALLBACK: "true"
     ports:
       - "5175:5173"

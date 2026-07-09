@@ -249,6 +249,9 @@ function AdminHeader({ me, tenantSlug, mode = "", onRefresh, onLogout }) {
 }
 
 function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave, onSignIn, onUseQaIdentity }) {
+  const showQaUsers = appConfig.enableQaAuth;
+  const showManualToken = appConfig.enableManualTokenAuth;
+
   return (
     <section className="admin-card admin-auth-card">
       <div className="admin-card-heading">
@@ -268,7 +271,7 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
         </button>
       </div>
 
-      {appConfig.enableQaAuth ? (
+      {showQaUsers ? (
         <details className="disclosure">
           <summary className="btn btn-secondary">
             <span>QA users</span>
@@ -290,10 +293,10 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
         </details>
       ) : null}
 
-      {appConfig.enableQaAuth ? (
+      {showManualToken ? (
         <details className="disclosure">
           <summary className="btn btn-secondary">
-            <span>Use access token</span>
+            <span>Developer access token</span>
           </summary>
           <div className="disclosure-panel form-stack">
             <textarea
@@ -3395,6 +3398,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     ["API health", healthUrl],
     ["App launcher", appLauncherUrl],
     ["QA auth", appConfig.enableQaAuth ? "enabled" : "disabled"],
+    ["Auth diagnostics", appConfig.enableAuthDiagnostics ? "enabled" : "disabled"],
     ["Demo fallback", appConfig.enableDemoFallback ? "enabled" : "disabled"],
     ["Signed in as", me?.user?.email || me?.identity?.email || "unknown"]
   ];
@@ -5343,7 +5347,7 @@ export default function AdminConsole() {
         if (!ignore) setStatus({ text: error.message || "Login failed", isError: true });
       }
 
-      if (!token && !callbackFailed && !appConfig.enableQaAuth) {
+      if (!token && !callbackFailed && !appConfig.enableQaAuth && !appConfig.enableManualTokenAuth) {
         try {
           setStatus({ text: "Redirecting to Authentik...", isError: false });
           await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);

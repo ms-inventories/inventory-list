@@ -187,10 +187,10 @@ export default function AcceptInvite() {
                 </button>
               ) : null}
 
-              {appConfig.enableQaAuth ? (
+              {appConfig.enableManualTokenAuth ? (
                 <details className="disclosure">
                   <summary className="btn btn-secondary btn-full">
-                    <span>Use access token</span>
+                    <span>Developer access token</span>
                   </summary>
                   <div className="disclosure-panel form-stack">
                     <textarea

@@ -18,7 +18,7 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: the public login and any optional Authentik app tile launch `https://876en.org/#/launch`; the app routes platform admins, platoon admins, FRG admins, and regular platoon members to the correct workspace.
   - Controls affected: public `Login`, optional Authentik app tile, launch screen.
 
-- [ ] **UI-002: Make token/group diagnostics useful but not user-facing**
+- [x] **UI-002: Make token/group diagnostics useful but not user-facing**
   - Current issue: launch errors expose raw-ish group/debug state and users can see `Use access token`.
   - Desired behavior: production users see a clean access message; admins can open diagnostics from a hidden/support path.
   - Controls affected: launch screen, admin sign-in card, invite accept screen.
@@ -137,7 +137,7 @@ Use this as the working backlog before turning individual items into implementat
 
 ## P2: Reduce Clutter And False Promises
 
-- [ ] **UI-027: Hide QA/manual token controls in production**
+- [x] **UI-027: Hide QA/manual token controls in production**
   - Current issue: `Use access token` is useful during setup but confusing for real users.
   - Desired behavior: only visible when `ALLOW_DEV_AUTH=true` or an explicit diagnostics flag is enabled.
 

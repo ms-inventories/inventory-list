@@ -107,6 +107,8 @@ Definition of done:
 
 Goal: keep debugging tools available without exposing them to normal users.
 
+Status: completed by current Codex thread, 2026-07-09. Safe for `AUTH-003` and `UX-003` to continue; coordinate before changing launch diagnostics, admin sign-in controls, or invite manual-token controls again.
+
 Primary files:
 
 - `react-app/src/components/AdminConsole.jsx`
@@ -116,11 +118,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Hide `Use access token` unless QA/dev diagnostics are enabled.
-- [ ] Move token/group details behind an admin-only diagnostics disclosure.
-- [ ] Replace raw launch errors with concise user-facing copy.
-- [ ] Add a copyable diagnostics bundle for admins.
-- [ ] Verify production envs do not show QA controls.
+- [x] Hide `Use access token` unless QA/dev diagnostics are enabled.
+- [x] Move token/group details behind an admin-only diagnostics disclosure.
+- [x] Replace raw launch errors with concise user-facing copy.
+- [x] Add a copyable diagnostics bundle for admins.
+- [x] Verify production envs do not show QA controls.
 
 Definition of done:
 

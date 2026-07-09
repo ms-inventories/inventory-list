@@ -36,10 +36,13 @@ VITE_LEGACY_BUCKET_BASE_URL=https://ms-inventories.s3.us-east-1.amazonaws.com
 VITE_OIDC_CLIENT_ID=<authentik inventory client id>
 VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 VITE_ENABLE_DEMO_FALLBACK=true
+VITE_ENABLE_AUTH_DIAGNOSTICS=false
 VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
 VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
 ```
 
 `VITE_ENABLE_DEMO_FALLBACK` keeps localhost and first deploys usable even when the old static JSON source is unavailable from the browser. Set it to `false` after the backend is serving tenant inventory data.
+
+`VITE_ENABLE_AUTH_DIAGNOSTICS` should stay `false` in normal production. Turn it on only for a temporary support session if you need the manual-token fallback or extra auth diagnostics.
 
 `876en.org` renders the public FRG/newsletter splash page. The nav login dropdown points to the app launcher at `https://876en.org/#/launch`; that route signs users in through Authentik and sends platform admins to admin, newsletter admins to the newsletter editor, single-platoon users to their platoon, or multi-platoon users to a chooser. Authentik's tile dashboard is not part of the normal product flow. Tenant subdomains render the SaaS workspace by default; the old static lookup screen remains available at `/#/lookup` or `/lookup` during transition.

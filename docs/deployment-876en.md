@@ -84,6 +84,7 @@ VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well
 VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
 VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
 VITE_OIDC_SCOPE=openid profile email groups
+VITE_ENABLE_AUTH_DIAGNOSTICS=false
 ```
 
 Do not set the production frontend to `VITE_API_BASE_URL=/api` unless you have a working path route from every frontend hostname to the backend. With the current Cloudflare/Coolify setup, use `https://api.876en.org/api`; otherwise `https://876en.org/api/me` can return the React app HTML instead of backend JSON.
@@ -218,7 +219,7 @@ App groups:
 
 Tenant access can come from Authentik groups or app database memberships. A user in `876en-ms` can work the MS tenant. A user in both `876en-ms` and `876en-platoon-admin` can administer the MS tenant. A user in `876en-admins` can jump into every tenant for support.
 
-Production requires either `PLATFORM_ADMIN_EMAILS` or `PLATFORM_ADMIN_SUBJECTS` even if you also use the `876en-admins` group. Put your first supply/root admin email here when Authentik emits an email claim. If the launcher shows `No groups in token` or the email is not what you expected, expand `Access details`, copy the `Subject`, set `PLATFORM_ADMIN_SUBJECTS` to that value, redeploy the backend, and sign in again. This is the bootstrap/support escape hatch while Authentik group claims are being polished.
+Production requires either `PLATFORM_ADMIN_EMAILS` or `PLATFORM_ADMIN_SUBJECTS` even if you also use the `876en-admins` group. Put your first supply/root admin email here when Authentik emits an email claim. If admin diagnostics show no groups or the email is not what you expected, copy the `Subject`, set `PLATFORM_ADMIN_SUBJECTS` to that value, redeploy the backend, and sign in again. This is the bootstrap/support escape hatch while Authentik group claims are being polished.
 
 Frontend OIDC notes:
 
@@ -229,7 +230,7 @@ Frontend OIDC notes:
 - Make sure the provider emits a group claim. The app looks for groups such as `876en-admins` or `876en-ms` in the access token, ID token, and OIDC userinfo response; if `/#/launch` still says `No groups in token`, add or enable the Authentik OAuth/OIDC scope mapping that exposes user groups.
 - The public `876en.org` nav login dropdown should point to the app launcher, `https://876en.org/#/launch`. Authentik handles sign-in, but its app dashboard is not the user destination.
 - The frontend can use explicit Authentik OAuth endpoints (`/application/o/authorize/` and `/application/o/token/`) so the browser does not need to fetch the discovery document from `auth.876en.org`.
-- Until Authentik is fully wired, the admin UI includes an access-token field so a valid bearer token can be pasted for testing.
+- Keep `VITE_ENABLE_AUTH_DIAGNOSTICS=false` for normal production. Set it to `true` only during a support session when you intentionally need the manual access-token fallback or extra auth diagnostics.
 - Tenant invitation links use `https://<tenant>.876en.org/#/accept-invite?token=...`. Authentik only sees the origin/path portion of that redirect URI, so the allowed redirect entry is the tenant root such as `https://1st.876en.org/`; the app restores the invite hash after login.
 
 ## Inventory Session Flow
