@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { authContext, exchangeOidcCode } from "./auth.js";
+import { authenticate, authContext, ensureUser, exchangeOidcCode } from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import {
@@ -13,7 +13,7 @@ import {
   sendProofSubmittedEmail,
   sendTenantInviteEmail
 } from "./email.js";
-import { hasTenantRole, tenantContext } from "./tenant.js";
+import { hasTenantRole, tenantContext, tenantSlugFromHost } from "./tenant.js";
 
 const tenantRoles = ["tenant_admin", "contributor", "viewer"];
 const memberStatuses = ["active", "disabled"];
@@ -171,6 +171,79 @@ async function listUserWorkspaces(identity, user) {
   );
 
   return result.rows.map(rowToWorkspace);
+}
+
+function authHealthResponse({ identity = null, context = null, requestedTenantSlug = "", workspaces = [], code = "ok" }) {
+  const tenantRequested = Boolean(requestedTenantSlug);
+  const tenantExists = !tenantRequested || Boolean(context?.tenant);
+  const tenantAccess = !tenantRequested || Boolean(context?.tenant && (context?.identity?.isPlatformAdmin || context?.membership));
+
+  return {
+    ok: code === "ok",
+    code,
+    api: {
+      ok: true
+    },
+    auth: {
+      authenticated: Boolean(identity),
+      subjectPresent: Boolean(identity?.subject),
+      emailPresent: Boolean(identity?.email),
+      displayNamePresent: Boolean(identity?.displayName),
+      groupCount: identity?.groups?.length || 0,
+      isPlatformAdmin: Boolean(identity?.isPlatformAdmin),
+      isFrgAdmin: Boolean(identity?.isFrgAdmin)
+    },
+    tenant: {
+      requestedSlug: requestedTenantSlug || "",
+      requested: tenantRequested,
+      exists: tenantExists,
+      access: tenantAccess,
+      slug: context?.tenant?.slug || null,
+      role: context?.membership?.role || (context?.identity?.isPlatformAdmin && context?.tenant ? "tenant_admin" : null),
+      source: context?.membership?.source || (context?.identity?.isPlatformAdmin && context?.tenant ? "platform_admin" : null)
+    },
+    workspaces: workspaces.map(workspace => ({
+      slug: workspace.slug,
+      name: workspace.name,
+      role: workspace.role,
+      source: workspace.source
+    }))
+  };
+}
+
+async function getAuthHealth(request, reply) {
+  const requestedTenantSlug = tenantSlugFromHost(request);
+  let identity = null;
+
+  try {
+    identity = await authenticate(request);
+  } catch {
+    reply.code(401);
+    return authHealthResponse({ requestedTenantSlug, code: "token_rejected" });
+  }
+
+  if (!identity) {
+    reply.code(401);
+    return authHealthResponse({ requestedTenantSlug, code: "token_missing" });
+  }
+
+  let user = null;
+  try {
+    user = await ensureUser(identity);
+  } catch {
+    reply.code(422);
+    return authHealthResponse({ identity, requestedTenantSlug, code: "identity_incomplete" });
+  }
+
+  const context = await tenantContext(request, { identity, user });
+  const workspaces = await listUserWorkspaces(identity, user);
+  const code = requestedTenantSlug && !context.tenant
+    ? "tenant_missing"
+    : requestedTenantSlug && !context.identity.isPlatformAdmin && !context.membership
+      ? "tenant_access_missing"
+      : "ok";
+
+  return authHealthResponse({ identity, context, requestedTenantSlug, workspaces, code });
 }
 
 async function assertMemberCanLoseAdminRole(client, reply, tenantId, member) {
@@ -1057,6 +1130,8 @@ export function registerRoutes(app) {
 
     return exchangeOidcCode(body);
   });
+
+  route(app, "get", "/api/auth/health", async (request, reply) => getAuthHealth(request, reply));
 
   route(app, "get", "/api/me", async (request, reply) => {
     const context = await requireContext(request, reply);

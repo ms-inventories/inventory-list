@@ -446,7 +446,15 @@ function isOidcCallback(search = window.location.search) {
 }
 
 function getLaunchStatusFromError(error) {
+  const detailCode = error?.details?.code || "";
   const code = error?.code || "";
+
+  if (detailCode) {
+    return getLaunchStatusFromHealth(error.details, {
+      code: detailCode,
+      text: getApiErrorMessage(error)
+    });
+  }
 
   if (code.startsWith("oidc_discovery")) {
     return {
@@ -489,6 +497,55 @@ function getLaunchStatusFromError(error) {
   };
 }
 
+function getLaunchStatusFromHealth(health, fallback = {}) {
+  const code = health?.code || fallback.code || "unknown";
+  const requestedSlug = health?.tenant?.requestedSlug || "";
+
+  if (code === "ok") {
+    return {
+      code,
+      text: fallback.text || "Your sign-in looks valid, but the workspace did not open. Try again."
+    };
+  }
+
+  if (code === "token_missing" || code === "token_rejected") {
+    return {
+      code,
+      text: "Your sign-in token was not accepted. Sign out, then sign back in through Authentik."
+    };
+  }
+
+  if (code === "identity_incomplete") {
+    return {
+      code,
+      text: "Your Authentik account is missing an email claim. Ask an admin to update the account profile."
+    };
+  }
+
+  if (code === "tenant_missing") {
+    return {
+      code,
+      text: requestedSlug
+        ? `The ${requestedSlug}.${appConfig.baseDomain} workspace does not exist yet. Ask a platform admin to create it or check the subdomain.`
+        : "That workspace does not exist yet. Ask a platform admin to create it or check the subdomain."
+    };
+  }
+
+  if (code === "tenant_access_missing") {
+    return {
+      code,
+      text: requestedSlug
+        ? `You are signed in, but your account does not have access to the ${requestedSlug.toUpperCase()} workspace yet.`
+        : "You are signed in, but your account is not assigned to that workspace yet."
+    };
+  }
+
+  return {
+    code,
+    text: fallback.text || "Could not confirm your workspace access. Try again."
+  };
+}
+
 function formatPublicDate(value) {
   if (!value) return "";
   try {
@@ -510,6 +567,7 @@ function LaunchRouter() {
   const [status, setStatus] = useState({ text: "Checking your access...", isError: false });
   const [workspaces, setWorkspaces] = useState([]);
   const [me, setMe] = useState(null);
+  const [authHealth, setAuthHealth] = useState(null);
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
   const groupLabels = normalizeGroupLabels(me?.groups);
   const signedInLabel = me?.user?.display_name
@@ -531,8 +589,12 @@ function LaunchRouter() {
     let ignore = false;
 
     async function routeAfterLogin() {
+      let token = "";
+      let tenantSlug = "";
+
       try {
         setDiagnosticsCopied(false);
+        setAuthHealth(null);
         const redirectedSession = await completeOidcRedirect();
         if (redirectedSession) {
           const routeAfterRedirect = `${window.location.pathname}${window.location.hash || ""}`;
@@ -544,8 +606,8 @@ function LaunchRouter() {
         }
 
         const session = redirectedSession || readAuthSession();
-        const token = getSessionAccessToken(session);
-        const tenantSlug = getTenantSlugFromHostname();
+        token = getSessionAccessToken(session);
+        tenantSlug = getTenantSlugFromHostname();
 
         if (!token) {
           setStatus({ text: "Redirecting to sign in...", isError: false });
@@ -560,8 +622,30 @@ function LaunchRouter() {
         const groups = normalizeGroupLabels(data.groups);
         const slugs = getWorkspaceSlugsFromProfile(data);
 
-        if (tenantSlug && (data.isPlatformAdmin || data.membership?.role || slugs.includes(tenantSlug))) {
-          window.location.assign(getTenantUrl(tenantSlug));
+        if (tenantSlug) {
+          if (!data.tenant) {
+            setStatus({
+              ...getLaunchStatusFromHealth({
+                code: "tenant_missing",
+                tenant: { requestedSlug: tenantSlug }
+              }),
+              isError: true
+            });
+            return;
+          }
+
+          if (data.isPlatformAdmin || data.membership?.role || slugs.includes(tenantSlug)) {
+            window.location.assign(getTenantUrl(tenantSlug));
+            return;
+          }
+
+          setStatus({
+            ...getLaunchStatusFromHealth({
+              code: "tenant_access_missing",
+              tenant: { requestedSlug: tenantSlug }
+            }),
+            isError: true
+          });
           return;
         }
 
@@ -592,8 +676,21 @@ function LaunchRouter() {
         });
       } catch (error) {
         if (!ignore) {
-          const launchStatus = getLaunchStatusFromError(error);
-          setStatus({ ...launchStatus, isError: true });
+          let launchStatus = getLaunchStatusFromError(error);
+
+          if (token && !/failed to fetch/i.test(error?.message || "")) {
+            try {
+              const health = await apiRequest("/auth/health", { token, tenantSlug });
+              if (!ignore) {
+                setAuthHealth(health);
+                launchStatus = getLaunchStatusFromHealth(health, launchStatus);
+              }
+            } catch (healthError) {
+              launchStatus = getLaunchStatusFromError(healthError);
+            }
+          }
+
+          if (!ignore) setStatus({ ...launchStatus, isError: true });
         }
       }
     }
@@ -639,7 +736,16 @@ function LaunchRouter() {
       },
       currentTenantSlug: getTenantSlugFromHostname(),
       groups: groupLabels,
-      workspaces: getWorkspaceSlugsFromProfile(me)
+      workspaces: getWorkspaceSlugsFromProfile(me),
+      authHealth: authHealth
+        ? {
+          ok: authHealth.ok,
+          code: authHealth.code,
+          auth: authHealth.auth,
+          tenant: authHealth.tenant,
+          workspaces: authHealth.workspaces
+        }
+        : null
     };
 
     await copyTextToClipboard(JSON.stringify(diagnostics, null, 2));
@@ -715,6 +821,26 @@ function LaunchRouter() {
                 <dt>Groups from token</dt>
                 <dd>{groupLabels.length ? groupLabels.join(", ") : "none"}</dd>
               </div>
+              {authHealth ? (
+                <>
+                  <div>
+                    <dt>Auth health</dt>
+                    <dd>{authHealth.code || "unknown"}</dd>
+                  </div>
+                  <div>
+                    <dt>Health tenant</dt>
+                    <dd>
+                      {authHealth.tenant?.requestedSlug || "none"}
+                      {authHealth.tenant?.requested ? `, exists: ${authHealth.tenant.exists ? "yes" : "no"}` : ""}
+                      {authHealth.tenant?.requested ? `, access: ${authHealth.tenant.access ? "yes" : "no"}` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Health groups</dt>
+                    <dd>{authHealth.auth?.groupCount ?? "unknown"}</dd>
+                  </div>
+                </>
+              ) : null}
             </dl>
             <button className="btn btn-secondary btn-full" type="button" onClick={copyDiagnostics}>
               <Copy aria-hidden="true" />

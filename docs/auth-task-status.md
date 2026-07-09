@@ -8,6 +8,7 @@ Started: 2026-07-09.
 - AUTH-001: Launch routing and role destinations.
 - AUTH-002: Production-safe diagnostics.
 - AUTH-003: Callback and API failure recovery.
+- AUTH-005: Safe backend/session health diagnostics.
 
 ## Coordination Notes
 
@@ -23,10 +24,13 @@ Started: 2026-07-09.
 - [x] Hide manual access-token controls outside QA.
 - [x] Replace raw callback/API failures with user-safe launch messages.
 - [x] Add admin/QA diagnostics copy for launch failures.
+- [x] Add `/api/auth/health` with safe auth, tenant, and workspace status.
+- [x] Teach the launch router to translate health failures into useful messages.
+- [x] Surface health details only in admin/QA diagnostics.
 - [x] Verify launch-router QA smoke on desktop and mobile Chrome.
+- [x] Verify direct auth-health QA responses.
 - [ ] Run full QA smoke after the unrelated newsletter/UI work in progress settles.
 
 ## Newly Discovered Follow-Ups
 
 - AUTH-004: Decide whether Authentik app tiles should launch only `https://876en.org/#/launch` or also provide separate direct tiles for FRG/admin workflows.
-- AUTH-005: Add a lightweight backend/session health endpoint for the frontend to distinguish API down, token rejected, and tenant missing without exposing raw details.
