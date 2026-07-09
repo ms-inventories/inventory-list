@@ -6,16 +6,24 @@
   <link rel="icon" href="favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" href="favicon-32x32.png" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-  <title>Equipment Inventory</title>
+  <title>Legacy Equipment Inventory</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body class="app-body">
+  <aside class="legacy-notice" aria-label="Legacy app notice">
+    <div>
+      <strong>Legacy inventory fallback</strong>
+      <span>This static GitHub Pages app is kept online during the React/Coolify cutover.</span>
+    </div>
+    <a class="legacy-link" href="https://876en.org/#/launch">Open current portal</a>
+  </aside>
+
   <div id="passwordPrompt" class="auth-screen">
     <section class="auth-card" aria-labelledby="loginTitle">
-      <p class="eyebrow">Guard equipment accountability</p>
+      <p class="eyebrow">Legacy fallback</p>
       <h1 id="loginTitle">Equipment Inventory</h1>
-      <p class="auth-copy">Select your platoon and open the latest equipment list.</p>
+      <p class="auth-copy">Use this static list only if the current portal is unavailable or you were specifically directed here.</p>
 
       <div class="form-stack">
         <label class="field-label" for="platoonSelect">Platoon</label>
@@ -39,7 +47,7 @@
 
         <a class="btn btn-secondary btn-full" href="admin.html">
           <i data-lucide="settings" aria-hidden="true"></i>
-          <span>Admin view</span>
+          <span>Legacy admin</span>
         </a>
 
         <div id="loginStatus" class="status-text" role="status" aria-live="polite"></div>
@@ -50,9 +58,9 @@
   <div id="mainContent" class="hidden app-frame">
     <header class="app-header">
       <div>
-        <p class="eyebrow">Platoon inventory</p>
+        <p class="eyebrow">Legacy fallback</p>
         <h1 id="pageTitle">Equipment Inventory</h1>
-        <p class="header-copy">Fast lookup for what is on hand and where it is staged.</p>
+        <p class="header-copy">Static lookup for existing lists. New assignments, approvals, and uploads belong in the current portal.</p>
       </div>
       <div class="header-actions">
         <label class="search-wrap" for="searchInput">
@@ -71,7 +79,7 @@
         </button>
         <a class="btn btn-secondary" href="admin.html">
           <i data-lucide="settings" aria-hidden="true"></i>
-          <span>Admin</span>
+          <span>Legacy admin</span>
         </a>
         <button id="changePlatoonBtn" class="btn btn-secondary">
           <i data-lucide="repeat-2" aria-hidden="true"></i>

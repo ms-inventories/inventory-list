@@ -1,16 +1,23 @@
 # inventory-list
 
-The repository root is the current static GitHub Pages app.
+The repository root is the legacy static GitHub Pages fallback app.
 
-The future Coolify/Vite/React app lives in `react-app/` so the static page can stay online while the self-hosted version is built out.
+The current Coolify/Vite/React app lives in `react-app/`. Keep the static page online only as a fallback while the self-hosted version finishes cutover.
 
 This repo is now a monorepo:
 
-- Root: current static GitHub Pages app.
-- `react-app/`: future Coolify React frontend.
-- `backend/`: future Coolify Express API.
+- Root: legacy static GitHub Pages fallback.
+- `react-app/`: Coolify React frontend.
+- `backend/`: Coolify Express API.
 
 ## Static GitHub Pages App
+
+This is not the primary production UI anymore. It should stay clearly labeled as a legacy fallback and point users to the current portal:
+
+- Current portal: `https://876en.org/#/launch`
+- Current platform admin: `https://admin.876en.org/#/admin`
+
+When the Coolify version is fully trusted, either replace the Pages app with a redirect/splash page or archive it.
 
 - `index.html`
 - `admin.html`

@@ -729,6 +729,8 @@ Definition of done:
 
 Goal: reduce confusion between the root static app and the React/Coolify app.
 
+Status: complete, 2026-07-08. Static GitHub Pages pages are clearly labeled as legacy fallback and point users to the current Coolify portal/admin.
+
 Primary files:
 
 - `index.html`
@@ -740,10 +742,10 @@ Primary files:
 
 Subtasks:
 
-- [ ] Label legacy static app clearly.
-- [ ] Remove or relabel admin links after React cutover.
-- [ ] Decide when GitHub Pages should stop serving inventory UI.
-- [ ] Preserve static fallback only if useful.
+- [x] Label legacy static app clearly.
+- [x] Remove or relabel admin links after React cutover.
+- [x] Decide when GitHub Pages should stop serving inventory UI.
+- [x] Preserve static fallback only if useful.
 
 Definition of done:
 

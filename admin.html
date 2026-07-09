@@ -6,22 +6,30 @@
   <link rel="icon" href="favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" href="favicon-32x32.png" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-  <title>Inventory Admin</title>
+  <title>Legacy Inventory Admin</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body class="app-body">
+  <aside class="legacy-notice" aria-label="Legacy admin notice">
+    <div>
+      <strong>Legacy admin fallback</strong>
+      <span>This static editor is kept online only while the React/Coolify admin replaces it.</span>
+    </div>
+    <a class="legacy-link" href="https://admin.876en.org/#/admin">Open current admin</a>
+  </aside>
+
   <div class="app-frame admin-frame">
     <header class="app-header">
       <div>
-        <p class="eyebrow">Admin editor</p>
-        <h1>Inventory Admin</h1>
-        <p class="header-copy">Update platoon equipment, photos, locations, and counts.</p>
+        <p class="eyebrow">Legacy editor</p>
+        <h1>Legacy Inventory Admin</h1>
+        <p class="header-copy">Static S3-backed editor for fallback data. Use the current portal for tenant members, approvals, and live workflow.</p>
       </div>
       <div class="header-actions">
         <a class="btn btn-secondary" href="index.html">
           <i data-lucide="clipboard-list" aria-hidden="true"></i>
-          <span>View inventory</span>
+          <span>Legacy inventory</span>
         </a>
       </div>
     </header>
