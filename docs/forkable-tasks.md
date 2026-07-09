@@ -51,6 +51,8 @@ Definition of done:
 
 Goal: create automated browser checks that future task threads can run before pushing.
 
+Status: in progress by current Codex thread.
+
 Primary files:
 
 - `react-app/`
@@ -59,12 +61,12 @@ Primary files:
 
 Subtasks:
 
-- [ ] Add Playwright or similar browser test dependency.
-- [ ] Cover public landing page.
-- [ ] Cover platform admin login and tenant list.
-- [ ] Cover tenant dashboard and session navigation.
+- [x] Add Playwright or similar browser test dependency.
+- [x] Cover public landing page.
+- [x] Cover platform admin login and tenant list.
+- [x] Cover tenant dashboard and session navigation.
 - [ ] Cover packet upload entry point.
-- [ ] Document how to run tests against the QA stack.
+- [x] Document how to run tests against the QA stack.
 
 Definition of done:
 
@@ -153,6 +155,10 @@ Definition of done:
 
 Goal: turn `Upload packet` into a guided, obvious workflow.
 
+Status: in progress by current Codex thread, started 2026-07-08.
+
+Coordination note: this task owns the packet upload wizard UI, packet import entry points, and session handoff around packet imports. Avoid overlapping changes in `PACKET-002`, `PACKET-003`, and `SESSION-001` until this status changes.
+
 Primary files:
 
 - `react-app/src/components/AdminConsole.jsx`
@@ -223,6 +229,8 @@ Definition of done:
 ### PLATFORM-001: Platform Navigation And Overview
 
 Goal: remove dead platform sidebar controls and replace them with real views.
+
+Status: in progress by current Codex thread. Avoid overlapping edits to platform navigation, platform overview, sidebar state, or platform-only admin views until this status is cleared.
 
 Primary files:
 
@@ -309,6 +317,8 @@ Definition of done:
 ### TENANT-001: Mobile Sidebar And User Menu
 
 Goal: make the tenant shell controls real.
+
+Status: in progress by current Codex thread. Avoid overlapping edits to the tenant dashboard shell, mobile sidebar behavior, tenant top bar, notification bell placeholder, or user menu until this status is cleared.
 
 Primary files:
 
@@ -527,6 +537,10 @@ Definition of done:
 
 Goal: make helper invitations operational.
 
+Status: completed 2026-07-08. Safe for `USER-MANAGEMENT-002` and `USER-MANAGEMENT-003` to start.
+
+Coordination note: tenant invitation UI/actions, invite routes, and invite email behavior now have a working baseline. Follow-on user-management tasks should preserve the refresh-link behavior because raw invite tokens are not stored.
+
 Primary files:
 
 - `react-app/src/components/AdminConsole.jsx`
@@ -535,12 +549,12 @@ Primary files:
 
 Subtasks:
 
-- [ ] Show pending/accepted/revoked/expired status.
-- [ ] Copy invite link.
-- [ ] Resend invite email.
-- [ ] Revoke invite.
-- [ ] Show expiration.
-- [ ] Verify accept-invite flow with QA personas.
+- [x] Show pending/accepted/revoked/expired status.
+- [x] Copy invite link.
+- [x] Resend invite email.
+- [x] Revoke invite.
+- [x] Show expiration.
+- [x] Verify accept-invite flow with QA personas.
 
 Definition of done:
 
@@ -615,6 +629,10 @@ Definition of done:
 
 Goal: make newsletter signup, review, and approval feel finished.
 
+Status: completed by current Codex thread, 2026-07-08. Safe for `NEWSLETTER-002` and `NEWSLETTER-003` to start.
+
+Coordination note: public newsletter signup validation/copy, subscriber approval UI, subscriber review routes, and review notification result handling are implemented. Live Brevo delivery validation remains in `NEWSLETTER-003`.
+
 Primary files:
 
 - `react-app/src/App.jsx`
@@ -624,11 +642,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Verify public signup validation and success copy.
-- [ ] Improve subscriber review UI.
-- [ ] Add review note UI if needed.
-- [ ] Verify approve/reject updates public/admin state.
-- [ ] Verify email behavior with SMTP disabled and enabled.
+- [x] Verify public signup validation and success copy.
+- [x] Improve subscriber review UI.
+- [x] Add review note UI if needed.
+- [x] Verify approve/reject updates public/admin state.
+- [x] Verify SMTP-disabled review notification behavior; production SMTP live-send validation remains in `NEWSLETTER-003`.
 
 Definition of done:
 

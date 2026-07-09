@@ -5,7 +5,14 @@ import { z } from "zod";
 import { authContext, exchangeOidcCode } from "./auth.js";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
-import { sendNewsletterIssueEmail, sendProofRequestEmail, sendProofSubmittedEmail, sendTenantInviteEmail } from "./email.js";
+import {
+  isEmailConfigured,
+  sendNewsletterIssueEmail,
+  sendNewsletterSubscriberReviewEmail,
+  sendProofRequestEmail,
+  sendProofSubmittedEmail,
+  sendTenantInviteEmail
+} from "./email.js";
 import { hasTenantRole, tenantContext } from "./tenant.js";
 
 const tenantRoles = ["tenant_admin", "contributor", "viewer"];
@@ -385,6 +392,38 @@ function buildInviteUrl(tenant, token) {
   const url = new URL(tenantBaseUrl(tenant));
   url.hash = `/accept-invite?token=${encodeURIComponent(token)}`;
   return url.toString();
+}
+
+async function expirePendingInvitations(clientOrDb, tenantId) {
+  const runQuery = typeof clientOrDb === "function"
+    ? clientOrDb
+    : clientOrDb.query.bind(clientOrDb);
+
+  await runQuery(
+    `
+      UPDATE tenant_invitations
+      SET status = 'expired'
+      WHERE tenant_id = $1
+        AND status = 'pending'
+        AND expires_at <= now()
+    `,
+    [tenantId]
+  );
+}
+
+async function sendInviteNotification({ context, email, role, inviteUrl }) {
+  try {
+    return await sendTenantInviteEmail({
+      to: email,
+      tenantName: context.tenant.name,
+      role,
+      inviteUrl,
+      invitedByName: context.user.display_name || context.user.email
+    });
+  } catch (error) {
+    console.error("invite email failed", error);
+    return { sent: false, reason: "send_failed" };
+  }
 }
 
 function buildTenantAdminUrl(tenant) {
@@ -988,6 +1027,9 @@ export function registerRoutes(app) {
         unsubscribed: statsResult.rows[0]?.unsubscribed_count || 0,
         total: statsResult.rows[0]?.total_count || 0
       },
+      deliverySettings: {
+        emailConfigured: isEmailConfigured()
+      },
       subscribers: subscriberResult.rows.map(rowToNewsletterSubscriber)
     };
   });
@@ -1043,7 +1085,19 @@ export function registerRoutes(app) {
       throw new Error("Newsletter subscriber not found");
     }
 
-    return { subscriber: rowToNewsletterSubscriber(reviewed) };
+    let notification;
+    try {
+      notification = await sendNewsletterSubscriberReviewEmail({
+        to: reviewed.email,
+        displayName: reviewed.display_name,
+        decision: body.decision,
+        publicUrl: config.publicAppUrl
+      });
+    } catch (error) {
+      notification = { sent: false, reason: "send_failed" };
+    }
+
+    return { subscriber: rowToNewsletterSubscriber(reviewed), notification };
   });
 
   route(app, "post", "/api/newsletter/admin/issues", async (request, reply) => {
@@ -1353,6 +1407,7 @@ export function registerRoutes(app) {
 
   route(app, "get", "/api/tenant/invitations", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    await expirePendingInvitations(query, context.tenant.id);
     const result = await query(
       `
         SELECT *
@@ -1432,21 +1487,89 @@ export function registerRoutes(app) {
     });
 
     const inviteUrl = buildInviteUrl(context.tenant, token);
-    let emailResult;
-    try {
-      emailResult = await sendTenantInviteEmail({
-        to: email,
-        tenantName: context.tenant.name,
-        role: body.role,
-        inviteUrl,
-        invitedByName: context.user.display_name || context.user.email
-      });
-    } catch (error) {
-      console.error("invite email failed", error);
-      emailResult = { sent: false, reason: "send_failed" };
-    }
+    const emailResult = await sendInviteNotification({
+      context,
+      email,
+      role: body.role,
+      inviteUrl
+    });
 
     reply.code(201);
+    return {
+      invitation: {
+        ...rowToInvitation(invite),
+        inviteUrl
+      },
+      email: emailResult
+    };
+  });
+
+  route(app, "post", "/api/tenant/invitations/:invitationId/resend", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({
+        sendEmail: z.boolean().default(true),
+        expiresInDays: z.number().int().min(1).max(60).default(14)
+      }),
+      request.body
+    );
+
+    const token = createInviteToken();
+    const tokenHash = hashInviteToken(token);
+    const expiresAt = new Date(Date.now() + body.expiresInDays * 24 * 60 * 60 * 1000);
+
+    const invite = await withTransaction(async client => {
+      await expirePendingInvitations(client, context.tenant.id);
+
+      const result = await client.query(
+        `
+          UPDATE tenant_invitations
+          SET token_hash = $3,
+            status = 'pending',
+            expires_at = $4,
+            accepted_at = NULL,
+            revoked_at = NULL
+          WHERE id = $1
+            AND tenant_id = $2
+            AND status IN ('pending', 'expired')
+          RETURNING *
+        `,
+        [request.params.invitationId, context.tenant.id, tokenHash, expiresAt]
+      );
+
+      if (!result.rows[0]) return null;
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: body.sendEmail ? "invitation.resent" : "invitation.link_refreshed",
+        entityType: "tenant_invitation",
+        entityId: result.rows[0].id,
+        metadata: {
+          email: result.rows[0].email,
+          role: result.rows[0].role,
+          expiresAt: result.rows[0].expires_at
+        }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!invite) {
+      reply.code(404);
+      throw new Error("Pending or expired invitation not found");
+    }
+
+    const inviteUrl = buildInviteUrl(context.tenant, token);
+    const emailResult = body.sendEmail
+      ? await sendInviteNotification({
+        context,
+        email: invite.email,
+        role: invite.role,
+        inviteUrl
+      })
+      : { sent: false, reason: "not_requested" };
+
     return {
       invitation: {
         ...rowToInvitation(invite),
@@ -1459,11 +1582,13 @@ export function registerRoutes(app) {
   route(app, "post", "/api/tenant/invitations/:invitationId/revoke", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const revoked = await withTransaction(async client => {
+      await expirePendingInvitations(client, context.tenant.id);
+
       const result = await client.query(
         `
           UPDATE tenant_invitations
           SET status = 'revoked', revoked_at = now()
-          WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+          WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'expired')
           RETURNING *
         `,
         [request.params.invitationId, context.tenant.id]
@@ -1471,12 +1596,26 @@ export function registerRoutes(app) {
 
       if (!result.rows[0]) return null;
 
+      await client.query(
+        `
+          UPDATE tenant_memberships m
+          SET status = 'disabled'
+          FROM app_users u
+          WHERE m.user_id = u.id
+            AND m.tenant_id = $1
+            AND lower(u.email) = $2
+            AND m.status = 'invited'
+        `,
+        [context.tenant.id, result.rows[0].email]
+      );
+
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: "invitation.revoked",
         entityType: "tenant_invitation",
-        entityId: result.rows[0].id
+        entityId: result.rows[0].id,
+        metadata: { email: result.rows[0].email, role: result.rows[0].role }
       });
 
       return result.rows[0];
@@ -1484,7 +1623,7 @@ export function registerRoutes(app) {
 
     if (!revoked) {
       reply.code(404);
-      throw new Error("Pending invitation not found");
+      throw new Error("Pending or expired invitation not found");
     }
 
     return { invitation: rowToInvitation(revoked) };

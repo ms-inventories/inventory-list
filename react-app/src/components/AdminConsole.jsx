@@ -70,6 +70,38 @@ function formatShortDate(value) {
   }
 }
 
+function formatInviteStatus(status) {
+  const labels = {
+    pending: "Pending",
+    accepted: "Accepted",
+    revoked: "Revoked",
+    expired: "Expired"
+  };
+  return labels[status] || status || "Unknown";
+}
+
+function inviteCanBeRefreshed(invite) {
+  return ["pending", "expired"].includes(invite?.status);
+}
+
+function inviteCanBeRevoked(invite) {
+  return ["pending", "expired"].includes(invite?.status);
+}
+
+function inviteTimeline(invite) {
+  if (!invite) return "";
+  if (invite.status === "accepted") return `Accepted ${formatDate(invite.acceptedAt)}`;
+  if (invite.status === "revoked") return `Revoked ${formatDate(invite.revokedAt)}`;
+  if (invite.status === "expired") return `Expired ${formatDate(invite.expiresAt)}`;
+  return `Expires ${formatDate(invite.expiresAt)}`;
+}
+
+async function copyText(value) {
+  if (!globalThis.navigator?.clipboard || !globalThis.window?.isSecureContext) return false;
+  await globalThis.navigator.clipboard.writeText(value);
+  return true;
+}
+
 function EmptyPanel({ title, body }) {
   return (
     <div className="admin-empty">
@@ -1009,6 +1041,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
   const [packetSourceName, setPacketSourceName] = useState("");
   const [packetSourceFile, setPacketSourceFile] = useState(null);
   const [isPacketImportOpen, setIsPacketImportOpen] = useState(false);
+  const [packetWizardOpen, setPacketWizardOpen] = useState(false);
+  const [packetWizardStep, setPacketWizardStep] = useState(1);
+  const [packetWizardMode, setPacketWizardMode] = useState("existing");
+  const [packetWizardSessionId, setPacketWizardSessionId] = useState("");
+  const [packetWizardSessionName, setPacketWizardSessionName] = useState("");
+  const [packetWizardSummary, setPacketWizardSummary] = useState(null);
   const [sessionItemQuery, setSessionItemQuery] = useState("");
   const [sessionItemFilter, setSessionItemFilter] = useState("all");
   const [proofItemId, setProofItemId] = useState("");
@@ -1058,8 +1096,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
 
   useEffect(() => {
     if (uploadIntent !== "packet") return;
-    setIsPacketImportOpen(true);
-    setStatus({ text: "Start or select a session, then choose the packet file inside that session.", isError: false });
+    openPacketWizard();
+    setStatus({ text: "", isError: false });
     onUploadIntentHandled?.();
   }, [uploadIntent, onUploadIntentHandled]);
 
@@ -1092,8 +1130,66 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
     }
   }
 
-  function reviewPacketRows(sourceText = packetRows, sourceName = packetSourceName) {
-    if (!selectedSessionId) {
+  function openPacketWizard(sessionId = selectedSessionId) {
+    const fallbackSessionId = sessionId || selectedSessionId || openSessions[0]?.id || "";
+    setPacketWizardOpen(true);
+    setPacketWizardStep(1);
+    setPacketWizardSummary(null);
+    setPacketWizardMode(fallbackSessionId ? "existing" : "new");
+    setPacketWizardSessionId(fallbackSessionId);
+    setPacketWizardSessionName("");
+    setIsPacketImportOpen(false);
+  }
+
+  async function preparePacketWizardSession() {
+    if (packetWizardMode === "existing") {
+      const sessionId = packetWizardSessionId || selectedSessionId;
+      if (!sessionId) {
+        setStatus({ text: "Choose a session or create a new one first.", isError: true });
+        return "";
+      }
+
+      setSelectedSessionId(sessionId);
+      await loadSessionDetail(sessionId, false);
+      setPacketWizardSessionId(sessionId);
+      setPacketWizardStep(2);
+      setStatus({ text: "", isError: false });
+      return sessionId;
+    }
+
+    const name = packetWizardSessionName.trim();
+    if (!name) {
+      setStatus({ text: "Name the inventory session first.", isError: true });
+      return "";
+    }
+
+    try {
+      setIsSaving(true);
+      const data = await apiRequest("/inventory/sessions", {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { name, status: "active" }
+      });
+      setNewSessionName("");
+      setPacketWizardSessionName("");
+      setPacketWizardMode("existing");
+      setPacketWizardSessionId(data.session.id);
+      setSelectedSessionId(data.session.id);
+      await loadSessions(data.session.id);
+      setPacketWizardStep(2);
+      setStatus({ text: `Started ${data.session.name}`, isError: false });
+      return data.session.id;
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+      return "";
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function reviewPacketRows(sourceText = packetRows, sourceName = packetSourceName, sessionId = selectedSessionId) {
+    if (!sessionId) {
       setStatus({ text: "Create or select a session first.", isError: true });
       return [];
     }
@@ -1132,7 +1228,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
         dataUrl,
         size: file.size
       });
-      reviewPacketRows(text, file.name);
+      const rows = reviewPacketRows(text, file.name, packetWizardSessionId || selectedSessionId);
+      if (rows.length) setPacketWizardStep(3);
     } catch (error) {
       setStatus({ text: error.message || "Could not read packet file.", isError: true });
     } finally {
@@ -1164,6 +1261,11 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
     setPacketSourceFile(null);
   }
 
+  function reviewWizardPacketRows() {
+    const rows = reviewPacketRows(packetRows, packetSourceName, packetWizardSessionId || selectedSessionId);
+    if (rows.length) setPacketWizardStep(3);
+  }
+
   function retryImportBatch(batch) {
     if (!batch?.extractedText) {
       setStatus({ text: "That import does not have saved text to retry.", isError: true });
@@ -1175,22 +1277,22 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
     reviewPacketRows(batch.extractedText, batch.sourceName || "Saved import");
   }
 
-  async function addPacketRows(e) {
-    e.preventDefault();
-    if (!selectedSessionId) {
+  async function importPacketRowsToSession(targetSessionId = selectedSessionId) {
+    if (!targetSessionId) {
       setStatus({ text: "Create or select a session first.", isError: true });
-      return;
+      return null;
     }
 
     const reviewedRows = packetDraftRows.length ? packetDraftRows : reviewPacketRows();
     const items = sanitizePacketDraftRows(reviewedRows);
     if (!items.length) {
       setStatus({ text: "Review at least one valid packet row first.", isError: true });
-      return;
+      return null;
     }
 
+    const sourceName = packetSourceName || packetSourceFile?.fileName || "Pasted packet text";
     const importBatch = {
-      sourceName: packetSourceName || packetSourceFile?.fileName || "Pasted packet text",
+      sourceName,
       sourceMimeType: packetSourceFile?.mimeType || "text/plain",
       extractedText: packetRows.slice(0, 1_000_000)
     };
@@ -1204,7 +1306,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
 
     try {
       setIsSaving(true);
-      await apiRequest(`/inventory/sessions/${selectedSessionId}/items/bulk`, {
+      await apiRequest(`/inventory/sessions/${targetSessionId}/items/bulk`, {
         method: "POST",
         token,
         tenantSlug,
@@ -1215,12 +1317,26 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
       setPacketSourceName("");
       setPacketSourceFile(null);
       setStatus({ text: `Added ${items.length} packet rows.`, isError: false });
-      await loadSessions(selectedSessionId);
+      await loadSessions(targetSessionId);
+      return { count: items.length, sourceName, sessionId: targetSessionId };
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+      return null;
     } finally {
       setIsSaving(false);
     }
+  }
+
+  async function addPacketRows(e) {
+    e.preventDefault();
+    await importPacketRowsToSession();
+  }
+
+  async function finishPacketWizardImport() {
+    const summary = await importPacketRowsToSession(packetWizardSessionId || selectedSessionId);
+    if (!summary) return;
+    setPacketWizardSummary(summary);
+    setPacketWizardStep(4);
   }
 
   async function updateDirectCheck(sessionItemId, nextStatus) {
@@ -1343,6 +1459,14 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
   const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
   const foundRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
   const overallProgress = totalRows ? Math.round((foundRows / totalRows) * 100) : 0;
+
+  useEffect(() => {
+    if (!packetWizardOpen || packetWizardStep !== 1 || packetWizardSessionId || packetWizardSessionName.trim()) return;
+    const fallbackSessionId = openSessions[0]?.id || "";
+    if (!fallbackSessionId) return;
+    setPacketWizardMode("existing");
+    setPacketWizardSessionId(fallbackSessionId);
+  }, [packetWizardOpen, packetWizardStep, packetWizardSessionId, packetWizardSessionName, openSessions]);
 
   function renderSessionButton(session) {
     const progress = sessionProgress(session);
@@ -1541,128 +1665,28 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
               ) : null}
 
               {canManage ? (
-                <details
-                  className="packet-import"
-                  open={isPacketImportOpen || Boolean(packetRows || packetDraftRows.length)}
-                  onToggle={event => setIsPacketImportOpen(event.currentTarget.open)}
-                >
-                  <summary className="btn btn-secondary">
-                    <ClipboardPlus aria-hidden="true" />
-                    <span>Import packet rows</span>
-                  </summary>
-                  <form className="disclosure-panel packet-import-form" onSubmit={addPacketRows}>
-                    <div className="packet-import-actions">
-                      <button
-                        className="btn btn-primary btn-small packet-upload-button"
-                        type="button"
-                        disabled={isReadingPacket || isSaving}
-                        onClick={openPacketFilePicker}
-                      >
-                        <FileUp aria-hidden="true" />
-                        <span>{isReadingPacket ? "Reading..." : "Choose PDF or spreadsheet"}</span>
-                      </button>
-                      <input
-                        ref={packetFileInputRef}
-                        className="packet-hidden-file"
-                        type="file"
-                        accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
-                        disabled={isReadingPacket || isSaving}
-                        onChange={e => {
-                          const file = e.target.files?.[0];
-                          e.target.value = "";
-                          readPacketUpload(file);
-                        }}
-                      />
-                      <button
-                        className="btn btn-secondary btn-small"
-                        type="button"
-                        disabled={!packetRows.trim() || isReadingPacket || isSaving}
-                        onClick={() => reviewPacketRows()}
-                      >
-                        <ClipboardList aria-hidden="true" />
-                        <span>Review rows</span>
-                      </button>
-                      {packetRows || packetDraftRows.length ? (
-                        <button className="btn btn-secondary btn-small" type="button" onClick={clearPacketImport}>
-                          <Trash2 aria-hidden="true" />
-                          <span>Clear</span>
-                        </button>
-                      ) : null}
-                    </div>
-                    {packetSourceName ? <span className="packet-import-note">Source: {packetSourceName}</span> : null}
-                    {packetSourceFile?.size ? <span className="packet-import-note">Stored with import: {formatFileSize(packetSourceFile.size)}</span> : null}
-                    <textarea
-                      className="input packet-textarea"
-                      value={packetRows}
-                      placeholder="Paste hand-receipt text or one item per line. Example:&#10;000009148 R20684 RADIAC SET: AN/VDR-2&#10;B67839 BINOCULAR: M24"
-                      onChange={e => {
-                        setPacketRows(e.target.value);
-                        setPacketDraftRows([]);
-                        setPacketSourceName("");
-                        setPacketSourceFile(null);
-                      }}
-                    />
-                    {packetDraftRows.length ? (
-                      <div className="packet-review">
-                        <div className="packet-review-heading">
-                          <strong>Review before saving</strong>
-                          <span>{packetDraftRows.length} rows</span>
-                        </div>
-                        <div className="packet-review-list">
-                          {packetDraftRows.map((row, index) => (
-                            <div className="packet-review-row" key={row.id}>
-                              <div className="packet-review-row-top">
-                                <span className="packet-row-number">{index + 1}</span>
-                                <span className={`packet-confidence ${row.confidence}`}>{row.confidence}</span>
-                                <button
-                                  className="icon-button"
-                                  type="button"
-                                  aria-label="Remove row"
-                                  onClick={() => removePacketDraftRow(row.id)}
-                                >
-                                  <Trash2 aria-hidden="true" />
-                                </button>
-                              </div>
-                              <label className="field-label" htmlFor={`packetLine-${row.id}`}>Packet row</label>
-                              <textarea
-                                id={`packetLine-${row.id}`}
-                                className="input packet-review-line"
-                                value={row.packetLine}
-                                onChange={e => updatePacketDraftRow(row.id, "packetLine", e.target.value)}
-                              />
-                              <div className="packet-review-fields">
-                                <label>
-                                  <span className="field-label">Qty</span>
-                                  <input
-                                    className="input"
-                                    inputMode="numeric"
-                                    value={row.expectedQty}
-                                    onChange={e => updatePacketDraftRow(row.id, "expectedQty", e.target.value)}
-                                  />
-                                </label>
-                                <label>
-                                  <span className="field-label">Location hint</span>
-                                  <input
-                                    className="input"
-                                    value={row.locationHint}
-                                    placeholder="Optional"
-                                    onChange={e => updatePacketDraftRow(row.id, "locationHint", e.target.value)}
-                                  />
-                                </label>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="button-row">
-                          <button className="btn btn-primary" type="submit" disabled={isSaving || isReadingPacket}>
-                            <ClipboardPlus aria-hidden="true" />
-                            <span>{isSaving ? "Importing..." : `Import ${sanitizePacketDraftRows(packetDraftRows).length} rows`}</span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </form>
-                </details>
+                <div className="packet-wizard-entry">
+                  <div>
+                    <strong>Packet import</strong>
+                    <span>Upload a PDF, CSV, photo, or paste rows from the packet.</span>
+                  </div>
+                  <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard(selectedSession.id)}>
+                    <FileUp aria-hidden="true" />
+                    <span>Upload packet</span>
+                  </button>
+                  <input
+                    ref={packetFileInputRef}
+                    className="packet-hidden-file"
+                    type="file"
+                    accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
+                    disabled={isReadingPacket || isSaving}
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      readPacketUpload(file);
+                    }}
+                  />
+                </div>
               ) : null}
 
               {detailItems.length ? (
@@ -1804,6 +1828,276 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
           )}
         </div>
       </div>
+
+      {packetWizardOpen ? (
+        <div className="modal-backdrop packet-wizard-backdrop" role="presentation">
+          <div className="modal-panel packet-wizard-panel" role="dialog" aria-modal="true" aria-labelledby="packetWizardTitle">
+            <div className="modal-stack packet-wizard">
+              <div className="packet-wizard-heading">
+                <div className="modal-heading">
+                  <span className="modal-icon">
+                    <FileUp aria-hidden="true" />
+                  </span>
+                  <div>
+                    <p className="eyebrow">Packet import</p>
+                    <h2 id="packetWizardTitle" className="modal-title">Upload packet</h2>
+                    <p className="modal-copy">Pick the inventory session, add the packet source, review the rows, then save them.</p>
+                  </div>
+                </div>
+                <button className="icon-button" type="button" aria-label="Close packet wizard" onClick={() => setPacketWizardOpen(false)}>
+                  <XCircle aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="packet-wizard-steps" aria-label="Packet import progress">
+                {[
+                  [1, "Session"],
+                  [2, "Source"],
+                  [3, "Review"],
+                  [4, "Done"]
+                ].map(([step, label]) => (
+                  <span className={packetWizardStep === step ? "active" : packetWizardStep > step ? "complete" : ""} key={step}>
+                    <strong>{step}</strong>
+                    <small>{label}</small>
+                  </span>
+                ))}
+              </div>
+
+              {packetWizardStep === 1 ? (
+                <div className="packet-wizard-section">
+                  <div>
+                    <h3>Choose where these rows belong</h3>
+                    <p>Packet rows are saved inside one inventory session so the work stays tied to the right task.</p>
+                  </div>
+
+                  {openSessions.length ? (
+                    <label className={`packet-choice ${packetWizardMode === "existing" ? "active" : ""}`}>
+                      <input
+                        type="radio"
+                        name="packetSessionMode"
+                        checked={packetWizardMode === "existing"}
+                        onChange={() => setPacketWizardMode("existing")}
+                      />
+                      <span>
+                        <strong>Use an open session</strong>
+                        <small>Best when you already started the inventory.</small>
+                      </span>
+                      <select
+                        className="input"
+                        value={packetWizardSessionId}
+                        disabled={packetWizardMode !== "existing"}
+                        onChange={e => setPacketWizardSessionId(e.target.value)}
+                      >
+                        {openSessions.map(session => (
+                          <option value={session.id} key={session.id}>
+                            {session.name} ({session.itemCount || 0} rows)
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+
+                  <label className={`packet-choice ${packetWizardMode === "new" ? "active" : ""}`}>
+                    <input
+                      type="radio"
+                      name="packetSessionMode"
+                      checked={packetWizardMode === "new"}
+                      onChange={() => setPacketWizardMode("new")}
+                    />
+                    <span>
+                      <strong>Start a new session</strong>
+                      <small>Use this when the packet begins a new inventory task.</small>
+                    </span>
+                    <input
+                      className="input"
+                      value={packetWizardSessionName}
+                      disabled={packetWizardMode !== "new"}
+                      placeholder="July sensitive items"
+                      onChange={e => setPacketWizardSessionName(e.target.value)}
+                    />
+                  </label>
+
+                  <div className="packet-wizard-actions">
+                    <button className="btn btn-secondary" type="button" onClick={() => setPacketWizardOpen(false)}>
+                      <span>Cancel</span>
+                    </button>
+                    <button className="btn btn-primary" type="button" disabled={isSaving} onClick={preparePacketWizardSession}>
+                      <span>{isSaving ? "Starting..." : "Continue"}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {packetWizardStep === 2 ? (
+                <div className="packet-wizard-section">
+                  <div>
+                    <h3>Add the packet source</h3>
+                    <p>Use a clean PDF or CSV when you have it. If the packet is messy, paste one item per line.</p>
+                  </div>
+
+                  <div className="packet-source-grid">
+                    <button
+                      className="packet-source-card"
+                      type="button"
+                      disabled={isReadingPacket || isSaving}
+                      onClick={openPacketFilePicker}
+                    >
+                      <FileUp aria-hidden="true" />
+                      <span>
+                        <strong>{isReadingPacket ? "Reading packet..." : "Choose file"}</strong>
+                        <small>PDF, CSV, text, or image up to 10MB</small>
+                      </span>
+                    </button>
+                    <div className="packet-source-card passive">
+                      <ClipboardList aria-hidden="true" />
+                      <span>
+                        <strong>Paste from paper</strong>
+                        <small>One row per line works best.</small>
+                      </span>
+                    </div>
+                  </div>
+
+                  {packetSourceName ? <span className="packet-import-note">Source: {packetSourceName}</span> : null}
+                  {packetSourceFile?.size ? <span className="packet-import-note">Stored with import: {formatFileSize(packetSourceFile.size)}</span> : null}
+
+                  <textarea
+                    className="input packet-textarea"
+                    value={packetRows}
+                    placeholder="Paste hand-receipt text or one item per line. Example:&#10;000009148 R20684 RADIAC SET: AN/VDR-2&#10;B67839 BINOCULAR: M24"
+                    onChange={e => {
+                      setPacketRows(e.target.value);
+                      setPacketDraftRows([]);
+                      setPacketSourceName("");
+                      setPacketSourceFile(null);
+                    }}
+                  />
+
+                  <div className="packet-wizard-actions">
+                    <button className="btn btn-secondary" type="button" onClick={() => setPacketWizardStep(1)}>
+                      <span>Back</span>
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      type="button"
+                      disabled={!packetRows.trim() || isReadingPacket || isSaving}
+                      onClick={reviewWizardPacketRows}
+                    >
+                      <ClipboardList aria-hidden="true" />
+                      <span>Review rows</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {packetWizardStep === 3 ? (
+                <div className="packet-wizard-section">
+                  <div>
+                    <h3>Review before saving</h3>
+                    <p>Clean up anything the parser guessed wrong. Low confidence rows can still be saved if the text is useful.</p>
+                  </div>
+
+                  {packetDraftRows.length ? (
+                    <div className="packet-review">
+                      <div className="packet-review-heading">
+                        <strong>{sanitizePacketDraftRows(packetDraftRows).length} ready to import</strong>
+                        <span>{packetDraftRows.length} rows found</span>
+                      </div>
+                      <div className="packet-review-list">
+                        {packetDraftRows.map((row, index) => (
+                          <div className="packet-review-row" key={row.id}>
+                            <div className="packet-review-row-top">
+                              <span className="packet-row-number">{index + 1}</span>
+                              <span className={`packet-confidence ${row.confidence}`}>{row.confidence}</span>
+                              <button
+                                className="icon-button"
+                                type="button"
+                                aria-label="Remove row"
+                                onClick={() => removePacketDraftRow(row.id)}
+                              >
+                                <Trash2 aria-hidden="true" />
+                              </button>
+                            </div>
+                            <label className="field-label" htmlFor={`packetLine-${row.id}`}>Packet row</label>
+                            <textarea
+                              id={`packetLine-${row.id}`}
+                              className="input packet-review-line"
+                              value={row.packetLine}
+                              onChange={e => updatePacketDraftRow(row.id, "packetLine", e.target.value)}
+                            />
+                            <div className="packet-review-fields">
+                              <label>
+                                <span className="field-label">Qty</span>
+                                <input
+                                  className="input"
+                                  inputMode="numeric"
+                                  value={row.expectedQty}
+                                  onChange={e => updatePacketDraftRow(row.id, "expectedQty", e.target.value)}
+                                />
+                              </label>
+                              <label>
+                                <span className="field-label">Location hint</span>
+                                <input
+                                  className="input"
+                                  value={row.locationHint}
+                                  placeholder="Optional"
+                                  onChange={e => updatePacketDraftRow(row.id, "locationHint", e.target.value)}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <EmptyPanel title="No rows ready" body="Go back and choose a file or paste packet text first." />
+                  )}
+
+                  <div className="packet-wizard-actions">
+                    <button className="btn btn-secondary" type="button" onClick={() => setPacketWizardStep(2)}>
+                      <span>Back</span>
+                    </button>
+                    <button className="btn btn-secondary" type="button" onClick={clearPacketImport}>
+                      <Trash2 aria-hidden="true" />
+                      <span>Clear</span>
+                    </button>
+                    <button className="btn btn-primary" type="button" disabled={isSaving || isReadingPacket} onClick={finishPacketWizardImport}>
+                      <ClipboardPlus aria-hidden="true" />
+                      <span>{isSaving ? "Importing..." : `Import ${sanitizePacketDraftRows(packetDraftRows).length} rows`}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {packetWizardStep === 4 ? (
+                <div className="packet-wizard-section packet-wizard-success">
+                  <CheckCircle2 aria-hidden="true" />
+                  <div>
+                    <h3>Packet imported</h3>
+                    <p>{packetWizardSummary?.count || 0} rows were added from {packetWizardSummary?.sourceName || "the packet"}.</p>
+                  </div>
+                  <div className="packet-wizard-actions">
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() => {
+                        setPacketWizardSummary(null);
+                        setPacketWizardStep(2);
+                      }}
+                    >
+                      <FileUp aria-hidden="true" />
+                      <span>Import another</span>
+                    </button>
+                    <button className="btn btn-primary" type="button" onClick={() => setPacketWizardOpen(false)}>
+                      <ListChecks aria-hidden="true" />
+                      <span>Open session</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <StatusLine status={status} />
     </section>
@@ -2042,16 +2336,22 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [issues, setIssues] = useState([]);
   const [subscribers, setSubscribers] = useState([]);
   const [subscriberStats, setSubscriberStats] = useState({ pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
+  const [deliverySettings, setDeliverySettings] = useState({ emailConfigured: false });
   const [selectedIssueId, setSelectedIssueId] = useState("");
   const [form, setForm] = useState(() => newsletterIssueForm());
   const [query, setQuery] = useState("");
+  const [subscriberQuery, setSubscriberQuery] = useState("");
+  const [subscriberStatusFilter, setSubscriberStatusFilter] = useState("all");
+  const [reviewNotes, setReviewNotes] = useState({});
   const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [reviewingSubscriberId, setReviewingSubscriberId] = useState("");
+  const [reviewingSubscriberDecision, setReviewingSubscriberDecision] = useState("");
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
   const normalizedQuery = query.trim().toLowerCase();
+  const normalizedSubscriberQuery = subscriberQuery.trim().toLowerCase();
   const filteredIssues = issues.filter(issue => {
     if (!normalizedQuery) return true;
     return [
@@ -2060,6 +2360,18 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       issue.summary,
       issue.status
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
+  });
+  const filteredSubscribers = subscribers.filter(subscriber => {
+    const matchesStatus = subscriberStatusFilter === "all" || subscriber.status === subscriberStatusFilter;
+    const matchesQuery = !normalizedSubscriberQuery || [
+      subscriber.displayName,
+      subscriber.email,
+      subscriber.platoon,
+      subscriber.supervisorName,
+      subscriber.status,
+      subscriber.reviewNote
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedSubscriberQuery);
+    return matchesStatus && matchesQuery;
   });
   const previewLines = newsletterBodyParagraphs(form.body);
 
@@ -2072,6 +2384,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setIssues(nextIssues);
       setSubscribers(nextSubscribers);
       setSubscriberStats(data.subscriberStats || { pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
+      setDeliverySettings(data.deliverySettings || { emailConfigured: false });
 
       const hasSelectedIssue = selectedIssueId && nextIssues.some(issue => issue.id === selectedIssueId);
       if (!hasSelectedIssue) {
@@ -2104,6 +2417,17 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setSelectedIssueId("");
     setForm(newsletterIssueForm());
     setStatus({ text: "New draft ready", isError: false });
+  }
+
+  function updateReviewNote(subscriberId, value) {
+    setReviewNotes(current => ({ ...current, [subscriberId]: value }));
+  }
+
+  function notificationStatusText(notification) {
+    if (!notification) return "";
+    if (notification.sent) return " Notification email sent.";
+    if (notification.reason === "smtp_not_configured") return " Email is not configured, so no notification email was sent.";
+    return " Notification email was not sent.";
   }
 
   async function saveIssue(event) {
@@ -2183,17 +2507,24 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
   async function reviewSubscriber(subscriberId, decision) {
     setReviewingSubscriberId(subscriberId);
+    setReviewingSubscriberDecision(decision);
     try {
+      const note = String(reviewNotes[subscriberId] || "").trim();
       const data = await apiRequest(`/newsletter/admin/subscribers/${subscriberId}/review`, {
         method: "PATCH",
         token,
-        body: { decision }
+        body: { decision, note }
       });
       setSubscribers(current => current.map(subscriber => (
         subscriber.id === data.subscriber.id ? data.subscriber : subscriber
       )));
+      setReviewNotes(current => {
+        const next = { ...current };
+        delete next[subscriberId];
+        return next;
+      });
       setStatus({
-        text: decision === "approved" ? "Subscriber approved for newsletter delivery" : "Subscriber request rejected",
+        text: `${decision === "approved" ? "Subscriber approved for newsletter delivery." : "Subscriber request rejected."}${notificationStatusText(data.notification)}`,
         isError: false
       });
       await loadNewsletter();
@@ -2201,6 +2532,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
       setReviewingSubscriberId("");
+      setReviewingSubscriberDecision("");
     }
   }
 
@@ -2283,6 +2615,13 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
           </div>
 
           <StatusLine status={status} />
+
+          {!deliverySettings.emailConfigured ? (
+            <div className="newsletter-delivery-note" role="note">
+              <MailPlus aria-hidden="true" />
+              <span>Email delivery is not configured in this environment. Reviews still update subscriber status, but notification emails will be skipped.</span>
+            </div>
+          ) : null}
 
           <section className="platform-stat-grid newsletter-stat-grid" aria-label="Newsletter totals">
             <div className="platform-stat-card">
@@ -2445,7 +2784,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               <div>
                 <h2>Subscribers</h2>
                 <p>
-                  {countLabel(subscriberStats.pending || 0, "pending request")} and {countLabel(subscriberStats.active || 0, "approved subscriber")}.
+                  {countLabel(subscriberStats.pending || 0, "pending request")}, {countLabel(subscriberStats.active || 0, "approved subscriber")}, and {countLabel(subscriberStats.rejected || 0, "rejected request")}.
                 </p>
               </div>
               <button className="btn btn-secondary btn-small" type="button" onClick={exportSubscribers} disabled={!subscribers.length}>
@@ -2454,47 +2793,94 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               </button>
             </div>
 
-            {subscribers.length ? (
+            <div className="newsletter-subscriber-toolbar">
+              <label className="platform-search">
+                <Search aria-hidden="true" />
+                <input
+                  value={subscriberQuery}
+                  placeholder="Search subscribers..."
+                  onChange={event => setSubscriberQuery(event.target.value)}
+                />
+              </label>
+              <select
+                className="select newsletter-status-filter"
+                value={subscriberStatusFilter}
+                onChange={event => setSubscriberStatusFilter(event.target.value)}
+                aria-label="Filter subscribers by status"
+              >
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="active">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="unsubscribed">Unsubscribed</option>
+              </select>
+            </div>
+
+            {filteredSubscribers.length ? (
               <div className="newsletter-subscriber-list">
-                {subscribers.map(subscriber => (
+                {filteredSubscribers.map(subscriber => {
+                  const canApprove = subscriber.status === "pending" || subscriber.status === "rejected";
+                  const canReject = subscriber.status === "pending";
+                  const isReviewing = reviewingSubscriberId === subscriber.id;
+                  const noteValue = reviewNotes[subscriber.id] ?? "";
+
+                  return (
                   <article className="admin-list-row" key={subscriber.id}>
                     <div className="newsletter-subscriber-main">
                       <strong>{subscriber.displayName || subscriber.email}</strong>
                       <span>{subscriber.email}</span>
                       <span>{subscriber.platoon || "No platoon provided"}</span>
                       <span>Supervisor: {subscriber.supervisorName || "Not provided"}</span>
+                      {subscriber.reviewNote ? <span>Review note: {subscriber.reviewNote}</span> : null}
+                      {subscriber.reviewedAt ? <span>Reviewed {formatDate(subscriber.reviewedAt)}</span> : null}
+                      {canApprove || canReject ? (
+                        <label className="newsletter-review-note">
+                          <span>Optional review note</span>
+                          <textarea
+                            className="input"
+                            value={noteValue}
+                            placeholder="Private note for this request..."
+                            maxLength={600}
+                            onChange={event => updateReviewNote(subscriber.id, event.target.value)}
+                          />
+                        </label>
+                      ) : null}
                     </div>
                     <div className="admin-row-meta">
                       <span className={`status-pill ${subscriber.status}`}>{subscriber.status}</span>
                       <span className="badge">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
-                      {subscriber.status === "pending" || subscriber.status === "rejected" ? (
+                      {canApprove ? (
                         <button
                           className="btn btn-primary btn-small"
                           type="button"
-                          disabled={reviewingSubscriberId === subscriber.id}
+                          disabled={isReviewing}
                           onClick={() => reviewSubscriber(subscriber.id, "approved")}
                         >
                           <CheckCircle2 aria-hidden="true" />
-                          <span>Approve</span>
+                          <span>{isReviewing && reviewingSubscriberDecision === "approved" ? "Approving..." : "Approve"}</span>
                         </button>
                       ) : null}
-                      {subscriber.status === "pending" ? (
+                      {canReject ? (
                         <button
                           className="btn btn-danger-soft btn-small"
                           type="button"
-                          disabled={reviewingSubscriberId === subscriber.id}
+                          disabled={isReviewing}
                           onClick={() => reviewSubscriber(subscriber.id, "rejected")}
                         >
                           <XCircle aria-hidden="true" />
-                          <span>Reject</span>
+                          <span>{isReviewing && reviewingSubscriberDecision === "rejected" ? "Rejecting..." : "Reject"}</span>
                         </button>
                       ) : null}
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             ) : (
-              <EmptyPanel title="No subscribers yet" body="Public newsletter signups will appear here." />
+              <EmptyPanel
+                title={subscribers.length ? "No matching subscribers" : "No subscribers yet"}
+                body={subscribers.length ? "Adjust the search or status filter." : "Public newsletter signups will appear here."}
+              />
             )}
           </section>
         </div>
@@ -2508,22 +2894,116 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [form, setForm] = useState({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [activeView, setActiveView] = useState("dashboard");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [status, setStatus] = useState({ text: "Loading platoons...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const totalMembers = tenants.reduce((sum, tenant) => sum + Number(tenant.memberCount || 0), 0);
   const totalAdmins = tenants.reduce((sum, tenant) => sum + Number(tenant.adminCount || 0), 0);
   const activeTenants = tenants.filter(tenant => tenant.status === "active");
+  const recentlyCreatedTenants = [...tenants]
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .slice(0, 4);
   const normalizedQuery = query.trim().toLowerCase();
-  const visibleTenants = tenants.filter(tenant => {
-    const matchesStatus = statusFilter === "all" || tenant.status === statusFilter;
+  const searchMatchedTenants = tenants.filter(tenant => {
     const matchesQuery = !normalizedQuery || [
       tenant.name,
       tenant.slug,
       tenant.status
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
-    return matchesStatus && matchesQuery;
+    return matchesQuery;
   });
+  const visibleTenants = searchMatchedTenants.filter(tenant => {
+    const matchesStatus = statusFilter === "all" || tenant.status === statusFilter;
+    return matchesStatus;
+  });
+  const healthUrl = (() => {
+    try {
+      const apiUrl = new URL(appConfig.apiBaseUrl, window.location.origin);
+      return `${apiUrl.origin}/health`;
+    } catch {
+      return "/health";
+    }
+  })();
+  const diagnostics = [
+    ["Current URL", window.location.href],
+    ["Base domain", appConfig.baseDomain],
+    ["API base URL", appConfig.apiBaseUrl],
+    ["API health", healthUrl],
+    ["Auth launch", appConfig.authentikLaunchUrl],
+    ["QA auth", appConfig.enableQaAuth ? "enabled" : "disabled"],
+    ["Demo fallback", appConfig.enableDemoFallback ? "enabled" : "disabled"],
+    ["Signed in as", me?.user?.email || me?.identity?.email || "unknown"]
+  ];
+  const pageMeta = {
+    dashboard: {
+      title: "Dashboard",
+      copy: "Monitor platform setup, active workspaces, and admin access."
+    },
+    platoons: {
+      title: "Platoons",
+      copy: "Create, manage, and organize platoon workspaces."
+    },
+    users: {
+      title: "Users",
+      copy: "Review account coverage across active workspaces."
+    },
+    roles: {
+      title: "Roles",
+      copy: "Confirm which groups unlock platform, platoon, and public-site access."
+    },
+    organizations: {
+      title: "Organizations",
+      copy: "Review the organization container and workspace totals."
+    },
+    support: {
+      title: "Support",
+      copy: "Check safe deploy details before troubleshooting."
+    }
+  }[activeView] || {
+    title: "Dashboard",
+    copy: "Monitor platform setup, active workspaces, and admin access."
+  };
+  const platformNavItems = [
+    { id: "dashboard", label: "Dashboard", icon: Home },
+    { id: "platoons", label: "Platoons", icon: Users },
+    { id: "users", label: "Users", icon: UserPlus },
+    { id: "roles", label: "Roles", icon: ShieldCheck },
+    { id: "organizations", label: "Organizations", icon: Building2 },
+    { id: "support", label: "Support", icon: RefreshCw }
+  ];
+  const roleCards = [
+    {
+      label: "Platform admin",
+      group: "876en-admins",
+      detail: "Full platform access and tenant support override."
+    },
+    {
+      label: "FRG admin",
+      group: "876en-frg-admins",
+      detail: "Public content and newsletter administration."
+    },
+    {
+      label: "Platoon admin",
+      group: "876en-platoon-admin",
+      detail: "Workspace administration when paired with a platoon group."
+    },
+    {
+      label: "Platoon member",
+      group: "876en-{platoon}",
+      detail: "Inventory access for the matching platoon workspace."
+    }
+  ];
+
+  function tenantAdminHref(tenant) {
+    const host = tenantHost(tenant);
+    const isLocal = appConfig.baseDomain === "localhost" || window.location.hostname.endsWith(".localhost") || window.location.hostname === "localhost";
+    if (isLocal) {
+      const port = window.location.port ? `:${window.location.port}` : "";
+      return `${window.location.protocol}//${host}${port}/#/admin`;
+    }
+    return `https://${host}/#/admin`;
+  }
 
   async function loadTenants() {
     try {
@@ -2577,6 +3057,107 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     }
   }
 
+  async function copyDiagnostics() {
+    const text = diagnostics.map(([label, value]) => `${label}: ${value}`).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus({ text: "Diagnostics copied", isError: false });
+    } catch {
+      setStatus({ text: "Could not copy diagnostics", isError: true });
+    }
+  }
+
+  function openNewsletter() {
+    window.location.assign("/#/newsletter");
+  }
+
+  function renderStats() {
+    return (
+      <section className="platform-stat-grid" aria-label="Platform totals">
+        <div className="platform-stat-card">
+          <span className="platform-stat-icon blue">
+            <Users aria-hidden="true" />
+          </span>
+          <div>
+            <strong>{tenants.length}</strong>
+            <span>Total platoons</span>
+          </div>
+        </div>
+        <div className="platform-stat-card">
+          <span className="platform-stat-icon green">
+            <CheckCircle2 aria-hidden="true" />
+          </span>
+          <div>
+            <strong>{activeTenants.length}</strong>
+            <span>Active platoons</span>
+          </div>
+        </div>
+        <div className="platform-stat-card">
+          <span className="platform-stat-icon purple">
+            <ShieldCheck aria-hidden="true" />
+          </span>
+          <div>
+            <strong>{totalMembers}</strong>
+            <span>Total users</span>
+          </div>
+        </div>
+        <div className="platform-stat-card">
+          <span className="platform-stat-icon amber">
+            <Building2 aria-hidden="true" />
+          </span>
+          <div>
+            <strong>{totalAdmins}</strong>
+            <span>Admins assigned</span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function renderTenantTable(rows, { compact = false } = {}) {
+    if (!rows.length) {
+      return <EmptyPanel title="No platoons found" body="Adjust the search or create a new platoon workspace." />;
+    }
+
+    return (
+      <div className={`platform-table ${compact ? "platform-table-compact" : ""}`} role="table" aria-label="Platoon workspaces">
+        <div className="platform-table-head" role="row">
+          <span>Platoon name</span>
+          <span>Subdomain</span>
+          <span>Admins</span>
+          <span>Members</span>
+          <span>Status</span>
+          <span>Created</span>
+          <span>Actions</span>
+        </div>
+        {rows.map(tenant => {
+          const host = tenantHost(tenant);
+          return (
+            <article className="platform-table-row" role="row" key={tenant.id}>
+              <div className="platform-row-main">
+                <span className="tenant-avatar" aria-hidden="true">{tenantInitials(tenant)}</span>
+                <div>
+                  <strong>{tenantDisplayName(tenant)}</strong>
+                  <span>{host}</span>
+                </div>
+              </div>
+              <span className="platform-domain">{host}</span>
+              <span className="platform-table-number">{tenant.adminCount || 0}</span>
+              <span className="platform-table-number">{tenant.memberCount || 0}</span>
+              <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
+              <span className="platform-table-date">{formatShortDate(tenant.createdAt)}</span>
+              <div className="platform-actions">
+                <a className="btn btn-secondary btn-small platform-open-link" href={tenantAdminHref(tenant)}>
+                  <span>Open workspace</span>
+                </a>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="platform-shell">
       <aside className="platform-sidebar">
@@ -2586,36 +3167,30 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
         </div>
 
         <nav className="platform-nav" aria-label="Platform admin">
-          <button type="button">
-            <Home aria-hidden="true" />
-            <span>Dashboard</span>
-          </button>
-          <button type="button" onClick={() => window.location.assign("/#/newsletter")}>
+          {platformNavItems.map(item => {
+            const Icon = item.icon;
+            return (
+              <button
+                className={activeView === item.id ? "active" : ""}
+                type="button"
+                key={item.id}
+                onClick={() => setActiveView(item.id)}
+              >
+                <Icon aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+          <button type="button" onClick={openNewsletter}>
             <MailPlus aria-hidden="true" />
             <span>Newsletter</span>
-          </button>
-          <button className="active" type="button">
-            <Users aria-hidden="true" />
-            <span>Platoons</span>
-          </button>
-          <button type="button">
-            <UserPlus aria-hidden="true" />
-            <span>Users</span>
-          </button>
-          <button type="button">
-            <ShieldCheck aria-hidden="true" />
-            <span>Roles</span>
-          </button>
-          <button type="button">
-            <Building2 aria-hidden="true" />
-            <span>Organizations</span>
           </button>
         </nav>
 
         <div className="platform-sidebar-foot">
-          <button type="button">
-            <RefreshCw aria-hidden="true" />
-            <span>Support</span>
+          <button type="button" onClick={onLogout}>
+            <LogOut aria-hidden="true" />
+            <span>Sign out</span>
           </button>
         </div>
       </aside>
@@ -2645,125 +3220,206 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
         <div className="platform-content">
           <div className="platform-page-heading">
             <div>
-              <h1>Platoons</h1>
-              <p>Create, manage, and organize platoon workspaces.</p>
+              <h1>{pageMeta.title}</h1>
+              <p>{pageMeta.copy}</p>
             </div>
-            <button className="btn btn-primary" type="button" onClick={() => setIsCreateOpen(true)}>
-              <Plus aria-hidden="true" />
-              <span>Create platoon</span>
-            </button>
+            <div className="platform-heading-actions">
+              {activeView === "dashboard" ? (
+                <button className="btn btn-secondary" type="button" onClick={openNewsletter}>
+                  <MailPlus aria-hidden="true" />
+                  <span>Newsletter</span>
+                </button>
+              ) : null}
+              {["dashboard", "platoons", "organizations"].includes(activeView) ? (
+                <button className="btn btn-primary" type="button" onClick={() => setIsCreateOpen(true)}>
+                  <Plus aria-hidden="true" />
+                  <span>Create platoon</span>
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <StatusLine status={status} />
 
-          <section className="platform-stat-grid" aria-label="Platform totals">
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon blue">
-                <Users aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{tenants.length}</strong>
-                <span>Total platoons</span>
-              </div>
-            </div>
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon green">
-                <CheckCircle2 aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{activeTenants.length}</strong>
-                <span>Active platoons</span>
-              </div>
-            </div>
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon purple">
-                <ShieldCheck aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{totalMembers}</strong>
-                <span>Total users</span>
-              </div>
-            </div>
-            <div className="platform-stat-card">
-              <span className="platform-stat-icon amber">
-                <Building2 aria-hidden="true" />
-              </span>
-              <div>
-                <strong>{totalAdmins}</strong>
-                <span>Admins assigned</span>
-              </div>
-            </div>
-          </section>
+          {activeView === "dashboard" ? (
+            <>
+              {renderStats()}
+              <div className="platform-dashboard-grid">
+                <section className="platform-table-card platform-dashboard-card">
+                  <div className="platform-card-header">
+                    <div>
+                      <h2>Recent platoons</h2>
+                      <p>{tenants.length ? `${countLabel(tenants.length, "workspace")} configured.` : "No workspaces configured."}</p>
+                    </div>
+                    <button className="btn btn-secondary btn-small" type="button" onClick={() => setActiveView("platoons")}>
+                      <span>View all</span>
+                    </button>
+                  </div>
+                  {renderTenantTable(recentlyCreatedTenants, { compact: true })}
+                </section>
 
-          <section className="platform-table-card">
-            <div className="platform-table-toolbar">
-              <label className="platform-search">
-                <Search aria-hidden="true" />
-                <input
-                  value={query}
-                  placeholder="Search platoons by name or subdomain..."
-                  onChange={event => setQuery(event.target.value)}
-                />
-              </label>
-              <select className="select platform-filter" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}>
-                <option value="all">All statuses</option>
-                <option value="active">Active</option>
-                <option value="archived">Archived</option>
-              </select>
-            </div>
+                <section className="platform-table-card platform-dashboard-card">
+                  <div className="platform-card-header">
+                    <div>
+                      <h2>Admin actions</h2>
+                      <p>Common platform tasks.</p>
+                    </div>
+                  </div>
+                  <div className="platform-action-list">
+                    <button type="button" onClick={() => setIsCreateOpen(true)}>
+                      <Plus aria-hidden="true" />
+                      <span>Create platoon</span>
+                    </button>
+                    <button type="button" onClick={() => setActiveView("users")}>
+                      <UserPlus aria-hidden="true" />
+                      <span>Review users</span>
+                    </button>
+                    <button type="button" onClick={() => setActiveView("roles")}>
+                      <ShieldCheck aria-hidden="true" />
+                      <span>Check roles</span>
+                    </button>
+                    <button type="button" onClick={() => setActiveView("support")}>
+                      <RefreshCw aria-hidden="true" />
+                      <span>Support details</span>
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </>
+          ) : null}
 
-            {visibleTenants.length ? (
-              <div className="platform-table" role="table" aria-label="Platoon workspaces">
+          {activeView === "platoons" ? (
+            <>
+              {renderStats()}
+              <section className="platform-table-card">
+                <div className="platform-table-toolbar">
+                  <label className="platform-search">
+                    <Search aria-hidden="true" />
+                    <input
+                      value={query}
+                      placeholder="Search platoons by name or subdomain..."
+                      onChange={event => setQuery(event.target.value)}
+                    />
+                  </label>
+                  <select className="select platform-filter" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}>
+                    <option value="all">All statuses</option>
+                    <option value="active">Active</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+                {renderTenantTable(visibleTenants)}
+              </section>
+            </>
+          ) : null}
+
+          {activeView === "users" ? (
+            <section className="platform-table-card">
+              <div className="platform-table-toolbar">
+                <label className="platform-search">
+                  <Search aria-hidden="true" />
+                  <input
+                    value={query}
+                    placeholder="Search access by platoon or subdomain..."
+                    onChange={event => setQuery(event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="platform-table platform-user-table" role="table" aria-label="Workspace access">
                 <div className="platform-table-head" role="row">
-                  <span>Platoon name</span>
-                  <span>Subdomain</span>
-                  <span>Admins</span>
+                  <span>Workspace</span>
+                  <span>Admin group</span>
                   <span>Members</span>
+                  <span>Admins</span>
                   <span>Status</span>
-                  <span>Created</span>
                   <span>Actions</span>
                 </div>
-                {visibleTenants.map(tenant => {
-                  const host = tenantHost(tenant);
-                  return (
-                    <article className="platform-table-row" role="row" key={tenant.id}>
-                      <div className="platform-row-main">
-                        <span className="tenant-avatar" aria-hidden="true">{tenantInitials(tenant)}</span>
-                        <div>
-                          <strong>{tenantDisplayName(tenant)}</strong>
-                          <span>{host}</span>
-                        </div>
+                {searchMatchedTenants.map(tenant => (
+                  <article className="platform-table-row" role="row" key={tenant.id}>
+                    <div className="platform-row-main">
+                      <span className="tenant-avatar" aria-hidden="true">{tenantInitials(tenant)}</span>
+                      <div>
+                        <strong>{tenantDisplayName(tenant)}</strong>
+                        <span>{tenantHost(tenant)}</span>
                       </div>
-                      <span className="platform-domain">{host}</span>
-                      <span className="platform-table-number">{tenant.adminCount || 0}</span>
-                      <span className="platform-table-number">{tenant.memberCount || 0}</span>
-                      <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
-                      <span className="platform-table-date">{formatShortDate(tenant.createdAt)}</span>
-                      <div className="platform-actions">
-                        <a className="btn btn-secondary btn-small platform-open-link" href={`https://${host}/#/admin`}>
-                          <span>Open</span>
-                        </a>
-                      </div>
-                    </article>
-                  );
-                })}
+                    </div>
+                    <span className="platform-domain">876en-platoon-admin</span>
+                    <span className="platform-table-number">{tenant.memberCount || 0}</span>
+                    <span className="platform-table-number">{tenant.adminCount || 0}</span>
+                    <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
+                    <div className="platform-actions">
+                      <a className="btn btn-secondary btn-small platform-open-link" href={tenantAdminHref(tenant)}>
+                        <span>Open workspace</span>
+                      </a>
+                    </div>
+                  </article>
+                ))}
               </div>
-            ) : (
-              <EmptyPanel title="No platoons found" body="Adjust the search or create a new platoon workspace." />
-            )}
-          </section>
+              {!searchMatchedTenants.length ? (
+                <EmptyPanel title="No user coverage found" body="Create a platoon workspace before assigning members." />
+              ) : null}
+            </section>
+          ) : null}
 
-          <section className="platform-table-card platform-org-card">
-            <div className="platform-section-heading">
-              <h2>Organization overview</h2>
-            </div>
-            <div className="platform-org-row">
-              <span>876 EN</span>
-              <span>{countLabel(tenants.length, "platoon")}</span>
-              <span>{countLabel(totalMembers, "user")}</span>
-              <span className="status-pill active">Active</span>
-            </div>
-          </section>
+          {activeView === "roles" ? (
+            <section className="platform-role-grid" aria-label="Role groups">
+              {roleCards.map(role => (
+                <article className="platform-role-card" key={role.group}>
+                  <span className="platform-stat-icon green">
+                    <ShieldCheck aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h2>{role.label}</h2>
+                    <code>{role.group}</code>
+                    <p>{role.detail}</p>
+                  </div>
+                </article>
+              ))}
+            </section>
+          ) : null}
+
+          {activeView === "organizations" ? (
+            <>
+              {renderStats()}
+              <section className="platform-table-card platform-org-card">
+                <div className="platform-section-heading">
+                  <h2>Organization overview</h2>
+                </div>
+                <div className="platform-org-row">
+                  <span>876 EN</span>
+                  <span>{countLabel(tenants.length, "platoon")}</span>
+                  <span>{countLabel(totalMembers, "user")}</span>
+                  <span className="status-pill active">Active</span>
+                </div>
+              </section>
+            </>
+          ) : null}
+
+          {activeView === "support" ? (
+            <section className="platform-table-card platform-support-card">
+              <div className="platform-card-header">
+                <div>
+                  <h2>Deployment details</h2>
+                  <p>Safe values for routing and client configuration.</p>
+                </div>
+                <button className="btn btn-secondary btn-small" type="button" onClick={copyDiagnostics}>
+                  <Copy aria-hidden="true" />
+                  <span>Copy diagnostics</span>
+                </button>
+              </div>
+              <div className="platform-diagnostics-grid">
+                {diagnostics.map(([label, value]) => (
+                  <div className="platform-diagnostic" key={label}>
+                    <span>{label}</span>
+                    {label === "API health" ? (
+                      <a href={value} target="_blank" rel="noreferrer">{value}</a>
+                    ) : (
+                      <strong>{value}</strong>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
       </main>
 
@@ -3069,6 +3725,195 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
   );
 }
 
+function TenantPeoplePanel({
+  tenant,
+  tenantSlug,
+  members,
+  invitations,
+  inviteForm,
+  onInviteFormChange,
+  onCreateInvite,
+  onCopyInviteLink,
+  onResendInvitation,
+  onRevokeInvitation,
+  inviteLinksById,
+  inviteActionId,
+  lastInviteUrl,
+  isSaving
+}) {
+  return (
+    <div className="people-panel">
+      <section className="people-hero admin-card">
+        <div className="admin-card-heading">
+          <span className="admin-icon">
+            <Users aria-hidden="true" />
+          </span>
+          <div>
+            <p className="eyebrow">{tenant?.name || `${tenantSlug} platoon`}</p>
+            <h2>People & invites</h2>
+            <p className="section-copy">Invite helpers, copy access links, and track who has joined this workspace.</p>
+          </div>
+        </div>
+      </section>
+
+      <div className="admin-grid people-grid">
+        <section className="admin-card">
+          <div className="admin-card-heading">
+            <span className="admin-icon">
+              <MailPlus aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow">New access</p>
+              <h2>Invite helper</h2>
+            </div>
+          </div>
+
+          <form className="admin-form" onSubmit={onCreateInvite}>
+            <label className="field-label" htmlFor="inviteEmail">Email</label>
+            <input
+              id="inviteEmail"
+              className="input"
+              type="email"
+              required
+              value={inviteForm.email}
+              placeholder="helper@example.com"
+              onChange={e => onInviteFormChange(current => ({ ...current, email: e.target.value }))}
+            />
+
+            <label className="field-label" htmlFor="inviteName">Name</label>
+            <input
+              id="inviteName"
+              className="input"
+              value={inviteForm.displayName}
+              placeholder="Name"
+              onChange={e => onInviteFormChange(current => ({ ...current, displayName: e.target.value }))}
+            />
+
+            <label className="field-label" htmlFor="inviteRole">Role</label>
+            <select
+              id="inviteRole"
+              className="select"
+              value={inviteForm.role}
+              onChange={e => onInviteFormChange(current => ({ ...current, role: e.target.value }))}
+            >
+              <option value="contributor">Contributor</option>
+              <option value="viewer">Viewer</option>
+              <option value="tenant_admin">Platoon admin</option>
+            </select>
+
+            <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
+              <Send aria-hidden="true" />
+              <span>{isSaving ? "Creating..." : "Create invite"}</span>
+            </button>
+          </form>
+
+          {lastInviteUrl ? (
+            <div className="admin-copy-box">
+              <span>Latest invite link</span>
+              <a href={lastInviteUrl}>{lastInviteUrl}</a>
+            </div>
+          ) : null}
+        </section>
+
+        <section className="admin-card admin-card-wide">
+          <div className="admin-card-heading">
+            <span className="admin-icon">
+              <UserPlus aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow">Workspace access</p>
+              <h2>Members</h2>
+            </div>
+          </div>
+
+          {members.length ? (
+            <div className="admin-list people-member-list">
+              {members.map(member => (
+                <article className="admin-list-row" key={member.id}>
+                  <div>
+                    <strong>{member.displayName || member.email}</strong>
+                    <span>{member.email}</span>
+                  </div>
+                  <div className="admin-row-meta">
+                    <span className="badge">{formatRole(member.role)}</span>
+                    <span className={`status-pill ${member.status}`}>{member.status}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <EmptyPanel title="No members loaded" body="Create an invite to give someone access." />
+          )}
+
+          <div className="admin-subsection">
+            <div className="subsection-heading-row">
+              <h3>Invitations</h3>
+              <span>{invitations.length} total</span>
+            </div>
+
+            {invitations.length ? (
+              <div className="admin-list compact">
+                {invitations.map(invite => {
+                  const isWorking = inviteActionId === invite.id;
+                  const inviteLink = inviteLinksById[invite.id];
+
+                  return (
+                    <article className="admin-list-row invitation-row" key={invite.id}>
+                      <div className="invitation-main">
+                        <strong>{invite.email}</strong>
+                        <span>{formatRole(invite.role)} - {inviteTimeline(invite)}</span>
+                        {inviteLink ? <a href={inviteLink}>{inviteLink}</a> : null}
+                      </div>
+                      <div className="admin-row-meta invitation-actions">
+                        <span className={`status-pill ${invite.status}`}>{formatInviteStatus(invite.status)}</span>
+                        {inviteCanBeRefreshed(invite) ? (
+                          <>
+                            <button
+                              className="btn btn-secondary btn-small"
+                              type="button"
+                              disabled={isWorking}
+                              onClick={() => onCopyInviteLink(invite)}
+                            >
+                              <Copy aria-hidden="true" />
+                              <span>Copy link</span>
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-small"
+                              type="button"
+                              disabled={isWorking}
+                              onClick={() => onResendInvitation(invite)}
+                            >
+                              <Send aria-hidden="true" />
+                              <span>{isWorking ? "Working..." : "Resend"}</span>
+                            </button>
+                          </>
+                        ) : null}
+                        {inviteCanBeRevoked(invite) ? (
+                          <button
+                            className="btn btn-danger-soft btn-small"
+                            type="button"
+                            disabled={isWorking}
+                            onClick={() => onRevokeInvitation(invite.id)}
+                          >
+                            <Trash2 aria-hidden="true" />
+                            <span>Revoke</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyPanel title="No invites yet" body="Created invitations will appear here with copy, resend, and revoke actions." />
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const isTenantAdmin = Boolean(me?.isPlatformAdmin || me?.membership?.role === "tenant_admin");
   const canSubmitProof = Boolean(isTenantAdmin || me?.membership?.role === "contributor");
@@ -3087,7 +3932,59 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [inviteForm, setInviteForm] = useState({ email: "", displayName: "", role: "contributor" });
   const [status, setStatus] = useState({ text: "Loading tenant...", isError: false });
   const [lastInviteUrl, setLastInviteUrl] = useState("");
+  const [inviteLinksById, setInviteLinksById] = useState({});
+  const [inviteActionId, setInviteActionId] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const notificationsRef = useRef(null);
+  const userMenuRef = useRef(null);
+  const userName = me?.user?.display_name || me?.user?.email || "Signed in";
+  const userRole = me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
+  const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key !== "Escape") return;
+      setIsSidebarOpen(false);
+      setIsNotificationsOpen(false);
+      setIsUserMenuOpen(false);
+    }
+
+    function handlePointerDown(event) {
+      const target = event.target;
+      if (notificationsRef.current && !notificationsRef.current.contains(target)) {
+        setIsNotificationsOpen(false);
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(target)) {
+        setIsUserMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, []);
+
+  function openPlatformAdmin() {
+    const port = window.location.port ? `:${window.location.port}` : "";
+    const isLocalhost = window.location.hostname.endsWith("localhost");
+    window.location.assign(isLocalhost
+      ? `${window.location.protocol}//admin.localhost${port}/#/admin`
+      : `https://admin.${appConfig.baseDomain}/#/admin`);
+  }
+
+  function selectTenantTab(tabId) {
+    setActiveTab(tabId);
+    setIsSidebarOpen(false);
+    setIsNotificationsOpen(false);
+    setIsUserMenuOpen(false);
+  }
 
   async function loadTenant() {
     try {
@@ -3134,6 +4031,12 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       });
       setInviteForm({ email: "", displayName: "", role: "contributor" });
       setLastInviteUrl(data.invitation?.inviteUrl || "");
+      if (data.invitation?.id && data.invitation?.inviteUrl) {
+        setInviteLinksById(current => ({
+          ...current,
+          [data.invitation.id]: data.invitation.inviteUrl
+        }));
+      }
       setStatus({ text: "Invite created", isError: false });
       await loadTenant();
     } catch (error) {
@@ -3143,19 +4046,87 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
   }
 
+  async function refreshInvitation(invite, { sendEmail }) {
+    setInviteActionId(invite.id);
+    try {
+      const data = await apiRequest(`/tenant/invitations/${invite.id}/resend`, {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { sendEmail }
+      });
+
+      if (data.invitation?.id && data.invitation?.inviteUrl) {
+        setInviteLinksById(current => ({
+          ...current,
+          [data.invitation.id]: data.invitation.inviteUrl
+        }));
+        setLastInviteUrl(data.invitation.inviteUrl);
+      }
+
+      await loadTenant();
+      return data;
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+      return null;
+    } finally {
+      setInviteActionId("");
+    }
+  }
+
+  async function copyInviteLink(invite) {
+    const data = await refreshInvitation(invite, { sendEmail: false });
+    const inviteUrl = data?.invitation?.inviteUrl;
+    if (!inviteUrl) return;
+
+    let copied = false;
+    try {
+      copied = await copyText(inviteUrl);
+    } catch {
+      copied = false;
+    }
+
+    setStatus({
+      text: copied ? "Fresh invite link copied" : "Fresh invite link ready below",
+      isError: false
+    });
+  }
+
+  async function resendInvitation(invite) {
+    const data = await refreshInvitation(invite, { sendEmail: true });
+    if (!data) return;
+
+    const email = data.email || {};
+    const message = email.sent
+      ? "Invite email resent"
+      : email.reason === "smtp_not_configured"
+        ? "Invite link refreshed. Email is not configured, so copy the link instead."
+        : "Invite link refreshed. Email was not sent, so copy the link instead.";
+
+    setStatus({ text: message, isError: false });
+  }
+
   async function revokeInvitation(invitationId) {
+    setInviteActionId(invitationId);
     try {
       await apiRequest(`/tenant/invitations/${invitationId}/revoke`, { method: "POST", token, tenantSlug });
+      setInviteLinksById(current => {
+        const next = { ...current };
+        delete next[invitationId];
+        return next;
+      });
       setStatus({ text: "Invite revoked", isError: false });
       await loadTenant();
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setInviteActionId("");
     }
   }
 
   function openSessions(intent = "") {
     setSessionIntent(intent);
-    setActiveTab("tasks");
+    selectTenantTab("tasks");
   }
 
   if (!tenantSlug) {
@@ -3163,10 +4134,26 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   return (
-    <div className="leader-shell">
+    <div className={[
+      "leader-shell",
+      isSidebarOpen ? "sidebar-open" : "",
+      isSidebarCollapsed ? "sidebar-collapsed" : ""
+    ].filter(Boolean).join(" ")}>
+      <button className="leader-sidebar-backdrop" type="button" aria-label="Close menu" onClick={() => setIsSidebarOpen(false)} />
       <aside className="leader-sidebar">
         <div className="leader-brand">
-          <button className="leader-menu-button" type="button" aria-label="Menu">
+          <button
+            className="leader-menu-button"
+            type="button"
+            aria-label={isSidebarOpen ? "Close menu" : isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => {
+              if (isSidebarOpen) {
+                setIsSidebarOpen(false);
+                return;
+              }
+              setIsSidebarCollapsed(current => !current);
+            }}
+          >
             <Menu aria-hidden="true" />
           </button>
           <strong>876 Inventory</strong>
@@ -3180,7 +4167,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 className={activeTab === item.id ? "active" : ""}
                 type="button"
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                aria-label={item.label}
+                title={item.label}
+                onClick={() => selectTenantTab(item.id)}
               >
                 <Icon aria-hidden="true" />
                 <span>{item.label}</span>
@@ -3200,6 +4189,15 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
 
       <main className="leader-main">
         <header className="leader-topbar">
+          <button
+            className="leader-mobile-nav-toggle"
+            type="button"
+            aria-label="Open workspace menu"
+            aria-expanded={isSidebarOpen}
+            onClick={() => setIsSidebarOpen(true)}
+          >
+            <Menu aria-hidden="true" />
+          </button>
           <label className="leader-search">
             <Search aria-hidden="true" />
             <input
@@ -3212,21 +4210,118 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             <button className="icon-button" type="button" onClick={() => { loadTenant(); onRefresh?.(); }} aria-label="Refresh">
               <RefreshCw aria-hidden="true" />
             </button>
-            <button className="icon-button" type="button" aria-label="Notifications">
-              <Bell aria-hidden="true" />
-            </button>
-            <div className="leader-user-card">
-              <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "U").slice(0, 1).toUpperCase()}</span>
-              <div>
-                <strong>{me?.user?.display_name || me?.user?.email || "Signed in"}</strong>
-                <span>{me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member"}</span>
-              </div>
-              <ChevronDown aria-hidden="true" />
+            <div className="leader-popover-anchor" ref={notificationsRef}>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Notifications"
+                aria-expanded={isNotificationsOpen}
+                onClick={() => {
+                  setIsNotificationsOpen(current => !current);
+                  setIsUserMenuOpen(false);
+                }}
+              >
+                <Bell aria-hidden="true" />
+              </button>
+              {isNotificationsOpen ? (
+                <section className="leader-popover leader-notification-panel" aria-label="Notifications">
+                  <div className="leader-popover-heading">
+                    <strong>Notifications</strong>
+                    <span>No unread items</span>
+                  </div>
+                  <div className="leader-notification-empty">
+                    <ShieldCheck aria-hidden="true" />
+                    <div>
+                      <strong>Workspace is clear</strong>
+                      <span>{isTenantAdmin ? "New proof submissions and packet imports will appear here." : "Assignments and proof requests will appear here."}</span>
+                    </div>
+                  </div>
+                  <div className="leader-menu-actions">
+                    <button type="button" onClick={() => selectTenantTab("tasks")}>
+                      <CalendarDays aria-hidden="true" />
+                      <span>Open sessions</span>
+                    </button>
+                    {isTenantAdmin ? (
+                      <button type="button" onClick={() => selectTenantTab("review")}>
+                        <ClipboardList aria-hidden="true" />
+                        <span>Open review queue</span>
+                      </button>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
             </div>
-            <button className="btn btn-secondary btn-small" type="button" onClick={onLogout}>
-              <LogOut aria-hidden="true" />
-              <span>Sign out</span>
-            </button>
+            <div className="leader-popover-anchor" ref={userMenuRef}>
+              <button
+                className="leader-user-card leader-user-trigger"
+                type="button"
+                aria-label="Open user menu"
+                aria-expanded={isUserMenuOpen}
+                onClick={() => {
+                  setIsUserMenuOpen(current => !current);
+                  setIsNotificationsOpen(false);
+                }}
+              >
+                <span className="leader-avatar">{userInitial}</span>
+                <div>
+                  <strong>{userName}</strong>
+                  <span>{userRole}</span>
+                </div>
+                <ChevronDown aria-hidden="true" />
+              </button>
+              {isUserMenuOpen ? (
+                <section className="leader-popover leader-user-menu" aria-label="User menu">
+                  <div className="leader-profile-summary">
+                    <span className="leader-avatar">{userInitial}</span>
+                    <div>
+                      <strong>{userName}</strong>
+                      <span>{userRole}</span>
+                    </div>
+                  </div>
+                  <div className="leader-menu-actions">
+                    <button type="button" onClick={() => selectTenantTab("dashboard")}>
+                      <Home aria-hidden="true" />
+                      <span>Workspace home</span>
+                    </button>
+                    <button type="button" onClick={() => window.location.assign("/#/launch")}>
+                      <Users aria-hidden="true" />
+                      <span>Switch workspace</span>
+                    </button>
+                    {me?.isPlatformAdmin ? (
+                      <button type="button" onClick={openPlatformAdmin}>
+                        <Building2 aria-hidden="true" />
+                        <span>Platform admin</span>
+                      </button>
+                    ) : null}
+                    <button type="button" onClick={() => window.location.assign(appConfig.authentikLaunchUrl)}>
+                      <ShieldCheck aria-hidden="true" />
+                      <span>App portal</span>
+                    </button>
+                    <details className="leader-menu-details">
+                      <summary>Access details</summary>
+                      <dl>
+                        <div>
+                          <dt>Workspace</dt>
+                          <dd>{tenant?.name || `${tenantSlug}.${appConfig.baseDomain}`}</dd>
+                        </div>
+                        <div>
+                          <dt>Email</dt>
+                          <dd>{me?.user?.email || "Not provided"}</dd>
+                        </div>
+                        <div>
+                          <dt>Role</dt>
+                          <dd>{userRole}</dd>
+                        </div>
+                      </dl>
+                    </details>
+                    <button type="button" onClick={onLogout}>
+                      <LogOut aria-hidden="true" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -3241,7 +4336,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               canManage={isTenantAdmin}
               onOpenSessions={() => openSessions()}
               onOpenUpload={() => openSessions("packet")}
-              onOpenReview={() => setActiveTab("review")}
+              onOpenReview={() => selectTenantTab("review")}
             />
           ) : null}
 
@@ -3261,124 +4356,22 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           ) : null}
 
           {activeTab === "people" && isTenantAdmin ? (
-            <div className="admin-grid people-grid">
-        <section className="admin-card">
-          <div className="admin-card-heading">
-            <span className="admin-icon">
-              <MailPlus aria-hidden="true" />
-            </span>
-            <div>
-              <p className="eyebrow">{tenant?.name || `${tenantSlug} platoon`}</p>
-              <h2>Invite helper</h2>
-            </div>
-          </div>
-
-          <form className="admin-form" onSubmit={createInvite}>
-            <label className="field-label" htmlFor="inviteEmail">Email</label>
-            <input
-              id="inviteEmail"
-              className="input"
-              type="email"
-              required
-              value={inviteForm.email}
-              placeholder="nco@example.com"
-              onChange={e => setInviteForm(current => ({ ...current, email: e.target.value }))}
+            <TenantPeoplePanel
+              tenant={tenant}
+              tenantSlug={tenantSlug}
+              members={members}
+              invitations={invitations}
+              inviteForm={inviteForm}
+              onInviteFormChange={setInviteForm}
+              onCreateInvite={createInvite}
+              onCopyInviteLink={copyInviteLink}
+              onResendInvitation={resendInvitation}
+              onRevokeInvitation={revokeInvitation}
+              inviteLinksById={inviteLinksById}
+              inviteActionId={inviteActionId}
+              lastInviteUrl={lastInviteUrl}
+              isSaving={isSaving}
             />
-
-            <label className="field-label" htmlFor="inviteName">Name</label>
-            <input
-              id="inviteName"
-              className="input"
-              value={inviteForm.displayName}
-              placeholder="SSG Jones"
-              onChange={e => setInviteForm(current => ({ ...current, displayName: e.target.value }))}
-            />
-
-            <label className="field-label" htmlFor="inviteRole">Role</label>
-            <select
-              id="inviteRole"
-              className="select"
-              value={inviteForm.role}
-              onChange={e => setInviteForm(current => ({ ...current, role: e.target.value }))}
-            >
-              <option value="contributor">Contributor</option>
-              <option value="viewer">Viewer</option>
-              <option value="tenant_admin">Platoon admin</option>
-            </select>
-
-            <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
-              <Send aria-hidden="true" />
-              <span>{isSaving ? "Sending..." : "Send invite"}</span>
-            </button>
-          </form>
-
-          {lastInviteUrl ? (
-            <div className="admin-copy-box">
-              <span>Invite link</span>
-              <a href={lastInviteUrl}>{lastInviteUrl}</a>
-            </div>
-          ) : null}
-
-          <StatusLine status={status} />
-        </section>
-
-        <section className="admin-card admin-card-wide">
-          <div className="admin-card-heading">
-            <span className="admin-icon">
-              <UserPlus aria-hidden="true" />
-            </span>
-            <div>
-              <p className="eyebrow">People</p>
-              <h2>Members</h2>
-            </div>
-          </div>
-
-          {members.length ? (
-            <div className="admin-list">
-              {members.map(member => (
-                <article className="admin-list-row" key={member.id}>
-                  <div>
-                    <strong>{member.displayName || member.email}</strong>
-                    <span>{member.email}</span>
-                  </div>
-                  <div className="admin-row-meta">
-                    <span className="badge">{formatRole(member.role)}</span>
-                    <span className="badge">{member.status}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <EmptyPanel title="No members loaded" body="Invite helpers once the platoon admin account is active." />
-          )}
-
-          <div className="admin-subsection">
-            <h3>Pending invites</h3>
-            {invitations.length ? (
-              <div className="admin-list compact">
-                {invitations.map(invite => (
-                  <article className="admin-list-row" key={invite.id}>
-                    <div>
-                      <strong>{invite.email}</strong>
-                      <span>{formatRole(invite.role)} - expires {formatDate(invite.expiresAt)}</span>
-                    </div>
-                    <div className="admin-row-meta">
-                      <span className="badge">{invite.status}</span>
-                      {invite.status === "pending" ? (
-                        <button className="btn btn-secondary btn-small" type="button" onClick={() => revokeInvitation(invite.id)}>
-                          <span>Revoke</span>
-                        </button>
-                      ) : null}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <EmptyPanel title="No pending invites" body="New invitations will appear here." />
-            )}
-          </div>
-        </section>
-      </div>
           ) : null}
         </div>
       </main>
