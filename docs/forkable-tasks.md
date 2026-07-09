@@ -51,7 +51,7 @@ Definition of done:
 
 Goal: create automated browser checks that future task threads can run before pushing.
 
-Status: in progress by current Codex thread.
+Status: complete. Safe for other threads to start follow-on UI or feature tasks.
 
 Primary files:
 
@@ -65,7 +65,7 @@ Subtasks:
 - [x] Cover public landing page.
 - [x] Cover platform admin login and tenant list.
 - [x] Cover tenant dashboard and session navigation.
-- [ ] Cover packet upload entry point.
+- [x] Cover packet upload entry point.
 - [x] Document how to run tests against the QA stack.
 
 Definition of done:
@@ -655,6 +655,10 @@ Definition of done:
 ### NEWSLETTER-002: FRG Content Editor
 
 Goal: make the public homepage editable by FRG admins.
+
+Status: in progress by current Codex thread, started 2026-07-08.
+
+Coordination note: this task owns public homepage content blocks, the FRG/newsletter content editor UI, related API routes, and published public rendering. Avoid overlapping public content/admin newsletter editor changes until this status is complete.
 
 Primary files:
 

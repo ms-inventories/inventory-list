@@ -78,20 +78,19 @@ async function upsertInventoryItem(tenantId, item) {
     const result = await query(
       `
         UPDATE inventory_items
-        SET common_name = $3,
-            army_name = $4,
-            lin = $5,
-            nsn = $6,
-            description = $7,
-            current_location = $8,
-            metadata = $9,
+        SET common_name = $2,
+            army_name = $3,
+            lin = $4,
+            nsn = $5,
+            description = $6,
+            current_location = $7,
+            metadata = $8,
             updated_at = now()
         WHERE id = $1
         RETURNING id
       `,
       [
         existing.rows[0].id,
-        item.title,
         item.commonName,
         item.armyName,
         item.lin,

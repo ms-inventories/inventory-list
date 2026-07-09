@@ -52,6 +52,30 @@ http://ms.localhost:5175/#/admin
 npm run qa:logs
 ```
 
+## Smoke Tests
+
+With the QA stack running:
+
+```bash
+npm run qa:test
+```
+
+The smoke suite covers:
+
+- Public landing page.
+- Platform admin with the Root admin persona.
+- Newsletter admin with the Newsletter admin persona.
+- Tenant dashboard with the Platoon admin persona.
+- Tenant dashboard with the NCO contributor persona.
+
+Artifacts for failed tests are written under `qa-artifacts/`.
+
+Use headed mode when reviewing UI behavior:
+
+```bash
+npm run qa:test:headed
+```
+
 ## Stop
 
 ```bash

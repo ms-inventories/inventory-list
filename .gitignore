@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .vite/
+playwright-report/
+test-results/
+qa-artifacts/
 .env
 .env.*
 !.env.example

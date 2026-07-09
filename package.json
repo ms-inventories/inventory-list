@@ -13,9 +13,14 @@
     "qa:down": "docker compose -f docker-compose.qa.yml down",
     "qa:logs": "docker compose -f docker-compose.qa.yml logs -f",
     "qa:reset": "docker compose -f docker-compose.qa.yml down -v",
+    "qa:test": "playwright test --config=playwright.qa.config.mjs",
+    "qa:test:headed": "playwright test --config=playwright.qa.config.mjs --headed",
     "build:frontend": "npm --prefix react-app run build",
     "check:api": "npm --prefix backend run check",
     "check:static": "node --check ocr.js && node --check script.js && node --check admin.js",
     "check": "npm run check:static && npm run check:api && npm run build:frontend"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
   }
 }
