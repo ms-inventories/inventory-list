@@ -1089,38 +1089,69 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
   const [isReadingPacket, setIsReadingPacket] = useState(false);
   const [printReportId, setPrintReportId] = useState("");
   const packetFileInputRef = useRef(null);
+  const sessionListRequestRef = useRef(0);
+  const sessionDetailRequestRef = useRef(0);
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
 
   async function loadSessions(nextSelectedId = selectedSessionId) {
+    const requestId = sessionListRequestRef.current + 1;
+    sessionListRequestRef.current = requestId;
+
     try {
       setStatus({ text: "Loading inventory sessions...", isError: false });
       const data = await apiRequest("/inventory/sessions", { token, tenantSlug });
+      if (requestId !== sessionListRequestRef.current) return;
+
       const loaded = sortSessionsByAttention(data.sessions || []);
       setSessions(loaded);
-      const selected = nextSelectedId && loaded.some(session => session.id === nextSelectedId)
+      const selected = nextSelectedId && loaded.some(session => session.id === nextSelectedId && session.status !== "closed")
         ? nextSelectedId
-        : loaded[0]?.id || "";
+        : loaded.find(session => session.status !== "closed")?.id || "";
       setSelectedSessionId(selected);
+      let detailLoaded = true;
       if (selected) {
-        await loadSessionDetail(selected, false);
+        detailLoaded = await loadSessionDetail(selected, false, requestId);
       } else {
+        sessionDetailRequestRef.current += 1;
         setDetail(null);
+        setPacketWizardSessionId("");
+        setIsPacketImportOpen(false);
+        clearPacketImport();
       }
-      setStatus({ text: "", isError: false });
+
+      if (detailLoaded && requestId === sessionListRequestRef.current) {
+        setStatus({ text: "", isError: false });
+      }
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (requestId === sessionListRequestRef.current) {
+        setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
     }
   }
 
-  async function loadSessionDetail(sessionId = selectedSessionId, showStatus = true) {
-    if (!sessionId) return;
+  async function loadSessionDetail(sessionId = selectedSessionId, showStatus = true, sessionListRequestId = null) {
+    if (!sessionId) {
+      setDetail(null);
+      return true;
+    }
+
+    const requestId = sessionDetailRequestRef.current + 1;
+    sessionDetailRequestRef.current = requestId;
+
     try {
       if (showStatus) setStatus({ text: "Loading session...", isError: false });
       const data = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
+      if (requestId !== sessionDetailRequestRef.current) return false;
+      if (sessionListRequestId && sessionListRequestId !== sessionListRequestRef.current) return false;
+
       setDetail(data);
       setStatus({ text: "", isError: false });
+      return true;
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (requestId === sessionDetailRequestRef.current && (!sessionListRequestId || sessionListRequestId === sessionListRequestRef.current)) {
+        setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
+      return false;
     }
   }
 
@@ -1166,6 +1197,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
 
   function openPacketWizard(sessionId = selectedSessionId) {
     const fallbackSessionId = sessionId || selectedSessionId || openSessions[0]?.id || "";
+    clearPacketImport();
     setPacketWizardOpen(true);
     setPacketWizardStep(1);
     setPacketWizardSummary(null);
@@ -1173,6 +1205,19 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
     setPacketWizardSessionId(fallbackSessionId);
     setPacketWizardSessionName("");
     setIsPacketImportOpen(false);
+    setStatus({ text: "", isError: false });
+  }
+
+  function closePacketWizard() {
+    clearPacketImport();
+    setPacketWizardOpen(false);
+    setPacketWizardStep(1);
+    setPacketWizardMode("existing");
+    setPacketWizardSessionId("");
+    setPacketWizardSessionName("");
+    setPacketWizardSummary(null);
+    setIsPacketImportOpen(false);
+    setStatus({ text: "", isError: false });
   }
 
   async function preparePacketWizardSession() {
@@ -1288,11 +1333,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
     setPacketDraftRows(rows => rows.filter(row => row.id !== rowId));
   }
 
-  function clearPacketImport() {
+  function clearPacketImport(options = {}) {
     setPacketRows("");
     setPacketDraftRows([]);
     setPacketSourceName("");
     setPacketSourceFile(null);
+    if (options.clearStatus) setStatus({ text: "", isError: false });
   }
 
   function reviewWizardPacketRows() {
@@ -1346,10 +1392,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
         tenantSlug,
         body: { items, importBatch }
       });
-      setPacketRows("");
-      setPacketDraftRows([]);
-      setPacketSourceName("");
-      setPacketSourceFile(null);
+      clearPacketImport();
       setStatus({ text: `Added ${items.length} packet rows.`, isError: false });
       await loadSessions(targetSessionId);
       return { count: items.length, sourceName, sessionId: targetSessionId };
@@ -1390,15 +1433,17 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
 
   async function updateSessionStatus(nextStatus) {
     if (!selectedSessionId) return;
+    const sessionId = selectedSessionId;
+
     try {
-      await apiRequest(`/inventory/sessions/${selectedSessionId}`, {
+      await apiRequest(`/inventory/sessions/${sessionId}`, {
         method: "PATCH",
         token,
         tenantSlug,
         body: { status: nextStatus }
       });
       setStatus({ text: `Session marked ${nextStatus}.`, isError: false });
-      await loadSessions(selectedSessionId);
+      await loadSessions(nextStatus === "closed" ? "" : sessionId);
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     }
@@ -1884,7 +1929,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                     <p className="modal-copy">Pick the inventory session, add the packet source, review the rows, then save them.</p>
                   </div>
                 </div>
-                <button className="icon-button" type="button" aria-label="Close packet wizard" onClick={() => setPacketWizardOpen(false)}>
+                <button className="icon-button" type="button" aria-label="Close packet wizard" onClick={closePacketWizard}>
                   <XCircle aria-hidden="true" />
                 </button>
               </div>
@@ -1958,7 +2003,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                   </label>
 
                   <div className="packet-wizard-actions">
-                    <button className="btn btn-secondary" type="button" onClick={() => setPacketWizardOpen(false)}>
+                    <button className="btn btn-secondary" type="button" onClick={closePacketWizard}>
                       <span>Cancel</span>
                     </button>
                     <button className="btn btn-primary" type="button" disabled={isSaving} onClick={preparePacketWizardSession}>
@@ -2096,7 +2141,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                     <button className="btn btn-secondary" type="button" onClick={() => setPacketWizardStep(2)}>
                       <span>Back</span>
                     </button>
-                    <button className="btn btn-secondary" type="button" onClick={clearPacketImport}>
+                    <button className="btn btn-secondary" type="button" onClick={() => clearPacketImport({ clearStatus: true })}>
                       <Trash2 aria-hidden="true" />
                       <span>Clear</span>
                     </button>
@@ -2120,14 +2165,16 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                       className="btn btn-secondary"
                       type="button"
                       onClick={() => {
+                        clearPacketImport();
                         setPacketWizardSummary(null);
                         setPacketWizardStep(2);
+                        setStatus({ text: "", isError: false });
                       }}
                     >
                       <FileUp aria-hidden="true" />
                       <span>Import another</span>
                     </button>
-                    <button className="btn btn-primary" type="button" onClick={() => setPacketWizardOpen(false)}>
+                    <button className="btn btn-primary" type="button" onClick={closePacketWizard}>
                       <ListChecks aria-hidden="true" />
                       <span>Open session</span>
                     </button>
