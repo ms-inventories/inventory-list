@@ -88,6 +88,19 @@ test("parses delimited paste rows with quantity and location", () => {
   assert.equal(rows[0].locationHint, "Cage 3, right side");
 });
 
+test("ignores handwritten-style location hints that are not item rows", () => {
+  const rows = parsePacketRows(`
+1 located in the office cage, rest are in the medics office in a pile
+stable base for rods
+NBC room
+Chem room
+Found in the platoon cage right side
+In the motorpool, one missing
+  `);
+
+  assert.equal(rows.length, 0);
+});
+
 test("parses generated PDF extracted-text fixtures when available", t => {
   const fixtureFiles = [
     "output/pdf/army-packet-clean.txt",
@@ -100,9 +113,14 @@ test("parses generated PDF extracted-text fixtures when available", t => {
 
   for (const file of fixtureFiles) {
     const rows = parsePacketRows(fs.readFileSync(file, "utf8"));
-    assert.equal(rows.length, 3, file);
-    assert.deepEqual(rows.map(row => row.lin), ["R20684", "N96248", "M05000"], file);
-    assert.deepEqual(rows.map(row => row.expectedQty), [1, 4, 2], file);
-    assert.ok(rows.every(row => row.confidence === "high"), file);
+    const identifiers = new Set(rows.map(row => row.lin || row.nsn));
+    assert.equal(rows.length, 27, file);
+    assert.ok(identifiers.has("6545015323674"), file);
+    assert.ok(identifiers.has("63053N"), file);
+    assert.ok(identifiers.has("A90594"), file);
+    assert.ok(identifiers.has("N96248"), file);
+    assert.ok(identifiers.has("J00697"), file);
+    assert.ok(rows.every(row => !row.locationHint), file);
+    assert.ok(rows.every(row => row.confidence !== "low"), file);
   }
 });

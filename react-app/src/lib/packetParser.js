@@ -31,9 +31,9 @@ const NOISE_WORDS = [
 ];
 
 const ITEM_WORD_PATTERN = /\b(armament|antenna|battlefield|binocular|chemical|cutting|detector|device|generator|group|kit|load|machine|navigation|radiac|radio|set|subsys|system|tamper|tool|trailer|training|truck|vehicle)\b/i;
-const LIN_PATTERN = /^[A-Z][A-Z0-9]{4,7}$/i;
+const LIN_PATTERN = /^[A-Z0-9]{5,8}$/i;
 const MPO_PATTERN = /^\d{6,10}$/;
-const NSN_PATTERN = /^\d{13}$/;
+const NSN_PATTERN = /^[A-Z0-9]{13}$/i;
 const UI_PATTERN = /^(ea|ft|gl|hd|kt|lb|pr|rl|se|st)$/i;
 const CIIC_PATTERN = /^[A-Z0-9]$/i;
 
@@ -64,7 +64,9 @@ function tokenLooksLikeMpo(token) {
 }
 
 function tokenLooksLikeNsn(token) {
-  return NSN_PATTERN.test(normalizeToken(token));
+  const value = normalizeToken(token);
+  const digitCount = (value.match(/\d/g) || []).length;
+  return NSN_PATTERN.test(value) && digitCount >= 8;
 }
 
 function compactRowText(row) {
@@ -188,10 +190,19 @@ function parseNsnLine(line) {
     tail = tail.slice(0, ohIndex - 1 >= 0 && UI_PATTERN.test(cleanTail[ohIndex - 1]) ? ohIndex - 1 : ohIndex);
   }
 
+  while (tail.length) {
+    const clean = normalizeToken(tail[tail.length - 1]);
+    if (UI_PATTERN.test(clean) || CIIC_PATTERN.test(clean) || /^\d{3,5}$/.test(clean)) {
+      tail.pop();
+      continue;
+    }
+    break;
+  }
+
   const description = cleanPacketDescription(tail
     .filter(token => {
       const clean = normalizeToken(token);
-      return !UI_PATTERN.test(clean) && !CIIC_PATTERN.test(clean) && !/^\d{3,5}$/.test(clean);
+      return !UI_PATTERN.test(clean) && !CIIC_PATTERN.test(clean);
     })
     .join(" ")
     .trim());
@@ -257,7 +268,7 @@ export function parseStructuredPacketLine(line) {
   }
 
   const score = scorePacketImportLine(value);
-  if (score >= 55 || (value.length >= 8 && /[a-z]/i.test(value))) {
+  if (score >= 55) {
     return {
       packetLine: value,
       description: value,
