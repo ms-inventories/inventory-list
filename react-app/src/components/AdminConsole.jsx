@@ -290,23 +290,25 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
         </details>
       ) : null}
 
-      <details className="disclosure">
-        <summary className="btn btn-secondary">
-          <span>Use access token</span>
-        </summary>
-        <div className="disclosure-panel form-stack">
-          <textarea
-            className="input admin-token-input"
-            value={manualToken}
-            placeholder="Paste bearer token..."
-            onChange={e => onManualTokenChange(e.target.value)}
-          />
-          <button className="btn btn-secondary" type="button" onClick={onManualTokenSave}>
-            <ShieldCheck aria-hidden="true" />
-            <span>Use token</span>
-          </button>
-        </div>
-      </details>
+      {appConfig.enableQaAuth ? (
+        <details className="disclosure">
+          <summary className="btn btn-secondary">
+            <span>Use access token</span>
+          </summary>
+          <div className="disclosure-panel form-stack">
+            <textarea
+              className="input admin-token-input"
+              value={manualToken}
+              placeholder="Paste bearer token..."
+              onChange={e => onManualTokenChange(e.target.value)}
+            />
+            <button className="btn btn-secondary" type="button" onClick={onManualTokenSave}>
+              <ShieldCheck aria-hidden="true" />
+              <span>Use token</span>
+            </button>
+          </div>
+        </details>
+      ) : null}
 
       <StatusLine status={status} />
     </section>
@@ -5331,6 +5333,7 @@ export default function AdminConsole() {
     let ignore = false;
 
     async function handleRedirect() {
+      let callbackFailed = false;
       try {
         const redirectedSession = await completeOidcRedirect();
         if (redirectedSession && !ignore) {
@@ -5339,7 +5342,19 @@ export default function AdminConsole() {
           return;
         }
       } catch (error) {
+        callbackFailed = true;
         if (!ignore) setStatus({ text: error.message || "Login failed", isError: true });
+      }
+
+      if (!token && !callbackFailed && !appConfig.enableQaAuth) {
+        try {
+          setStatus({ text: "Redirecting to Authentik...", isError: false });
+          await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
+          return;
+        } catch (error) {
+          if (!ignore) setStatus({ text: error.message || "Could not start login", isError: true });
+          return;
+        }
       }
 
       if (!ignore) await loadMe(token);

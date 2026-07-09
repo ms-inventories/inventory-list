@@ -92,6 +92,87 @@ function rowToMember(row) {
   };
 }
 
+function rowToWorkspace(row) {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    status: row.status,
+    role: row.role || "contributor",
+    source: row.source || "database"
+  };
+}
+
+function getTenantGroupSlugs(identity) {
+  const prefix = String(config.oidc.tenantGroupPrefix || "876en-").toLowerCase();
+  const reserved = new Set([
+    "876en",
+    "876en-admins",
+    "876en-frg-admins",
+    "876en-platoon-admin",
+    String(config.oidc.platformAdminGroup || "").toLowerCase(),
+    String(config.oidc.frgAdminGroup || "").toLowerCase(),
+    String(config.oidc.tenantAdminGroup || "").toLowerCase()
+  ].filter(Boolean));
+
+  return [...new Set((identity?.groups || [])
+    .map(group => String(group || "").trim().toLowerCase())
+    .filter(group => group.startsWith(prefix) && !reserved.has(group))
+    .map(group => group.slice(prefix.length))
+    .filter(slug => /^[a-z0-9-]+$/.test(slug)))]
+    .sort();
+}
+
+async function listUserWorkspaces(identity, user) {
+  if (!user?.id) return [];
+
+  if (identity?.isPlatformAdmin) {
+    const result = await query(
+      `
+        SELECT id, slug, name, status, 'tenant_admin' AS role, 'platform_admin' AS source
+        FROM tenants
+        WHERE status = 'active'
+        ORDER BY name, slug
+      `
+    );
+    return result.rows.map(rowToWorkspace);
+  }
+
+  const groupSlugs = getTenantGroupSlugs(identity);
+  const hasTenantAdminGroup = (identity?.groups || [])
+    .map(group => String(group || "").trim().toLowerCase())
+    .includes(String(config.oidc.tenantAdminGroup || "").toLowerCase());
+
+  const result = await query(
+    `
+      SELECT DISTINCT ON (t.slug)
+        t.id,
+        t.slug,
+        t.name,
+        t.status,
+        COALESCE(
+          m.role,
+          CASE WHEN $3::boolean THEN 'tenant_admin' ELSE 'contributor' END
+        ) AS role,
+        CASE WHEN m.id IS NULL THEN 'authentik' ELSE 'database' END AS source
+      FROM tenants t
+      LEFT JOIN tenant_memberships m
+        ON m.tenant_id = t.id
+       AND m.user_id = $1
+       AND m.status = 'active'
+      WHERE t.status = 'active'
+        AND (
+          m.id IS NOT NULL
+          OR t.slug = ANY($2::text[])
+        )
+      ORDER BY t.slug, m.id NULLS LAST
+    `,
+    [user.id, groupSlugs, hasTenantAdminGroup]
+  );
+
+  return result.rows.map(rowToWorkspace);
+}
+
 async function assertMemberCanLoseAdminRole(client, reply, tenantId, member) {
   if (member.role !== "tenant_admin" || member.status !== "active") return;
 
@@ -979,6 +1060,7 @@ export function registerRoutes(app) {
 
   route(app, "get", "/api/me", async (request, reply) => {
     const context = await requireContext(request, reply);
+    const workspaces = await listUserWorkspaces(context.identity, context.user);
 
     return {
       user: context.user,
@@ -992,7 +1074,8 @@ export function registerRoutes(app) {
       isFrgAdmin: context.identity.isFrgAdmin,
       tenant: rowToTenant(context.tenant),
       membership: context.membership,
-      access: context.access
+      access: context.access,
+      workspaces
     };
   });
 

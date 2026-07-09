@@ -4,11 +4,46 @@ const FRONTEND_URL = process.env.QA_FRONTEND_URL || "http://localhost:5175";
 const ADMIN_URL = process.env.QA_ADMIN_URL || "http://admin.localhost:5175/#/admin";
 const NEWSLETTER_URL = process.env.QA_NEWSLETTER_URL || "http://admin.localhost:5175/#/newsletter";
 const TENANT_URL = process.env.QA_TENANT_URL || "http://ms.localhost:5175/#/admin";
+const LAUNCH_URL = process.env.QA_LAUNCH_URL || "http://localhost:5175/#/launch";
+
+const qaIdentities = {
+  root: {
+    sub: "qa-root",
+    email: "qa-root@876en.test",
+    name: "QA Root Admin",
+    groups: ["876en-admins"]
+  },
+  frg: {
+    sub: "qa-frg",
+    email: "qa-frg@876en.test",
+    name: "QA Newsletter Admin",
+    groups: ["876en-frg-admins"]
+  },
+  nco: {
+    sub: "qa-nco",
+    email: "qa-nco@876en.test",
+    name: "QA NCO",
+    groups: ["876en-ms"]
+  }
+};
 
 async function signInWithQaPersona(page, personaName) {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.locator("summary").filter({ hasText: "QA users" }).click();
   await page.getByRole("button", { name: personaName }).click();
+}
+
+async function seedQaLaunchSession(page, identity) {
+  await page.goto(FRONTEND_URL);
+  await page.evaluate(qaIdentity => {
+    localStorage.setItem("inventory.qa.identity", JSON.stringify(qaIdentity));
+    localStorage.setItem("inventory.auth.session", JSON.stringify({
+      accessToken: "qa-dev",
+      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+      createdAt: Date.now(),
+      qa: true
+    }));
+  }, identity);
 }
 
 test.describe("QA smoke", () => {
@@ -32,6 +67,27 @@ test.describe("QA smoke", () => {
     await expect(page.getByRole("button", { name: "Create platoon" }).first()).toBeVisible();
     await expect(page.getByText("ms.localhost").first()).toBeVisible();
     await expect(page.getByText("Super administrator")).toBeVisible();
+  });
+
+  test("launch router sends platform admins to platform admin", async ({ page }) => {
+    await seedQaLaunchSession(page, qaIdentities.root);
+    await page.goto(LAUNCH_URL);
+
+    await expect(page).toHaveURL(/admin\.localhost:5175\/#\/admin/);
+  });
+
+  test("launch router sends newsletter admins to newsletter admin", async ({ page }) => {
+    await seedQaLaunchSession(page, qaIdentities.frg);
+    await page.goto(LAUNCH_URL);
+
+    await expect(page).toHaveURL(/admin\.localhost:5175\/#\/newsletter/);
+  });
+
+  test("launch router sends platoon members to their workspace", async ({ page }) => {
+    await seedQaLaunchSession(page, qaIdentities.nco);
+    await page.goto(LAUNCH_URL);
+
+    await expect(page).toHaveURL(/ms\.localhost:5175\/#\/admin/);
   });
 
   test("newsletter admin can reach newsletter workspace", async ({ page }) => {

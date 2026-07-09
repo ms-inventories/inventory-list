@@ -187,23 +187,25 @@ export default function AcceptInvite() {
                 </button>
               ) : null}
 
-              <details className="disclosure">
-                <summary className="btn btn-secondary btn-full">
-                  <span>Use access token</span>
-                </summary>
-                <div className="disclosure-panel form-stack">
-                  <textarea
-                    className="input admin-token-input"
-                    value={manualToken}
-                    placeholder="Paste bearer token..."
-                    onChange={e => setManualToken(e.target.value)}
-                  />
-                  <button className="btn btn-secondary btn-full" type="button" onClick={saveManualToken}>
-                    <ShieldCheck aria-hidden="true" />
-                    <span>Use token</span>
-                  </button>
-                </div>
-              </details>
+              {appConfig.enableQaAuth ? (
+                <details className="disclosure">
+                  <summary className="btn btn-secondary btn-full">
+                    <span>Use access token</span>
+                  </summary>
+                  <div className="disclosure-panel form-stack">
+                    <textarea
+                      className="input admin-token-input"
+                      value={manualToken}
+                      placeholder="Paste bearer token..."
+                      onChange={e => setManualToken(e.target.value)}
+                    />
+                    <button className="btn btn-secondary btn-full" type="button" onClick={saveManualToken}>
+                      <ShieldCheck aria-hidden="true" />
+                      <span>Use token</span>
+                    </button>
+                  </div>
+                </details>
+              ) : null}
             </>
           )}
 

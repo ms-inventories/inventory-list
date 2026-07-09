@@ -22,6 +22,7 @@ import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "./config.
 import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
 import { apiRequest, getApiErrorMessage } from "./lib/api.js";
 import {
+  clearAuthSession,
   beginOidcLogin,
   completeOidcRedirect,
   getSessionAccessToken,
@@ -360,20 +361,52 @@ function isBaseHostname(hostname = window.location.hostname) {
   return cleanHost === appConfig.baseDomain.toLowerCase();
 }
 
+function isLocalAppHostname(hostname = window.location.hostname) {
+  const cleanHost = String(hostname || "").split(":")[0].toLowerCase();
+  return cleanHost === "localhost"
+    || cleanHost.endsWith(".localhost")
+    || cleanHost === "127.0.0.1"
+    || cleanHost === "::1";
+}
+
+function getAppUrl(subdomain = "", hash = "/") {
+  const cleanSubdomain = String(subdomain || "").trim().toLowerCase();
+  const cleanHash = String(hash || "/").startsWith("/") ? hash : `/${hash}`;
+
+  if (typeof window !== "undefined" && isLocalAppHostname()) {
+    const hostname = window.location.hostname === "127.0.0.1" || window.location.hostname === "::1"
+      ? window.location.hostname
+      : cleanSubdomain
+        ? `${cleanSubdomain}.localhost`
+        : "localhost";
+    const port = window.location.port ? `:${window.location.port}` : "";
+    return `${window.location.protocol}//${hostname}${port}${cleanHash}`;
+  }
+
+  const host = cleanSubdomain
+    ? `${cleanSubdomain}.${appConfig.baseDomain}`
+    : appConfig.baseDomain;
+  return `https://${host}${cleanHash}`;
+}
+
 function getAdminUrl() {
-  return `https://admin.${appConfig.baseDomain}/#/admin`;
+  return getAppUrl("admin", "/#/admin");
 }
 
 function getNewsletterAdminUrl() {
-  return `https://admin.${appConfig.baseDomain}/#/newsletter`;
+  return getAppUrl("admin", "/#/newsletter");
+}
+
+function getLaunchUrl() {
+  return getAppUrl("", "/#/launch");
 }
 
 function getApplicationPortalUrl() {
-  return appConfig.authentikLaunchUrl || getAdminUrl();
+  return appConfig.authentikLaunchUrl || getLaunchUrl();
 }
 
 function getTenantUrl(slug) {
-  return `https://${slug}.${appConfig.baseDomain}/#/admin`;
+  return getAppUrl(slug, "/#/admin");
 }
 
 function normalizeGroupLabels(groups) {
@@ -393,9 +426,67 @@ function getWorkspaceSlugsFromGroups(groups) {
     .sort();
 }
 
+function getWorkspaceSlugsFromProfile(profile) {
+  const slugs = new Set(getWorkspaceSlugsFromGroups(profile?.groups));
+
+  (profile?.workspaces || []).forEach(workspace => {
+    const slug = String(workspace?.slug || "").trim().toLowerCase();
+    if (/^[a-z0-9-]+$/.test(slug)) slugs.add(slug);
+  });
+
+  const tenantSlug = String(profile?.tenant?.slug || "").trim().toLowerCase();
+  if (tenantSlug && profile?.membership?.role) slugs.add(tenantSlug);
+
+  return [...slugs].sort();
+}
+
 function isOidcCallback(search = window.location.search) {
   const params = new URLSearchParams(search || "");
   return params.has("code") && params.has("state");
+}
+
+function getLaunchStatusFromError(error) {
+  const code = error?.code || "";
+
+  if (code.startsWith("oidc_discovery")) {
+    return {
+      code,
+      text: "Could not start sign-in. Try again shortly, then ask an admin to check Authentik routing if it keeps failing."
+    };
+  }
+
+  if (code.startsWith("token_exchange")) {
+    return {
+      code,
+      text: "Sign-in reached the app, but the inventory API did not finish the callback. Try again or ask an admin to check API routing."
+    };
+  }
+
+  if (code === "state_mismatch") {
+    return {
+      code,
+      text: "The sign-in session expired. Try again."
+    };
+  }
+
+  if (error?.status === 401) {
+    return {
+      code: "api_unauthorized",
+      text: "Your sign-in expired. Try again."
+    };
+  }
+
+  if (/failed to fetch/i.test(error?.message || "")) {
+    return {
+      code: "api_network",
+      text: "Could not reach the inventory API. Try again or ask an admin to check API routing."
+    };
+  }
+
+  return {
+    code: code || "unknown",
+    text: getApiErrorMessage(error)
+  };
 }
 
 function formatPublicDate(value) {
@@ -419,6 +510,7 @@ function LaunchRouter() {
   const [status, setStatus] = useState({ text: "Checking your access...", isError: false });
   const [workspaces, setWorkspaces] = useState([]);
   const [me, setMe] = useState(null);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
   const groupLabels = normalizeGroupLabels(me?.groups);
   const signedInLabel = me?.user?.display_name
     || me?.user?.email
@@ -426,12 +518,21 @@ function LaunchRouter() {
     || me?.identity?.email
     || "Signed in";
   const identitySubject = me?.identity?.subject || me?.user?.authentik_subject || "";
+  const canShowDiagnostics = Boolean(appConfig.enableQaAuth || me?.isPlatformAdmin || me?.isFrgAdmin);
+  const profileBadge = me?.isPlatformAdmin
+    ? "Platform admin"
+    : me?.isFrgAdmin
+      ? "FRG admin"
+      : workspaces.length
+        ? `${workspaces.length} workspaces`
+        : "Access checked";
 
   useEffect(() => {
     let ignore = false;
 
     async function routeAfterLogin() {
       try {
+        setDiagnosticsCopied(false);
         const redirectedSession = await completeOidcRedirect();
         if (redirectedSession) {
           const routeAfterRedirect = `${window.location.pathname}${window.location.hash || ""}`;
@@ -444,6 +545,7 @@ function LaunchRouter() {
 
         const session = redirectedSession || readAuthSession();
         const token = getSessionAccessToken(session);
+        const tenantSlug = getTenantSlugFromHostname();
 
         if (!token) {
           setStatus({ text: "Redirecting to sign in...", isError: false });
@@ -451,12 +553,17 @@ function LaunchRouter() {
           return;
         }
 
-        const data = await apiRequest("/me", { token });
+        const data = await apiRequest("/me", { token, tenantSlug });
         if (ignore) return;
 
         setMe(data);
         const groups = normalizeGroupLabels(data.groups);
-        const slugs = getWorkspaceSlugsFromGroups(groups);
+        const slugs = getWorkspaceSlugsFromProfile(data);
+
+        if (tenantSlug && (data.isPlatformAdmin || data.membership?.role || slugs.includes(tenantSlug))) {
+          window.location.assign(getTenantUrl(tenantSlug));
+          return;
+        }
 
         if (data.isPlatformAdmin || groups.includes("876en-admins")) {
           window.location.assign(getAdminUrl());
@@ -484,7 +591,10 @@ function LaunchRouter() {
           isError: true
         });
       } catch (error) {
-        if (!ignore) setStatus({ text: getApiErrorMessage(error), isError: true });
+        if (!ignore) {
+          const launchStatus = getLaunchStatusFromError(error);
+          setStatus({ ...launchStatus, isError: true });
+        }
       }
     }
 
@@ -493,6 +603,48 @@ function LaunchRouter() {
       ignore = true;
     };
   }, []);
+
+  async function retryLogin() {
+    try {
+      setStatus({ text: "Redirecting to sign in...", isError: false });
+      await beginOidcLogin("/#/launch");
+    } catch (error) {
+      const launchStatus = getLaunchStatusFromError(error);
+      setStatus({ ...launchStatus, isError: true });
+    }
+  }
+
+  function signOutAndReturn() {
+    clearAuthSession();
+    window.location.assign("/");
+  }
+
+  async function copyDiagnostics() {
+    const diagnostics = {
+      generatedAt: new Date().toISOString(),
+      route: `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`,
+      apiBaseUrl: appConfig.apiBaseUrl,
+      oidcClientId: appConfig.oidc.clientId,
+      oidcDiscoveryUrl: appConfig.oidc.discoveryUrl,
+      status: {
+        code: status.code || "",
+        text: status.text || ""
+      },
+      identity: {
+        subject: identitySubject || "",
+        email: me?.identity?.email || me?.user?.email || "",
+        displayName: signedInLabel,
+        isPlatformAdmin: Boolean(me?.isPlatformAdmin),
+        isFrgAdmin: Boolean(me?.isFrgAdmin)
+      },
+      currentTenantSlug: getTenantSlugFromHostname(),
+      groups: groupLabels,
+      workspaces: getWorkspaceSlugsFromProfile(me)
+    };
+
+    await copyTextToClipboard(JSON.stringify(diagnostics, null, 2));
+    setDiagnosticsCopied(true);
+  }
 
   return (
     <div className="auth-screen launch-screen">
@@ -506,7 +658,7 @@ function LaunchRouter() {
         {me ? (
           <div className="launch-profile">
             <span className="badge strong">{signedInLabel}</span>
-            <span className="badge">{groupLabels.length ? `${groupLabels.length} groups` : "No groups in token"}</span>
+            <span className="badge">{profileBadge}</span>
           </div>
         ) : null}
 
@@ -523,9 +675,21 @@ function LaunchRouter() {
 
         <StatusText status={status} />
 
-        {status.isError && me ? (
+        {status.isError ? (
+          <div className="button-row launch-actions">
+            <button className="btn btn-primary" type="button" onClick={retryLogin}>
+              <LogIn aria-hidden="true" />
+              <span>Try again</span>
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={signOutAndReturn}>
+              <span>Sign out</span>
+            </button>
+          </div>
+        ) : null}
+
+        {status.isError && me && canShowDiagnostics ? (
           <details className="launch-access-details">
-            <summary>Access details</summary>
+            <summary>Admin diagnostics</summary>
             <dl>
               <div>
                 <dt>Account</dt>
@@ -544,10 +708,18 @@ function LaunchRouter() {
                 <dd>{me.isPlatformAdmin ? "yes" : "no"}</dd>
               </div>
               <div>
+                <dt>Workspaces</dt>
+                <dd>{getWorkspaceSlugsFromProfile(me).length ? getWorkspaceSlugsFromProfile(me).join(", ") : "none"}</dd>
+              </div>
+              <div>
                 <dt>Groups from token</dt>
                 <dd>{groupLabels.length ? groupLabels.join(", ") : "none"}</dd>
               </div>
             </dl>
+            <button className="btn btn-secondary btn-full" type="button" onClick={copyDiagnostics}>
+              <Copy aria-hidden="true" />
+              <span>{diagnosticsCopied ? "Copied diagnostics" : "Copy diagnostics"}</span>
+            </button>
           </details>
         ) : null}
       </section>

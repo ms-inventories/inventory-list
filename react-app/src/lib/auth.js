@@ -4,6 +4,15 @@ const AUTH_SESSION_KEY = "inventory.auth.session";
 const OIDC_STATE_KEY = "inventory.oidc.state";
 const OIDC_VERIFIER_KEY = "inventory.oidc.verifier";
 
+export class AuthFlowError extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.name = "AuthFlowError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
 function base64UrlEncode(bytes) {
   return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, "-")
@@ -31,11 +40,37 @@ async function getOidcDiscovery() {
     };
   }
 
-  const response = await fetch(appConfig.oidc.discoveryUrl, { cache: "no-store" });
-  if (!response.ok) throw new Error(`OIDC discovery failed (${response.status})`);
-  const discovery = await response.json();
+  let response;
+  try {
+    response = await fetch(appConfig.oidc.discoveryUrl, { cache: "no-store" });
+  } catch (error) {
+    throw new AuthFlowError("oidc_discovery_network", "Could not reach the sign-in service.", {
+      cause: error?.message || String(error),
+      discoveryUrl: appConfig.oidc.discoveryUrl
+    });
+  }
+
+  if (!response.ok) {
+    throw new AuthFlowError("oidc_discovery_failed", "The sign-in service did not return its configuration.", {
+      status: response.status,
+      discoveryUrl: appConfig.oidc.discoveryUrl
+    });
+  }
+
+  let discovery;
+  try {
+    discovery = await response.json();
+  } catch {
+    throw new AuthFlowError("oidc_discovery_invalid", "The sign-in service returned an invalid configuration.", {
+      status: response.status,
+      discoveryUrl: appConfig.oidc.discoveryUrl
+    });
+  }
+
   if (!discovery.authorization_endpoint || !discovery.token_endpoint) {
-    throw new Error("OIDC discovery is missing endpoints");
+    throw new AuthFlowError("oidc_discovery_incomplete", "The sign-in service configuration is missing required endpoints.", {
+      discoveryUrl: appConfig.oidc.discoveryUrl
+    });
   }
   return discovery;
 }
@@ -52,6 +87,20 @@ function buildApiUrl(path) {
 
 function cleanRedirectUrl(returnTo) {
   window.history.replaceState({}, "", returnTo || `${window.location.pathname}${window.location.hash || ""}`);
+}
+
+async function parseTokenResponse(response) {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new AuthFlowError("token_exchange_invalid_response", "The inventory API returned an invalid sign-in response.", {
+      status: response.status,
+      raw: text.slice(0, 240)
+    });
+  }
 }
 
 export function readAuthSession() {
@@ -112,27 +161,44 @@ export async function completeOidcRedirect() {
 
   if (!storedState?.state || storedState.state !== returnedState || !verifier) {
     cleanRedirectUrl();
-    throw new Error("Login state did not match");
+    throw new AuthFlowError("state_mismatch", "The sign-in session expired. Try signing in again.");
   }
 
-  const response = await fetch(buildApiUrl("/auth/oidc/token"), {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      code,
-      codeVerifier: verifier,
-      redirectUri: getRedirectUri()
-    }),
-    cache: "no-store"
-  });
+  let response;
+  try {
+    response = await fetch(buildApiUrl("/auth/oidc/token"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        code,
+        codeVerifier: verifier,
+        redirectUri: getRedirectUri()
+      }),
+      cache: "no-store"
+    });
+  } catch (error) {
+    cleanRedirectUrl(storedState.returnTo);
+    throw new AuthFlowError("token_exchange_network", "Could not reach the inventory API to finish sign-in.", {
+      cause: error?.message || String(error),
+      apiBaseUrl: appConfig.apiBaseUrl
+    });
+  }
 
-  const tokenSet = await response.json();
+  let tokenSet;
+  try {
+    tokenSet = await parseTokenResponse(response);
+  } catch (error) {
+    cleanRedirectUrl(storedState.returnTo);
+    throw error;
+  }
   if (!response.ok) {
     cleanRedirectUrl(storedState.returnTo);
-    throw new Error(tokenSet?.error_description || tokenSet?.error || "Token exchange failed");
+    throw new AuthFlowError("token_exchange_failed", tokenSet?.error_description || tokenSet?.error || "Sign-in was rejected.", {
+      status: response.status
+    });
   }
 
   const expiresIn = Number(tokenSet.expires_in || 3600);
