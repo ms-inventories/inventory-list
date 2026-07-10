@@ -1103,6 +1103,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const [isReadingPacket, setIsReadingPacket] = useState(false);
+  const [deleteSessionTarget, setDeleteSessionTarget] = useState(null);
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [printReportId, setPrintReportId] = useState("");
   const packetFileInputRef = useRef(null);
   const packetTextareaRef = useRef(null);
@@ -1235,6 +1237,17 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     setPacketWizardSummary(null);
     setIsPacketImportOpen(false);
     setStatus({ text: "", isError: false });
+  }
+
+  function requestDeleteSession(session) {
+    if (!session || Number(session.itemCount || 0) > 0) return;
+    setDeleteSessionTarget(session);
+    setStatus({ text: "", isError: false });
+  }
+
+  function closeDeleteSessionDialog() {
+    if (isDeletingSession) return;
+    setDeleteSessionTarget(null);
   }
 
   async function preparePacketWizardSession() {
@@ -1466,6 +1479,34 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     }
   }
 
+  async function deleteEmptySession() {
+    if (!deleteSessionTarget?.id) return;
+
+    try {
+      setIsDeletingSession(true);
+      setStatus({ text: "", isError: false });
+      await apiRequest(`/inventory/sessions/${deleteSessionTarget.id}`, {
+        method: "DELETE",
+        token,
+        tenantSlug
+      });
+      setDeleteSessionTarget(null);
+      if (selectedSessionId === deleteSessionTarget.id) {
+        setSelectedSessionId("");
+        setDetail(null);
+        clearPacketImport();
+        setPacketWizardOpen(false);
+        setPacketWizardSessionId("");
+      }
+      await loadSessions("");
+      setStatus({ text: `Deleted empty session ${deleteSessionTarget.name}.`, isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsDeletingSession(false);
+    }
+  }
+
   async function copyCloseoutReport(report) {
     try {
       await navigator.clipboard.writeText(buildSessionReportText(report));
@@ -1574,6 +1615,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
         type="button"
         key={session.id}
         onClick={() => {
+          setStatus({ text: "", isError: false });
           setSelectedSessionId(session.id);
           loadSessionDetail(session.id);
         }}
@@ -1720,14 +1762,21 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                   <span className="badge">{selectedSession.foundCount || 0} found</span>
                   <span className="badge">{selectedSession.needsReviewCount || 0} needs review</span>
                   {canManage ? (
-                    selectedSession.status !== "closed" ? (
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("closed")}>
-                        <span>Close</span>
+                    Number(selectedSession.itemCount || 0) === 0 ? (
+                      <button className="btn btn-danger-soft btn-small" type="button" onClick={() => requestDeleteSession(selectedSession)}>
+                        <Trash2 aria-hidden="true" />
+                        <span>Delete draft</span>
                       </button>
                     ) : (
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("active")}>
-                        <span>Reopen</span>
-                      </button>
+                      selectedSession.status !== "closed" ? (
+                        <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("closed")}>
+                          <span>Close</span>
+                        </button>
+                      ) : (
+                        <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("active")}>
+                          <span>Reopen</span>
+                        </button>
+                      )
                     )
                   ) : null}
                 </div>
@@ -2106,7 +2155,14 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                   />
 
                   <div className="packet-wizard-actions">
-                    <button className="btn btn-secondary" type="button" onClick={() => setPacketWizardStep(1)}>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() => {
+                        setStatus({ text: "", isError: false });
+                        setPacketWizardStep(1);
+                      }}
+                    >
                       <span>Back</span>
                     </button>
                     <button
@@ -2195,7 +2251,14 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                   )}
 
                   <div className="packet-wizard-actions">
-                    <button className="btn btn-secondary" type="button" onClick={() => setPacketWizardStep(2)}>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() => {
+                        setStatus({ text: "", isError: false });
+                        setPacketWizardStep(2);
+                      }}
+                    >
                       <span>Back</span>
                     </button>
                     <button className="btn btn-secondary" type="button" onClick={() => clearPacketImport({ clearStatus: true })}>
@@ -2238,6 +2301,36 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                   </div>
                 </div>
               ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteSessionTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="deleteSessionTitle">
+            <div className="modal-stack">
+              <div className="modal-heading">
+                <span className="modal-icon danger">
+                  <Trash2 aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="eyebrow">Empty session</p>
+                  <h2 className="modal-title" id="deleteSessionTitle">Delete draft session?</h2>
+                  <p className="modal-copy">
+                    This removes the empty session named {deleteSessionTarget.name}. Sessions with packet rows use the closeout flow instead.
+                  </p>
+                </div>
+              </div>
+              <div className="button-row start-inventory-actions">
+                <button className="btn btn-danger" type="button" onClick={deleteEmptySession} disabled={isDeletingSession}>
+                  <Trash2 aria-hidden="true" />
+                  <span>{isDeletingSession ? "Deleting..." : "Delete session"}</span>
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={closeDeleteSessionDialog} disabled={isDeletingSession}>
+                  <span>Cancel</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

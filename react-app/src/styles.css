@@ -5215,6 +5215,11 @@ button {
   color: var(--primary);
 }
 
+.modal-icon.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .modal-icon svg {
   width: 22px;
   height: 22px;

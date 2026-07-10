@@ -2941,6 +2941,57 @@ export function registerRoutes(app) {
     return { session: rowToSession(updated) };
   });
 
+  route(app, "delete", "/api/inventory/sessions/:sessionId", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+
+    const deleted = await withTransaction(async client => {
+      const sessionResult = await client.query(
+        `
+          SELECT s.*, COUNT(si.id)::int AS item_count
+          FROM inventory_sessions s
+          LEFT JOIN inventory_session_items si ON si.session_id = s.id
+          WHERE s.id = $1 AND s.tenant_id = $2
+          GROUP BY s.id
+          LIMIT 1
+        `,
+        [request.params.sessionId, context.tenant.id]
+      );
+
+      const session = sessionResult.rows[0];
+      if (!session) return null;
+      if (Number(session.item_count || 0) > 0) {
+        reply.code(409);
+        throw new Error("Only empty sessions can be deleted");
+      }
+
+      await client.query(
+        `
+          DELETE FROM inventory_sessions
+          WHERE id = $1 AND tenant_id = $2
+        `,
+        [session.id, context.tenant.id]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "inventory_session.deleted",
+        entityType: "inventory_session",
+        entityId: session.id,
+        metadata: { name: session.name }
+      });
+
+      return session;
+    });
+
+    if (!deleted) {
+      reply.code(404);
+      throw new Error("Session not found");
+    }
+
+    return { deleted: true, session: rowToSession(deleted) };
+  });
+
   route(app, "post", "/api/inventory/sessions/:sessionId/items", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
