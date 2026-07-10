@@ -1520,6 +1520,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
     [selectedSession, detail?.items]
   );
   const importBatches = detail?.importBatches || [];
+  const packetRowsReadyCount = sanitizePacketDraftRows(packetDraftRows).length;
+  const lowConfidencePacketRowCount = packetDraftRows.filter(row => row.confidence === "low").length;
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -2120,9 +2122,18 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                   {packetDraftRows.length ? (
                     <div className="packet-review">
                       <div className="packet-review-heading">
-                        <strong>{sanitizePacketDraftRows(packetDraftRows).length} ready to import</strong>
-                        <span>{packetDraftRows.length} rows found</span>
+                        <strong>{packetRowsReadyCount} ready to import</strong>
+                        <span>
+                          {packetDraftRows.length} rows found
+                          {lowConfidencePacketRowCount ? ` - ${lowConfidencePacketRowCount} need closer review` : ""}
+                        </span>
                       </div>
+                      {lowConfidencePacketRowCount ? (
+                        <div className="packet-review-warning">
+                          <AlertCircle aria-hidden="true" />
+                          <span>Check low-confidence rows before importing. Remove anything that came from headers, notes, or page text.</span>
+                        </div>
+                      ) : null}
                       <div className="packet-review-list">
                         {packetDraftRows.map((row, index) => (
                           <div className="packet-review-row" key={row.id}>
@@ -2183,7 +2194,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                     </button>
                     <button className="btn btn-primary" type="button" disabled={isSaving || isReadingPacket} onClick={finishPacketWizardImport}>
                       <ClipboardPlus aria-hidden="true" />
-                      <span>{isSaving ? "Importing..." : `Import ${sanitizePacketDraftRows(packetDraftRows).length} rows`}</span>
+                      <span>{isSaving ? "Importing..." : `Import ${packetRowsReadyCount} rows`}</span>
                     </button>
                   </div>
                 </div>

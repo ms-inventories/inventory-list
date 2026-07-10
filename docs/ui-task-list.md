@@ -29,7 +29,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: clicking `Upload packet` opens a guided flow: select/create session, choose PDF/spreadsheet, review parsed rows, import.
   - Controls affected: `Upload packet`, `New session`, `Import packet rows`, `Choose PDF or spreadsheet`.
 
-- [ ] **UI-004: Validate PDF packet import end to end**
+- [x] **UI-004: Validate PDF packet import end to end**
+  - Status: completed by current Codex thread, 2026-07-09. Added focused QA coverage for uploading the generated Army-style PDF through the packet wizard on desktop and mobile; safe for `UI-005` to continue.
   - Current issue: the UI suggests PDF import is supported, but the live flow needs verified parsing against Army-style packet docs.
   - Desired behavior: real PDF upload extracts likely item rows, shows low-confidence rows for review, and imports only after approval.
   - Controls affected: packet import wizard, review rows, import rows.

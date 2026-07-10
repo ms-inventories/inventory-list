@@ -4513,6 +4513,26 @@ button {
   text-transform: uppercase;
 }
 
+.packet-review-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid rgba(194, 120, 3, 0.26);
+  border-radius: 8px;
+  background: rgba(194, 120, 3, 0.08);
+  color: #7a4a05;
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.packet-review-warning svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+}
+
 .packet-review-list {
   display: grid;
   gap: 8px;
