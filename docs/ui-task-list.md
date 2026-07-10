@@ -105,9 +105,10 @@ Use this as the working backlog before turning individual items into implementat
   - Current issue: it opens Sessions, but users still need to infer the next step.
   - Desired behavior: button opens a session creation modal/drawer with session name, packet source option, and start action.
 
-- [ ] **UI-017: Pending item assignment**
+- [x] **UI-017: Pending item assignment**
   - Current issue: dashboard implies assignment/tasking, but assignment needs a complete workflow.
   - Desired behavior: tenant admin can assign rows to members; contributors see assigned rows; reassignment and "assign to me" update state.
+  - Status: completed by current Codex thread, 2026-07-10. Session rows now store assignment ownership, platoon admins can assign/reassign/unassign rows, contributors can use `Assign to me`, the `Mine` filter surfaces assigned work, dashboard pending rows show assignment state, and desktop/mobile QA coverage passes. Safe for `UI-018` to continue; coordinate before changing session row ownership, assignment controls, or `qa/session-assignment.spec.js`.
 
 - [ ] **UI-018: Review queue actions**
   - Current issue: approve/reject/request more proof exists conceptually, but needs full confidence in live behavior and status feedback.

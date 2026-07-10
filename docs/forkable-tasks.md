@@ -452,19 +452,22 @@ Definition of done:
 
 Goal: support assigning packet rows to helpers.
 
+Status: completed by current Codex thread, 2026-07-10. Assignment ownership is persisted on session rows, admins can assign/reassign/unassign rows, contributors can claim unassigned rows with `Assign to me`, the `Mine` filter shows assigned work, and dashboard pending rows display assignment state.
+
 Primary files:
 
 - `backend/db/`
 - `backend/src/routes.js`
 - `react-app/src/components/AdminConsole.jsx`
+- `qa/session-assignment.spec.js`
 
 Subtasks:
 
-- [ ] Add assigned user field/table for session rows.
-- [ ] Add assign/reassign/unassign API.
-- [ ] Add `Assign to me` and admin assignment actions.
-- [ ] Contributors see assigned rows first.
-- [ ] Dashboard reflects assignment state.
+- [x] Add assigned user field/table for session rows.
+- [x] Add assign/reassign/unassign API.
+- [x] Add `Assign to me` and admin assignment actions.
+- [x] Contributors see assigned rows first.
+- [x] Dashboard reflects assignment state.
 
 Definition of done:
 

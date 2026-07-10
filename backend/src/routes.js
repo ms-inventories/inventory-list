@@ -324,6 +324,13 @@ function rowToSessionItem(row) {
     locationHint: row.location_hint,
     importBatchId: row.import_batch_id,
     status: row.status,
+    assignedTo: row.assigned_to,
+    assignedToEmail: row.assigned_to_email,
+    assignedToName: row.assigned_to_name,
+    assignedBy: row.assigned_by,
+    assignedByEmail: row.assigned_by_email,
+    assignedByName: row.assigned_by_name,
+    assignedAt: row.assigned_at,
     directVerifiedBy: row.direct_verified_by,
     directVerifiedByEmail: row.direct_verified_by_email,
     createdAt: row.created_at,
@@ -2822,9 +2829,15 @@ export function registerRoutes(app) {
           ii.description,
           ii.current_location,
           ii.metadata AS item_metadata,
+          assigned.email AS assigned_to_email,
+          assigned.display_name AS assigned_to_name,
+          assigner.email AS assigned_by_email,
+          assigner.display_name AS assigned_by_name,
           verifier.email AS direct_verified_by_email
         FROM inventory_session_items si
         LEFT JOIN inventory_items ii ON ii.id = si.inventory_item_id
+        LEFT JOIN app_users assigned ON assigned.id = si.assigned_to
+        LEFT JOIN app_users assigner ON assigner.id = si.assigned_by
         LEFT JOIN app_users verifier ON verifier.id = si.direct_verified_by
         WHERE si.session_id = $1
         ORDER BY si.created_at ASC
@@ -3228,6 +3241,124 @@ export function registerRoutes(app) {
         url: buildMediaUrl(storageKey),
         caption: body.caption || null,
         kind: body.kind
+      }
+    };
+  });
+
+  route(app, "patch", "/api/session-items/:sessionItemId/assignment", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor"]);
+    const body = parseBody(
+      z.object({
+        memberId: z.union([z.string().uuid(), z.literal("self")]).nullable().optional()
+      }),
+      request.body
+    );
+    const canManageAssignments = hasTenantRole(context, ["tenant_admin"]);
+    const requestedMemberId = body.memberId === "self" ? context.membership?.id || null : body.memberId || null;
+
+    if (!canManageAssignments) {
+      if (!requestedMemberId || requestedMemberId !== context.membership?.id) {
+        reply.code(403);
+        throw new Error("Contributors can only assign rows to themselves.");
+      }
+    }
+
+    const updated = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT si.id
+          FROM inventory_session_items si
+          JOIN inventory_sessions s ON s.id = si.session_id
+          WHERE si.id = $1
+            AND s.tenant_id = $2
+          FOR UPDATE OF si
+        `,
+        [request.params.sessionItemId, context.tenant.id]
+      );
+
+      if (!currentResult.rows[0]) return null;
+
+      let assignedUser = null;
+      if (requestedMemberId) {
+        const memberResult = await client.query(
+          `
+            SELECT m.id, m.user_id, m.role, u.email, u.display_name
+            FROM tenant_memberships m
+            JOIN app_users u ON u.id = m.user_id
+            WHERE m.id = $1
+              AND m.tenant_id = $2
+              AND m.status = 'active'
+              AND m.role IN ('tenant_admin', 'contributor')
+            LIMIT 1
+          `,
+          [requestedMemberId, context.tenant.id]
+        );
+
+        assignedUser = memberResult.rows[0] || null;
+        if (!assignedUser) {
+          reply.code(400);
+          throw new Error("Choose an active platoon admin or contributor.");
+        }
+      }
+
+      const result = await client.query(
+        `
+          UPDATE inventory_session_items si
+          SET
+            assigned_to = $1,
+            assigned_by = CASE WHEN $1::uuid IS NULL THEN NULL ELSE $2 END,
+            assigned_at = CASE WHEN $1::uuid IS NULL THEN NULL ELSE now() END,
+            updated_at = now()
+          FROM inventory_sessions s
+          LEFT JOIN app_users assigned ON assigned.id = $1::uuid
+          LEFT JOIN app_users assigner ON assigner.id = $2
+          WHERE si.session_id = s.id
+            AND si.id = $3
+            AND s.tenant_id = $4
+          RETURNING
+            si.id,
+            si.assigned_to,
+            si.assigned_by,
+            si.assigned_at,
+            assigned.email AS assigned_to_email,
+            assigned.display_name AS assigned_to_name,
+            assigner.email AS assigned_by_email,
+            assigner.display_name AS assigned_by_name
+        `,
+        [assignedUser?.user_id || null, context.user.id, request.params.sessionItemId, context.tenant.id]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: assignedUser ? "session_item.assigned" : "session_item.assignment_cleared",
+        entityType: "inventory_session_item",
+        entityId: request.params.sessionItemId,
+        metadata: {
+          assignedTo: assignedUser?.user_id || null,
+          assignedToEmail: assignedUser?.email || null,
+          assignedToRole: assignedUser?.role || null
+        }
+      });
+
+      return result.rows[0];
+    });
+
+    if (!updated) {
+      reply.code(404);
+      throw new Error("Session item not found");
+    }
+
+    return {
+      assignment: {
+        sessionItemId: updated.id,
+        assignedTo: updated.assigned_to,
+        assignedToEmail: updated.assigned_to_email,
+        assignedToName: updated.assigned_to_name,
+        assignedBy: updated.assigned_by,
+        assignedByEmail: updated.assigned_by_email,
+        assignedByName: updated.assigned_by_name,
+        assignedAt: updated.assigned_at
       }
     };
   });

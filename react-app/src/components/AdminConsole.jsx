@@ -487,7 +487,18 @@ function sessionItemIsComplete(item) {
   return ["approved", "found"].includes(item?.status) && !["pending", "request_more_info", "rejected"].includes(latestSubmission(item)?.reviewState);
 }
 
-function sessionItemMatchesFilter(item, filter) {
+function sessionItemAssignedToUser(item, me) {
+  const userId = me?.user?.id || "";
+  const email = String(me?.user?.email || "").toLowerCase();
+  return Boolean(
+    item?.assignedTo && userId && item.assignedTo === userId
+  ) || Boolean(
+    item?.assignedToEmail && email && String(item.assignedToEmail).toLowerCase() === email
+  );
+}
+
+function sessionItemMatchesFilter(item, filter, me = null) {
+  if (filter === "mine") return sessionItemAssignedToUser(item, me);
   if (filter === "action") return sessionItemNeedsAction(item);
   if (filter === "review") return sessionItemNeedsReview(item);
   if (filter === "requests") return itemNeedsMoreProof(item);
@@ -516,7 +527,9 @@ function getSessionItemSearchText(item) {
     latest?.note,
     latest?.reviewNote,
     latest?.submittedByEmail,
-    latest?.submittedByName
+    latest?.submittedByName,
+    item?.assignedToEmail,
+    item?.assignedToName
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
@@ -557,6 +570,10 @@ function formatItemStatus(value) {
 
 function submissionPerson(submission) {
   return submission?.submittedByName || submission?.submittedByEmail || "Unknown";
+}
+
+function assignedPerson(item) {
+  return item?.assignedToName || item?.assignedToEmail || "";
 }
 
 function itemDisplayName(item) {
@@ -1096,11 +1113,23 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
   );
 }
 
-function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, preferredSessionId = "", onUploadIntentHandled, onOpenGuidance }) {
+function SessionPanel({
+  token,
+  tenantSlug,
+  me = null,
+  members = [],
+  canManage,
+  canSubmit,
+  uploadIntent,
+  preferredSessionId = "",
+  onUploadIntentHandled,
+  onOpenGuidance
+}) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [detail, setDetail] = useState(null);
   const [newSessionName, setNewSessionName] = useState("");
+  const [isSessionCreateOpen, setIsSessionCreateOpen] = useState(false);
   const [packetRows, setPacketRows] = useState("");
   const [packetDraftRows, setPacketDraftRows] = useState([]);
   const [packetParseSummary, setPacketParseSummary] = useState(null);
@@ -1269,6 +1298,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
         body: { name, status: "active" }
       });
       setNewSessionName("");
+      setIsSessionCreateOpen(false);
       setStatus({ text: `Started ${data.session.name}`, isError: false });
       await loadSessions(data.session.id);
     } catch (error) {
@@ -1575,6 +1605,24 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     }
   }
 
+  async function updateSessionItemAssignment(sessionItemId, memberId) {
+    try {
+      setIsSaving(true);
+      await apiRequest(`/session-items/${sessionItemId}/assignment`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { memberId: memberId || null }
+      });
+      setStatus({ text: memberId ? "Row assigned." : "Row assignment cleared.", isError: false });
+      await loadSessionDetail(selectedSessionId, false);
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function updateSessionStatus(nextStatus, sessionIdOverride = selectedSessionId) {
     if (!sessionIdOverride) return;
     const sessionId = sessionIdOverride;
@@ -1657,24 +1705,39 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   }
 
   const selectedSession = sessions.find(session => session.id === selectedSessionId) || detail?.session;
+  const assignableMembers = useMemo(
+    () => (members || []).filter(member =>
+      member.status === "active" && ["tenant_admin", "contributor"].includes(member.role)
+    ),
+    [members]
+  );
+  const assignedMemberIdByUserId = useMemo(() => {
+    const lookup = new Map();
+    assignableMembers.forEach(member => {
+      if (member.userId) lookup.set(member.userId, member.id);
+    });
+    return lookup;
+  }, [assignableMembers]);
   const detailItems = useMemo(
     () => [...(detail?.items || [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
     [detail?.items]
   );
   const sessionItemFilterCounts = useMemo(() => ({
     all: detailItems.length,
+    mine: detailItems.filter(item => sessionItemAssignedToUser(item, me)).length,
     action: detailItems.filter(sessionItemNeedsAction).length,
     review: detailItems.filter(sessionItemNeedsReview).length,
     requests: detailItems.filter(itemNeedsMoreProof).length,
     problems: detailItems.filter(sessionItemHasProblem).length,
     complete: detailItems.filter(sessionItemIsComplete).length
-  }), [detailItems]);
+  }), [detailItems, me]);
   const visibleDetailItems = useMemo(
-    () => detailItems.filter(item => sessionItemMatchesFilter(item, sessionItemFilter) && sessionItemMatchesQuery(item, sessionItemQuery)),
-    [detailItems, sessionItemFilter, sessionItemQuery]
+    () => detailItems.filter(item => sessionItemMatchesFilter(item, sessionItemFilter, me) && sessionItemMatchesQuery(item, sessionItemQuery)),
+    [detailItems, sessionItemFilter, sessionItemQuery, me]
   );
   const sessionItemFilterOptions = [
     ["all", "All"],
+    ["mine", "Mine"],
     ["action", "Action"],
     ["review", "Review"],
     ["requests", "Requests"],
@@ -1690,6 +1753,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   const lowConfidencePacketRowCount = packetDraftRows.filter(row => row.confidence === "low").length;
   const packetIgnoredPreview = packetParseSummary?.ignoredLines || [];
   const selectedSessionIsClosed = selectedSession?.status === "closed";
+  const currentMemberId = me?.membership?.id || "";
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -1807,7 +1871,11 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
           </div>
 
           {canManage ? (
-            <details className="session-create" open={!sessions.length}>
+            <details
+              className="session-create"
+              open={isSessionCreateOpen || !sessions.length}
+              onToggle={event => setIsSessionCreateOpen(event.currentTarget.open)}
+            >
               <summary className="btn btn-secondary">
                 <Plus aria-hidden="true" />
                 <span>New session</span>
@@ -2021,6 +2089,11 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                   const knownLocation = item.inventoryItem?.currentLocation || "";
                   const knownDescription = item.inventoryItem?.description || "";
                   const imageUrls = getInventoryItemImages(item.inventoryItem);
+                  const assignedName = assignedPerson(item);
+                  const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
+                  const assignedToCurrentUser = sessionItemAssignedToUser(item, me);
+                  const canAssignToMe = Boolean(canSubmit && !assignedToCurrentUser && !selectedSessionIsClosed && (currentMemberId || !canManage));
+                  const selfAssignmentTarget = currentMemberId || "self";
                   return (
                     <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} key={item.id}>
                       <div className="session-item-main">
@@ -2055,10 +2128,41 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                           {needsMoreProof && submission.reviewNote ? (
                             <small className="session-proof-request">Requested: {submission.reviewNote}</small>
                           ) : null}
+                          <small className={`session-assignment-summary ${assignedName ? "assigned" : ""}`}>
+                            {assignedName ? `Assigned to ${assignedName}` : "Unassigned"}
+                          </small>
                         </div>
                       </div>
                       <div className="session-item-actions">
+                        {canManage ? (
+                          <label className="session-assignment-control">
+                            <span>Assign</span>
+                            <select
+                              value={assignedMemberId}
+                              disabled={isSaving || selectedSessionIsClosed}
+                              onChange={event => updateSessionItemAssignment(item.id, event.target.value)}
+                            >
+                              <option value="">Unassigned</option>
+                              {assignableMembers.map(member => (
+                                <option value={member.id} key={member.id}>
+                                  {member.displayName || member.email || formatRole(member.role)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : null}
                         <span className={`status-pill ${item.status}`}>{item.status}</span>
+                        {canAssignToMe ? (
+                          <button
+                            className="btn btn-secondary btn-small"
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => updateSessionItemAssignment(item.id, selfAssignmentTarget)}
+                          >
+                            <UserPlus aria-hidden="true" />
+                            <span>Assign to me</span>
+                          </button>
+                        ) : null}
                         {canManage ? (
                           <>
                             <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "approved")}>
@@ -4497,7 +4601,8 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
     item.packetLine,
     itemLocation(item),
     item.status,
-    item.session?.name
+    item.session?.name,
+    assignedPerson(item)
   ]));
   const visibleSubmissions = submissions.filter(submission => rowMatches([
     submission.sessionItem?.packetLine,
@@ -4575,6 +4680,7 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
           <div className="leader-table">
             {visiblePendingItems.length ? visiblePendingItems.map(item => {
               const imageUrls = getInventoryItemImages(item.inventoryItem);
+              const assignedName = assignedPerson(item);
               return (
                 <article className="leader-table-row" key={item.id}>
                   <div className="leader-item-cell">
@@ -4584,6 +4690,7 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
                     <div>
                       <strong>{itemTitle(item)}</strong>
                       <span>{item.session?.name || "Inventory session"}</span>
+                      <small>{assignedName ? `Assigned to ${assignedName}` : "Unassigned"}</small>
                     </div>
                   </div>
                   <span>{itemLocation(item)}</span>
@@ -5753,6 +5860,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             <SessionPanel
               token={token}
               tenantSlug={tenantSlug}
+              me={me}
+              members={members}
               canManage={isTenantAdmin}
               canSubmit={canSubmitProof}
               uploadIntent={sessionIntent}
