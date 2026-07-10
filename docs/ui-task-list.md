@@ -85,7 +85,8 @@ Use this as the working backlog before turning individual items into implementat
 
 ## P1: Finish Tenant/Leader Controls
 
-- [ ] **UI-013: Tenant hamburger menu**
+- [x] **UI-013: Tenant hamburger menu**
+  - Status: completed by current Codex thread, 2026-07-09. Existing tenant shell behavior now has focused QA coverage for desktop sidebar collapse/expand and mobile drawer open/close; safe for `UI-014` to continue.
   - Current issue: hamburger icon exists but does not open/collapse anything.
   - Desired behavior: on mobile it opens the nav drawer; on desktop it collapses the sidebar.
 
