@@ -49,7 +49,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: either route to a platform overview page or hide it until implemented.
   - Suggested use: total platoons, active sessions, pending reviews, recent tenant creation, auth health.
 
-- [ ] **UI-007: Platform sidebar Users**
+- [x] **UI-007: Platform sidebar Users**
+  - Status: completed by current Codex thread, 2026-07-09. Users now routes to the workspace access coverage view with focused desktop/mobile QA for the search, table headers, and empty-state behavior; safe for `UI-008` to continue.
   - Current issue: `Users` is a button with no action.
   - Desired behavior: route to a user management view or hide it.
   - Suggested use: search users, see Authentik-linked identity, tenant membership, roles, last activity.
