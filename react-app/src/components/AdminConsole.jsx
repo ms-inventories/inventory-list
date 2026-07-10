@@ -3404,8 +3404,13 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [activeView, setActiveView] = useState("dashboard");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [status, setStatus] = useState({ text: "Loading platoons...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
+  const userMenuRef = useRef(null);
+  const platformUserName = me?.user?.display_name || me?.user?.email || "Admin user";
+  const platformUserEmail = me?.user?.email || me?.identity?.email || "";
+  const platformUserInitial = String(platformUserName || "A").slice(0, 1).toUpperCase();
   const totalMembers = tenants.reduce((sum, tenant) => sum + Number(tenant.memberCount || 0), 0);
   const totalAdmins = tenants.reduce((sum, tenant) => sum + Number(tenant.adminCount || 0), 0);
   const activeTenants = tenants.filter(tenant => tenant.status === "active");
@@ -3539,6 +3544,30 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     loadTenants();
   }, [token]);
 
+  useEffect(() => {
+    if (!isUserMenuOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (!userMenuRef.current?.contains(event.target)) {
+        setIsUserMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsUserMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isUserMenuOpen]);
+
   async function refreshPlatform() {
     await loadTenants();
     onRefresh?.();
@@ -3584,6 +3613,20 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     } catch {
       setStatus({ text: "Could not copy diagnostics", isError: true });
     }
+  }
+
+  function openAppLauncher() {
+    window.location.assign(appLauncherUrl);
+  }
+
+  function openSupportDetails() {
+    setActiveView("support");
+    setIsUserMenuOpen(false);
+  }
+
+  async function copyDiagnosticsFromMenu() {
+    await copyDiagnostics();
+    setIsUserMenuOpen(false);
   }
 
   function openNewsletter() {
@@ -3725,13 +3768,51 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
             <button className="icon-button" type="button" onClick={refreshPlatform} aria-label="Refresh">
               <RefreshCw aria-hidden="true" />
             </button>
-            <div className="leader-user-card">
-              <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "A").slice(0, 1).toUpperCase()}</span>
-              <div>
-                <strong>{me?.user?.display_name || me?.user?.email || "Admin user"}</strong>
-                <span>Super administrator</span>
-              </div>
-              <ChevronDown aria-hidden="true" />
+            <div className="leader-popover-anchor platform-user-menu" ref={userMenuRef}>
+              <button
+                className="leader-user-card leader-user-trigger"
+                type="button"
+                aria-label="Open account actions"
+                aria-expanded={isUserMenuOpen}
+                onClick={() => setIsUserMenuOpen(current => !current)}
+              >
+                <span className="leader-avatar">{platformUserInitial}</span>
+                <div>
+                  <strong>{platformUserName}</strong>
+                  <span>Super administrator</span>
+                </div>
+                <ChevronDown aria-hidden="true" />
+              </button>
+              {isUserMenuOpen ? (
+                <section className="leader-popover leader-user-menu platform-user-dropdown" aria-label="Account menu">
+                  <div className="leader-profile-summary">
+                    <span className="leader-avatar">{platformUserInitial}</span>
+                    <div>
+                      <span>Profile</span>
+                      <strong>{platformUserName}</strong>
+                      {platformUserEmail ? <small>{platformUserEmail}</small> : null}
+                    </div>
+                  </div>
+                  <div className="leader-menu-actions">
+                    <button type="button" onClick={openAppLauncher}>
+                      <LogIn aria-hidden="true" />
+                      <span>App portal</span>
+                    </button>
+                    <button type="button" onClick={openSupportDetails}>
+                      <RefreshCw aria-hidden="true" />
+                      <span>Diagnostics</span>
+                    </button>
+                    <button type="button" onClick={copyDiagnosticsFromMenu}>
+                      <Copy aria-hidden="true" />
+                      <span>Copy diagnostics</span>
+                    </button>
+                    <button type="button" onClick={onLogout}>
+                      <LogOut aria-hidden="true" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                </section>
+              ) : null}
             </div>
             <button className="btn btn-secondary btn-small" type="button" onClick={onLogout}>
               <LogOut aria-hidden="true" />

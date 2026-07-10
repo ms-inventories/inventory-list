@@ -1528,6 +1528,15 @@ button {
   padding: 4px 2px 12px;
 }
 
+.leader-profile-summary small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 760;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .leader-menu-actions {
   display: grid;
   gap: 4px;
@@ -2053,6 +2062,25 @@ button {
   min-width: 208px;
   border-left-color: var(--platform-line);
   padding-left: 14px;
+}
+
+.platform-topbar .leader-user-trigger {
+  border-left-width: 1px;
+  border-left-style: solid;
+  border-radius: 0;
+}
+
+.platform-topbar .leader-user-trigger:hover,
+.platform-topbar .leader-user-trigger:focus-visible {
+  background: transparent;
+}
+
+.platform-user-menu {
+  z-index: 46;
+}
+
+.platform-user-dropdown {
+  width: min(300px, calc(100vw - 32px));
 }
 
 .platform-topbar .icon-button {

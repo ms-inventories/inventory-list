@@ -73,7 +73,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: route to a diagnostics/support page or remove it.
   - Suggested use: copy deployment info, API health, auth issuer, storage driver, mail status, version.
 
-- [ ] **UI-011: Platform user card dropdown**
+- [x] **UI-011: Platform user card dropdown**
+  - Status: completed by current Codex thread, 2026-07-09. Platform user card now opens a real account menu with profile context, app portal, diagnostics, copy diagnostics, and sign out, plus focused desktop/mobile QA coverage; safe for `UI-012` to continue.
   - Current issue: user card has a chevron but no menu.
   - Desired behavior: clicking it opens a small menu with profile, app portal, diagnostics, and sign out.
 
