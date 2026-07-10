@@ -95,7 +95,8 @@ Use this as the working backlog before turning individual items into implementat
   - Current issue: bell icon has no action.
   - Desired behavior: notification panel for new submissions, proof requests, assigned items, imports completed, and session status changes.
 
-- [ ] **UI-015: Tenant user card dropdown**
+- [x] **UI-015: Tenant user card dropdown**
+  - Status: completed by current Codex thread, 2026-07-09. Tenant user card opens account actions, shows profile/access details, and signs out cleanly with desktop/mobile QA coverage; safe for `UI-016` to continue.
   - Current issue: user card has a chevron but no menu.
   - Desired behavior: menu with profile, app portal, switch workspace, diagnostics, and sign out.
 
