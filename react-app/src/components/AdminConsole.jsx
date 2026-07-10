@@ -329,6 +329,24 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
   );
 }
 
+function getProtectedAuthErrorMessage(error) {
+  const code = error?.code || error?.details?.code || "";
+
+  if (code.startsWith("token_exchange")) {
+    return "Sign-in reached the app, but the inventory API did not finish the callback. Try again or ask an admin to check API routing.";
+  }
+
+  if (code === "state_mismatch") {
+    return "The sign-in session expired. Try again.";
+  }
+
+  if (error?.status === 401) {
+    return "Your sign-in expired. Try again.";
+  }
+
+  return getApiErrorMessage(error);
+}
+
 function StatusLine({ status }) {
   if (!status?.text) return null;
   const text = /failed to fetch/i.test(status.text) ? getApiErrorMessage(new Error(status.text)) : status.text;
@@ -6030,16 +6048,16 @@ export default function AdminConsole() {
         }
       } catch (error) {
         callbackFailed = true;
-        if (!ignore) setStatus({ text: error.message || "Login failed", isError: true });
+        if (!ignore) setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
       }
 
-      if (!token && !callbackFailed && !appConfig.enableQaAuth && !appConfig.enableManualTokenAuth) {
+      if (!token && !callbackFailed && !appConfig.enableQaAuth) {
         try {
           setStatus({ text: "Redirecting to Authentik...", isError: false });
           await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
           return;
         } catch (error) {
-          if (!ignore) setStatus({ text: error.message || "Could not start login", isError: true });
+          if (!ignore) setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
           return;
         }
       }

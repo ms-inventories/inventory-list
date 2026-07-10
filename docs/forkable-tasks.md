@@ -133,6 +133,8 @@ Definition of done:
 
 Goal: make OIDC callback and `/me` failures actionable.
 
+Status: completed by current Codex thread, 2026-07-10. Safe for non-auth tasks to proceed; coordinate before changing OIDC callback routing, protected-page auto-login behavior, or auth diagnostics again.
+
 Primary files:
 
 - `react-app/src/lib/auth.js`
@@ -143,11 +145,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Detect failed token exchange separately from failed `/me`.
-- [ ] Show CORS/API routing diagnostics only to admin/QA mode.
-- [ ] Add retry and sign-out actions to callback failure screens.
-- [ ] Ensure tenant slug survives redirects.
-- [ ] Test `admin.localhost`, `ms.localhost`, and root `localhost`.
+- [x] Detect failed token exchange separately from failed `/me`.
+- [x] Show CORS/API routing diagnostics only to admin/QA mode.
+- [x] Add retry and sign-out actions to callback failure screens.
+- [x] Ensure tenant slug survives redirects.
+- [x] Test `admin.localhost`, `ms.localhost`, and root `localhost`.
 
 Definition of done:
 

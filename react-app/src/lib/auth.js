@@ -4,6 +4,8 @@ const AUTH_SESSION_KEY = "inventory.auth.session";
 const OIDC_STATE_KEY = "inventory.oidc.state";
 const OIDC_VERIFIER_KEY = "inventory.oidc.verifier";
 
+let currentRedirectCompletion = null;
+
 export class AuthFlowError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -148,19 +150,16 @@ export async function beginOidcLogin(returnTo = `${window.location.pathname}${wi
   window.location.assign(`${discovery.authorization_endpoint}?${params.toString()}`);
 }
 
-export async function completeOidcRedirect() {
-  const url = new URL(window.location.href);
-  const code = url.searchParams.get("code");
-  const returnedState = url.searchParams.get("state");
-  if (!code || !returnedState) return null;
-
+async function completeOidcRedirectOnce(code, returnedState) {
   const storedState = JSON.parse(sessionStorage.getItem(OIDC_STATE_KEY) || "null");
   const verifier = sessionStorage.getItem(OIDC_VERIFIER_KEY);
   sessionStorage.removeItem(OIDC_STATE_KEY);
   sessionStorage.removeItem(OIDC_VERIFIER_KEY);
 
   if (!storedState?.state || storedState.state !== returnedState || !verifier) {
+    const existingSession = readAuthSession();
     cleanRedirectUrl();
+    if (getSessionAccessToken(existingSession)) return existingSession;
     throw new AuthFlowError("state_mismatch", "The sign-in session expired. Try signing in again.");
   }
 
@@ -213,4 +212,20 @@ export async function completeOidcRedirect() {
   saveAuthSession(session);
   cleanRedirectUrl(storedState.returnTo);
   return session;
+}
+
+export async function completeOidcRedirect() {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("code");
+  const returnedState = url.searchParams.get("state");
+  if (!code || !returnedState) return null;
+
+  const completionKey = `${returnedState}:${code}`;
+  if (currentRedirectCompletion?.key === completionKey) {
+    return currentRedirectCompletion.promise;
+  }
+
+  const promise = Promise.resolve().then(() => completeOidcRedirectOnce(code, returnedState));
+  currentRedirectCompletion = { key: completionKey, promise };
+  return promise;
 }
