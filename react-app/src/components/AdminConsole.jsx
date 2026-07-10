@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertCircle,
   Bell,
   BookOpen,
   Building2,
@@ -425,6 +426,10 @@ function sortSessionsByAttention(sessions) {
 
     return sessionCreatedValue(b) - sessionCreatedValue(a);
   });
+}
+
+function normalizeSessionName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function sessionItemPriority(item) {
@@ -1115,6 +1120,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   const [isSaving, setIsSaving] = useState(false);
   const [isReadingPacket, setIsReadingPacket] = useState(false);
   const [deleteSessionTarget, setDeleteSessionTarget] = useState(null);
+  const [closeSessionTarget, setCloseSessionTarget] = useState(null);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [printReportId, setPrintReportId] = useState("");
   const packetFileInputRef = useRef(null);
@@ -1202,10 +1208,42 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     setProofItemId("");
   }, [selectedSessionId]);
 
+  function findDuplicateOpenEmptySession(name) {
+    const normalizedName = normalizeSessionName(name);
+    if (!normalizedName) return null;
+    return sessions.find(session =>
+      session.status !== "closed" &&
+      Number(session.itemCount || 0) === 0 &&
+      normalizeSessionName(session.name) === normalizedName
+    ) || null;
+  }
+
+  async function openExistingEmptySession(session, message = "") {
+    if (!session?.id) return "";
+    setSelectedSessionId(session.id);
+    setPacketWizardMode("existing");
+    setPacketWizardSessionId(session.id);
+    setPacketWizardSessionName("");
+    setNewSessionName("");
+    clearPacketImport();
+    await loadSessionDetail(session.id, false);
+    setStatus({
+      text: message || `${session.name} is already an empty session. Opened it instead.`,
+      isError: false
+    });
+    return session.id;
+  }
+
   async function createSession(e) {
     e.preventDefault();
     const name = newSessionName.trim();
     if (!name) return;
+
+    const duplicate = findDuplicateOpenEmptySession(name);
+    if (duplicate) {
+      await openExistingEmptySession(duplicate);
+      return;
+    }
 
     try {
       setIsSaving(true);
@@ -1261,6 +1299,24 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     setDeleteSessionTarget(null);
   }
 
+  function requestCloseSession(session) {
+    if (!session || session.status === "closed") return;
+    setCloseSessionTarget(session);
+    setStatus({ text: "", isError: false });
+  }
+
+  function closeCloseSessionDialog() {
+    if (isSaving) return;
+    setCloseSessionTarget(null);
+  }
+
+  async function confirmCloseSession() {
+    if (!closeSessionTarget?.id) return;
+    const target = closeSessionTarget;
+    setCloseSessionTarget(null);
+    await updateSessionStatus("closed", target.id);
+  }
+
   async function preparePacketWizardSession() {
     if (packetWizardMode === "existing") {
       const sessionId = packetWizardSessionId || selectedSessionId;
@@ -1281,6 +1337,16 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     if (!name) {
       setStatus({ text: "Name the inventory session first.", isError: true });
       return "";
+    }
+
+    const duplicate = findDuplicateOpenEmptySession(name);
+    if (duplicate) {
+      const sessionId = await openExistingEmptySession(
+        duplicate,
+        `${duplicate.name} is already an empty session. Using that session instead.`
+      );
+      if (sessionId) setPacketWizardStep(2);
+      return sessionId;
     }
 
     try {
@@ -1490,9 +1556,9 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     }
   }
 
-  async function updateSessionStatus(nextStatus) {
-    if (!selectedSessionId) return;
-    const sessionId = selectedSessionId;
+  async function updateSessionStatus(nextStatus, sessionIdOverride = selectedSessionId) {
+    if (!sessionIdOverride) return;
+    const sessionId = sessionIdOverride;
 
     try {
       await apiRequest(`/inventory/sessions/${sessionId}`, {
@@ -1510,17 +1576,18 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
 
   async function deleteEmptySession() {
     if (!deleteSessionTarget?.id) return;
+    const target = deleteSessionTarget;
 
     try {
       setIsDeletingSession(true);
       setStatus({ text: "", isError: false });
-      await apiRequest(`/inventory/sessions/${deleteSessionTarget.id}`, {
+      await apiRequest(`/inventory/sessions/${target.id}`, {
         method: "DELETE",
         token,
         tenantSlug
       });
       setDeleteSessionTarget(null);
-      if (selectedSessionId === deleteSessionTarget.id) {
+      if (selectedSessionId === target.id) {
         setSelectedSessionId("");
         setDetail(null);
         clearPacketImport();
@@ -1528,7 +1595,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
         setPacketWizardSessionId("");
       }
       await loadSessions("");
-      setStatus({ text: `Deleted empty session ${deleteSessionTarget.name}.`, isError: false });
+      setStatus({ text: `Deleted empty session ${target.name}.`, isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
@@ -1603,6 +1670,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   const packetRowsReadyCount = sanitizePacketDraftRows(packetDraftRows).length;
   const lowConfidencePacketRowCount = packetDraftRows.filter(row => row.confidence === "low").length;
   const packetIgnoredPreview = packetParseSummary?.ignoredLines || [];
+  const selectedSessionIsClosed = selectedSession?.status === "closed";
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -1799,8 +1867,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                       </button>
                     ) : (
                       selectedSession.status !== "closed" ? (
-                        <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("closed")}>
-                          <span>Close</span>
+                        <button className="btn btn-secondary btn-small" type="button" onClick={() => requestCloseSession(selectedSession)}>
+                          <span>Close out</span>
                         </button>
                       ) : (
                         <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("active")}>
@@ -1856,7 +1924,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                 </div>
               ) : null}
 
-              {canManage ? (
+              {canManage && !selectedSessionIsClosed ? (
                 <div className="packet-wizard-entry">
                   <div>
                     <strong>Packet import</strong>
@@ -2373,6 +2441,50 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                   </div>
                 </div>
               ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {closeSessionTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="closeSessionTitle">
+            <div className="modal-stack">
+              <div className="modal-heading">
+                <span className="modal-icon">
+                  <CheckCircle2 aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="eyebrow">Closeout</p>
+                  <h2 className="modal-title" id="closeSessionTitle">Close this session?</h2>
+                  <p className="modal-copy">
+                    This moves {closeSessionTarget.name} out of the active work list. You can reopen it later from the closed archive.
+                  </p>
+                </div>
+              </div>
+              <div className="close-session-summary">
+                <span>
+                  <strong>{closeSessionTarget.itemCount || 0}</strong>
+                  packet rows
+                </span>
+                <span>
+                  <strong>{closeSessionTarget.foundCount || 0}</strong>
+                  found
+                </span>
+                <span>
+                  <strong>{closeSessionTarget.needsReviewCount || 0}</strong>
+                  needs review
+                </span>
+              </div>
+              <div className="button-row start-inventory-actions">
+                <button className="btn btn-primary" type="button" onClick={confirmCloseSession} disabled={isSaving}>
+                  <CheckCircle2 aria-hidden="true" />
+                  <span>{isSaving ? "Closing..." : "Close session"}</span>
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={closeCloseSessionDialog} disabled={isSaving}>
+                  <span>Cancel</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

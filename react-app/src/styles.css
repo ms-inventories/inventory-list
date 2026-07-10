@@ -3583,6 +3583,32 @@ button {
   gap: 6px;
 }
 
+.close-session-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.close-session-summary span {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf7;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 10px;
+  text-transform: uppercase;
+}
+
+.close-session-summary strong {
+  color: var(--ink);
+  font-size: 1.25rem;
+  line-height: 1;
+  text-transform: none;
+}
+
 .session-alert {
   display: inline-flex;
   min-height: 24px;
@@ -5934,6 +5960,10 @@ button {
 }
 
 @media (max-width: 560px) {
+  .close-session-summary {
+    grid-template-columns: 1fr;
+  }
+
   .platform-brand strong {
     font-size: 1.05rem;
   }
