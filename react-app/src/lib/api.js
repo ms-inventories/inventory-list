@@ -4,13 +4,17 @@ import { readAuthSession } from "./auth.js";
 const QA_IDENTITY_KEY = "inventory.qa.identity";
 
 export class ApiError extends Error {
-  constructor(message, status, details) {
+  constructor(message, status = 0, details = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
-    this.details = details;
+    this.details = details && typeof details === "object" ? details : { raw: details };
+    this.code = this.details.code || "";
   }
 }
+
+const API_NETWORK_MESSAGE = "Could not reach the inventory API. Try again, or ask an admin to check API routing if this keeps happening.";
+const API_NON_JSON_MESSAGE = "The inventory API returned an unexpected response. Ask an admin to check API routing.";
 
 export function readQaIdentity() {
   if (!appConfig.enableQaAuth) return null;
@@ -60,12 +64,23 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
     headers["X-Dev-Groups"] = (qaIdentity.groups || []).join(",");
   }
 
-  const response = await fetch(buildApiUrl(path), {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store"
-  });
+  const url = buildApiUrl(path);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store"
+    });
+  } catch (error) {
+    throw new ApiError(API_NETWORK_MESSAGE, 0, {
+      code: "api_network",
+      url,
+      cause: error?.message || String(error)
+    });
+  }
 
   const text = await response.text();
   let data = null;
@@ -74,15 +89,15 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
       data = JSON.parse(text);
     } catch {
       throw new ApiError(
-        "API returned a non-JSON response. Check VITE_API_BASE_URL and Cloudflare/Coolify routing.",
+        API_NON_JSON_MESSAGE,
         response.status,
-        { raw: getResponsePreview(text), url: buildApiUrl(path) }
+        { code: "api_non_json", raw: getResponsePreview(text), url }
       );
     }
   }
 
   if (!response.ok) {
-    throw new ApiError(data?.error || `Request failed (${response.status})`, response.status, data);
+    throw new ApiError(data?.error || `Request failed (${response.status})`, response.status, data || { url });
   }
 
   return data || {};
@@ -90,5 +105,7 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
 
 export function getApiErrorMessage(error) {
   if (error instanceof ApiError) return error.message;
-  return error?.message || "Request failed";
+  const message = typeof error === "string" ? error : error?.message || error?.text || "";
+  if (/failed to fetch|networkerror|load failed/i.test(message)) return API_NETWORK_MESSAGE;
+  return message || "Request failed";
 }

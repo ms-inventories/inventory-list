@@ -487,7 +487,7 @@ function getLaunchStatusFromError(error) {
   if (/failed to fetch/i.test(error?.message || "")) {
     return {
       code: "api_network",
-      text: "Could not reach the inventory API. Try again or ask an admin to check API routing."
+      text: getApiErrorMessage(error)
     };
   }
 

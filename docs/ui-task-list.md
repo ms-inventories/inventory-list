@@ -35,7 +35,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: real PDF upload extracts likely item rows, shows low-confidence rows for review, and imports only after approval.
   - Controls affected: packet import wizard, review rows, import rows.
 
-- [ ] **UI-005: Resolve tenant callback/API failure states**
+- [x] **UI-005: Resolve tenant callback/API failure states**
+  - Status: completed by current Codex thread, 2026-07-09. API/network failures now use actionable routing copy and have focused QA coverage; safe for `UI-006` to continue.
   - Current issue: tenant routes can land on `Failed to fetch` after OIDC redirects.
   - Desired behavior: tenant callbacks exchange tokens cleanly, `/me` succeeds, and CORS/origin issues show a clear admin-only diagnostic.
   - Controls affected: `Continue with Authentik`, launch callback, tenant admin sign-in.

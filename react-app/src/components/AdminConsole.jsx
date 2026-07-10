@@ -321,7 +321,8 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
 
 function StatusLine({ status }) {
   if (!status?.text) return null;
-  return <div className={`admin-status ${status.isError ? "error" : ""}`}>{status.text}</div>;
+  const text = /failed to fetch/i.test(status.text) ? getApiErrorMessage(new Error(status.text)) : status.text;
+  return <div className={`admin-status ${status.isError ? "error" : ""}`}>{text}</div>;
 }
 
 function formatFileSize(bytes) {
