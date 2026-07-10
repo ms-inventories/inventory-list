@@ -30,6 +30,12 @@ test.describe("PDF packet import", () => {
     await fileChooser.setFiles(PACKET_FIXTURE);
 
     await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible({ timeout: 45_000 });
+    const parserSummary = dialog.getByLabel("Packet parser summary");
+    await expect(parserSummary.getByText("PDF", { exact: true })).toBeVisible();
+    await expect(parserSummary.getByText("army-packet-clean.pdf")).toBeVisible();
+    await expect(parserSummary.getByText("Rows ready")).toBeVisible();
+    await expect(parserSummary.getByText("Ignored")).toBeVisible();
+    await expect(dialog.getByText("Ignored text")).toBeVisible();
     await expect(dialog.getByText(/27 ready to import/)).toBeVisible();
     await expect(dialog.getByText(/27 rows found/)).toBeVisible();
     await expect(dialog.locator(".packet-confidence.low")).toHaveCount(0);

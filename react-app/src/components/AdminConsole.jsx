@@ -44,9 +44,9 @@ import {
 } from "../lib/auth.js";
 import { readPacketFileText } from "../lib/ocr.js";
 import {
+  analyzePacketRows,
   createPacketDraftRows,
   packetMimeTypeForFile,
-  parsePacketRows,
   sanitizePacketDraftRows
 } from "../lib/packetParser.js";
 
@@ -339,6 +339,16 @@ function formatFileSize(bytes) {
   if (!value) return "";
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+function describePacketSourceType(source = {}) {
+  const mimeType = String(source.mimeType || "").toLowerCase();
+  const fileName = String(source.fileName || source.name || "").toLowerCase();
+  if (mimeType.includes("pdf") || fileName.endsWith(".pdf")) return "PDF";
+  if (mimeType.includes("csv") || fileName.endsWith(".csv")) return "CSV";
+  if (mimeType.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/.test(fileName)) return "Photo";
+  if (mimeType.includes("text") || fileName.endsWith(".txt")) return "Text";
+  return "Pasted text";
 }
 
 function normalizeMetadataValue(value) {
@@ -1088,6 +1098,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   const [newSessionName, setNewSessionName] = useState("");
   const [packetRows, setPacketRows] = useState("");
   const [packetDraftRows, setPacketDraftRows] = useState([]);
+  const [packetParseSummary, setPacketParseSummary] = useState(null);
   const [packetSourceName, setPacketSourceName] = useState("");
   const [packetSourceFile, setPacketSourceFile] = useState(null);
   const [isPacketImportOpen, setIsPacketImportOpen] = useState(false);
@@ -1297,22 +1308,30 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     }
   }
 
-  function reviewPacketRows(sourceText = packetRows, sourceName = packetSourceName, sessionId = selectedSessionId) {
+  function reviewPacketRows(sourceText = packetRows, sourceName = packetSourceName, sessionId = selectedSessionId, sourceMeta = packetSourceFile) {
     if (!sessionId) {
       setStatus({ text: "Create or select a session first.", isError: true });
       return [];
     }
 
-    const rows = createPacketDraftRows(parsePacketRows(sourceText));
+    const analysis = analyzePacketRows(sourceText);
+    const rows = createPacketDraftRows(analysis.rows);
+    const source = sourceMeta || {};
+    const displaySourceName = sourceName || source.fileName || "Pasted packet text";
     setPacketDraftRows(rows);
-    setPacketSourceName(sourceName || "");
+    setPacketParseSummary({
+      ...analysis,
+      sourceName: displaySourceName,
+      sourceType: describePacketSourceType(source.fileName || source.mimeType ? source : { fileName: displaySourceName })
+    });
+    setPacketSourceName(sourceName || source.fileName || "");
 
     if (!rows.length) {
       setStatus({ text: "No packet rows found. Try pasting one item per line.", isError: true });
       return [];
     }
 
-    setStatus({ text: `Found ${rows.length} packet rows. Review them before importing.`, isError: false });
+    setStatus({ text: `Found ${rows.length} packet rows and ignored ${analysis.ignoredCount} non-item lines.`, isError: false });
     return rows;
   }
 
@@ -1337,7 +1356,16 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
         dataUrl,
         size: file.size
       });
-      const rows = reviewPacketRows(text, file.name, packetWizardSessionId || selectedSessionId);
+      const rows = reviewPacketRows(
+        text,
+        file.name,
+        packetWizardSessionId || selectedSessionId,
+        {
+          fileName: file.name,
+          mimeType: packetMimeTypeForFile(file),
+          size: file.size
+        }
+      );
       if (rows.length) setPacketWizardStep(3);
     } catch (error) {
       setStatus({ text: error.message || "Could not read packet file.", isError: true });
@@ -1366,6 +1394,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   function clearPacketImport(options = {}) {
     setPacketRows("");
     setPacketDraftRows([]);
+    setPacketParseSummary(null);
     setPacketSourceName("");
     setPacketSourceFile(null);
     if (options.clearStatus) setStatus({ text: "", isError: false });
@@ -1573,6 +1602,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   const importBatches = detail?.importBatches || [];
   const packetRowsReadyCount = sanitizePacketDraftRows(packetDraftRows).length;
   const lowConfidencePacketRowCount = packetDraftRows.filter(row => row.confidence === "low").length;
+  const packetIgnoredPreview = packetParseSummary?.ignoredLines || [];
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -2185,6 +2215,48 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                     <p>Clean up anything the parser guessed wrong. Low confidence rows can still be saved if the text is useful.</p>
                   </div>
 
+                  {packetParseSummary ? (
+                    <div className="packet-review-summary" aria-label="Packet parser summary">
+                      <div>
+                        <span>Source</span>
+                        <strong>{packetParseSummary.sourceType}</strong>
+                        <small>{packetParseSummary.sourceName}</small>
+                      </div>
+                      <div>
+                        <span>Rows ready</span>
+                        <strong>{packetRowsReadyCount}</strong>
+                        <small>will import</small>
+                      </div>
+                      <div>
+                        <span>Needs review</span>
+                        <strong>{lowConfidencePacketRowCount}</strong>
+                        <small>low confidence</small>
+                      </div>
+                      <div>
+                        <span>Ignored</span>
+                        <strong>{packetParseSummary.ignoredCount || 0}</strong>
+                        <small>headers, notes, or duplicates</small>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {packetIgnoredPreview.length ? (
+                    <details className="packet-review-ignored">
+                      <summary>
+                        <span>Ignored text</span>
+                        <strong>{packetIgnoredPreview.length}{packetParseSummary?.ignoredCount > packetIgnoredPreview.length ? "+" : ""} lines</strong>
+                      </summary>
+                      <div className="packet-review-ignored-list">
+                        {packetIgnoredPreview.map((line, index) => (
+                          <div className="packet-review-ignored-row" key={`${line.text}-${index}`}>
+                            <span>{line.reason}</span>
+                            <p>{line.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+
                   {packetDraftRows.length ? (
                     <div className="packet-review">
                       <div className="packet-review-heading">
@@ -2265,7 +2337,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
                       <Trash2 aria-hidden="true" />
                       <span>Clear</span>
                     </button>
-                    <button className="btn btn-primary" type="button" disabled={isSaving || isReadingPacket} onClick={finishPacketWizardImport}>
+                    <button className="btn btn-primary" type="button" disabled={isSaving || isReadingPacket || packetRowsReadyCount === 0} onClick={finishPacketWizardImport}>
                       <ClipboardPlus aria-hidden="true" />
                       <span>{isSaving ? "Importing..." : `Import ${packetRowsReadyCount} rows`}</span>
                     </button>

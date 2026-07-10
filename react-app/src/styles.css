@@ -4524,6 +4524,107 @@ button {
   padding-top: 12px;
 }
 
+.packet-review-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.packet-review-summary > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 10px;
+}
+
+.packet-review-summary span,
+.packet-review-summary small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.packet-review-summary strong {
+  color: var(--ink);
+  font-size: 1.3rem;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.packet-review-ignored {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.packet-review-ignored summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  padding: 10px 12px;
+}
+
+.packet-review-ignored summary::-webkit-details-marker {
+  display: none;
+}
+
+.packet-review-ignored summary span,
+.packet-review-ignored summary strong {
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.packet-review-ignored summary span {
+  color: var(--ink);
+}
+
+.packet-review-ignored summary strong {
+  color: var(--muted);
+}
+
+.packet-review-ignored-list {
+  display: grid;
+  gap: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.packet-review-ignored-row {
+  display: grid;
+  gap: 2px;
+  padding: 9px 12px;
+}
+
+.packet-review-ignored-row + .packet-review-ignored-row {
+  border-top: 1px solid var(--line);
+}
+
+.packet-review-ignored-row span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.packet-review-ignored-row p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .packet-review-heading {
   display: flex;
   align-items: center;
@@ -5564,6 +5665,10 @@ button {
     width: 100%;
   }
 
+  .packet-review-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .packet-review-list {
     max-height: 260px;
   }
@@ -5977,6 +6082,10 @@ button {
 
   .leader-table-row .btn {
     width: 100%;
+  }
+
+  .packet-review-summary {
+    grid-template-columns: 1fr;
   }
 
   .leader-user-card {

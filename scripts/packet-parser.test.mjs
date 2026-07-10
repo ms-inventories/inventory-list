@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import {
+  analyzePacketRows,
   parsePacketRows,
   sanitizePacketDraftRows
 } from "../react-app/src/lib/packetParser.js";
@@ -99,6 +100,24 @@ In the motorpool, one missing
   `);
 
   assert.equal(rows.length, 0);
+});
+
+test("summarizes accepted and ignored packet text before import", () => {
+  const analysis = analyzePacketRows(`
+Sub Hand Receipt
+MPO MPO Description
+000009148 R20684 RADIAC SET: AN/VDR-2
+NSN NSN Description UI CIIC DLA BUoM OH Qty
+6665012221425 RADIAC SET AN/VDR-2 EA 7 5156 EA 1
+stable base for rods
+Page 3 of 8
+  `);
+
+  assert.equal(analysis.acceptedCount, 1);
+  assert.equal(analysis.lowConfidenceCount, 0);
+  assert.ok(analysis.ignoredCount >= 3);
+  assert.ok(analysis.ignoredLines.some(line => /Sub Hand Receipt/i.test(line.text)));
+  assert.ok(!analysis.rows.some(row => /stable base for rods/i.test(row.packetLine)));
 });
 
 test("parses generated PDF extracted-text fixtures when available", t => {

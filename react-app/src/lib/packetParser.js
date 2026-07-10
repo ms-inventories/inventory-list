@@ -298,6 +298,13 @@ function mergeNsnIntoPrevious(rows, nsnRow) {
   return true;
 }
 
+function normalizedRawLinesFromText(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map(line => normalizePacketImportLine(line))
+    .filter(Boolean);
+}
+
 function candidateLinesFromText(text) {
   const rawLines = String(text || "")
     .split(/\r?\n/)
@@ -342,13 +349,27 @@ function candidateLinesFromText(text) {
   return lines;
 }
 
-export function parsePacketRows(text) {
+function ignoredCandidateReason(line) {
+  if (isPacketImportNoiseLine(line)) return "Header, footer, or non-item text";
+  if (!/[A-Z]/i.test(line) || !/\d/.test(line)) return "No item identifier";
+  return "Not enough item detail";
+}
+
+function parsePacketRowsInternal(text) {
   const rows = [];
+  const ignoredCandidates = [];
 
   for (const line of candidateLinesFromText(text)) {
     const delimited = parseDelimitedPacketLine(line);
     const row = delimited || parseStructuredPacketLine(line);
-    if (!row?.packetLine || isPacketImportNoiseLine(row.packetLine)) continue;
+    if (!row?.packetLine || isPacketImportNoiseLine(row.packetLine)) {
+      const normalizedLine = normalizePacketImportLine(line);
+      ignoredCandidates.push({
+        text: normalizedLine,
+        reason: ignoredCandidateReason(normalizedLine)
+      });
+      continue;
+    }
 
     if (row.nsn && !row.lin && mergeNsnIntoPrevious(rows, row)) continue;
     rows.push({
@@ -359,14 +380,62 @@ export function parsePacketRows(text) {
   }
 
   const seen = new Set();
-  return rows
-    .filter(row => {
-      const key = rowKey(row);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 250);
+  const acceptedRows = [];
+  const duplicateRows = [];
+  for (const row of rows) {
+    const key = rowKey(row);
+    if (seen.has(key)) {
+      duplicateRows.push({
+        text: row.packetLine,
+        reason: "Duplicate item row"
+      });
+      continue;
+    }
+    seen.add(key);
+    acceptedRows.push(row);
+  }
+
+  return {
+    rows: acceptedRows.slice(0, 250),
+    ignoredCandidates: [...ignoredCandidates, ...duplicateRows],
+    rawLines: normalizedRawLinesFromText(text),
+    candidateCount: candidateLinesFromText(text).length,
+    truncatedCount: Math.max(0, acceptedRows.length - 250)
+  };
+}
+
+export function analyzePacketRows(text) {
+  const parsed = parsePacketRowsInternal(text);
+  const acceptedText = parsed.rows.map(row => normalizePacketImportLine(row.packetLine).toLowerCase());
+  const ignored = [...parsed.ignoredCandidates];
+  const ignoredKeys = new Set(ignored.map(item => item.text.toLowerCase()));
+
+  for (const line of parsed.rawLines) {
+    const key = line.toLowerCase();
+    if (ignoredKeys.has(key)) continue;
+    if (!isPacketImportNoiseLine(line)) continue;
+    if (acceptedText.some(rowText => rowText.includes(key))) continue;
+    ignoredKeys.add(key);
+    ignored.push({
+      text: line,
+      reason: "Header, footer, or non-item text"
+    });
+  }
+
+  return {
+    rows: parsed.rows,
+    acceptedCount: parsed.rows.length,
+    candidateCount: parsed.candidateCount,
+    ignoredCount: ignored.length + parsed.truncatedCount,
+    ignoredLines: ignored.slice(0, 30),
+    lowConfidenceCount: parsed.rows.filter(row => row.confidence === "low").length,
+    totalLineCount: parsed.rawLines.length,
+    truncatedCount: parsed.truncatedCount
+  };
+}
+
+export function parsePacketRows(text) {
+  return parsePacketRowsInternal(text).rows;
 }
 
 export function createPacketDraftRows(rows) {
