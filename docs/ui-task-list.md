@@ -67,7 +67,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: either implement company/unit organization settings or remove the control.
   - Suggested use: company profile, base domain, default group prefix, FRG branding.
 
-- [ ] **UI-010: Platform sidebar Support**
+- [x] **UI-010: Platform sidebar Support**
+  - Status: completed by current Codex thread, 2026-07-09. Support now routes to safe deployment diagnostics with focused desktop/mobile QA for core configuration fields; safe for `UI-011` to continue.
   - Current issue: `Support` is a button with no action.
   - Desired behavior: route to a diagnostics/support page or remove it.
   - Suggested use: copy deployment info, API health, auth issuer, storage driver, mail status, version.
