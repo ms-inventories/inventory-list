@@ -78,7 +78,8 @@ Use this as the working backlog before turning individual items into implementat
   - Current issue: user card has a chevron but no menu.
   - Desired behavior: clicking it opens a small menu with profile, app portal, diagnostics, and sign out.
 
-- [ ] **UI-012: Make platform `Open` explicit**
+- [x] **UI-012: Make platform `Open` explicit**
+  - Status: completed by current Codex thread, 2026-07-09. Platform tenant rows now show explicit `Open workspace`, `Admin view`, and `Copy link` actions with focused desktop/mobile QA coverage; safe for `UI-013` to continue.
   - Current issue: tenant row `Open` is ambiguous.
   - Desired behavior: replace with a small menu or clearer buttons: `Open workspace`, `Admin view`, `Copy link`.
 

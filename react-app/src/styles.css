@@ -2413,6 +2413,7 @@ button {
 }
 
 .platform-open-link,
+.platform-admin-link,
 .platform-copy-link {
   min-width: 122px;
   justify-content: center;
@@ -5858,6 +5859,7 @@ button {
   }
 
   .platform-open-link,
+  .platform-admin-link,
   .platform-copy-link {
     width: 100%;
   }

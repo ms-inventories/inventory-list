@@ -3520,6 +3520,10 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     return `https://${host}/`;
   }
 
+  function tenantAdminHref(tenant) {
+    return `${tenantWorkspaceHref(tenant)}#/admin`;
+  }
+
   async function copyTenantLink(tenant) {
     const host = tenantHost(tenant);
     const copied = await copyText(tenantWorkspaceHref(tenant));
@@ -3711,6 +3715,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               <div className="platform-actions">
                 <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${host} workspace`}>
                   <span>Open workspace</span>
+                </a>
+                <a className="btn btn-secondary btn-small platform-admin-link" href={tenantAdminHref(tenant)} aria-label={`Open ${host} admin view`}>
+                  <span>Admin view</span>
                 </a>
                 <button className="btn btn-secondary btn-small platform-copy-link" type="button" onClick={() => copyTenantLink(tenant)}>
                   <Copy aria-hidden="true" />
@@ -3953,6 +3960,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                     <div className="platform-actions">
                       <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${tenantHost(tenant)} workspace`}>
                         <span>Open workspace</span>
+                      </a>
+                      <a className="btn btn-secondary btn-small platform-admin-link" href={tenantAdminHref(tenant)} aria-label={`Open ${tenantHost(tenant)} admin view`}>
+                        <span>Admin view</span>
                       </a>
                       <button className="btn btn-secondary btn-small platform-copy-link" type="button" onClick={() => copyTenantLink(tenant)}>
                         <Copy aria-hidden="true" />
