@@ -100,7 +100,8 @@ Use this as the working backlog before turning individual items into implementat
   - Current issue: user card has a chevron but no menu.
   - Desired behavior: menu with profile, app portal, switch workspace, diagnostics, and sign out.
 
-- [ ] **UI-016: Start new inventory should be a wizard**
+- [x] **UI-016: Start new inventory should be a wizard**
+  - Status: completed by current Codex thread, 2026-07-09. `Start new inventory` now opens a guided modal, creates the session directly, and can either land in Sessions or continue into packet upload; desktop/mobile QA coverage added. Safe for `UI-017` to continue.
   - Current issue: it opens Sessions, but users still need to infer the next step.
   - Desired behavior: button opens a session creation modal/drawer with session name, packet source option, and start action.
 

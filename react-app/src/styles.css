@@ -5232,6 +5232,74 @@ button {
   line-height: 1.45;
 }
 
+.start-inventory-modal {
+  width: min(100%, 620px);
+}
+
+.start-inventory-options {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.start-inventory-options legend {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+}
+
+.start-inventory-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  cursor: pointer;
+  padding: 13px 14px;
+}
+
+.start-inventory-choice.active {
+  border-color: #b8c7b2;
+  background: #f8faf6;
+  box-shadow: 0 0 0 3px rgba(54, 91, 62, 0.08);
+}
+
+.start-inventory-choice input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--primary);
+}
+
+.start-inventory-choice strong,
+.start-inventory-choice small {
+  display: block;
+}
+
+.start-inventory-choice strong {
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.start-inventory-choice small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+
+.start-inventory-actions {
+  justify-content: flex-end;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;

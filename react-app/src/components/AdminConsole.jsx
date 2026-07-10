@@ -147,6 +147,15 @@ function notificationSummaryText(count, isLoading) {
   return `${count} unread`;
 }
 
+function defaultInventorySessionName() {
+  try {
+    const month = new Intl.DateTimeFormat(undefined, { month: "long" }).format(new Date());
+    return `${month} inventory`;
+  } catch {
+    return "New inventory";
+  }
+}
+
 function formatInviteStatus(status) {
   const labels = {
     pending: "Pending",
@@ -1072,7 +1081,7 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
   );
 }
 
-function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, onUploadIntentHandled, onOpenGuidance }) {
+function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, preferredSessionId = "", onUploadIntentHandled, onOpenGuidance }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [detail, setDetail] = useState(null);
@@ -1164,12 +1173,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
   }
 
   useEffect(() => {
-    loadSessions();
-  }, [tenantSlug, token]);
+    loadSessions(preferredSessionId || selectedSessionId);
+  }, [tenantSlug, token, preferredSessionId]);
 
   useEffect(() => {
     if (uploadIntent !== "packet") return;
-    openPacketWizard();
+    openPacketWizard(preferredSessionId || selectedSessionId || openSessions[0]?.id || "");
     setStatus({ text: "", isError: false });
     onUploadIntentHandled?.();
   }, [uploadIntent, onUploadIntentHandled]);
@@ -4827,6 +4836,13 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   ];
   const [activeTab, setActiveTab] = useState("dashboard");
   const [sessionIntent, setSessionIntent] = useState("");
+  const [preferredSessionId, setPreferredSessionId] = useState("");
+  const [isStartInventoryOpen, setIsStartInventoryOpen] = useState(false);
+  const [startInventoryForm, setStartInventoryForm] = useState(() => ({
+    name: defaultInventorySessionName(),
+    source: "packet"
+  }));
+  const [startInventoryStatus, setStartInventoryStatus] = useState({ text: "", isError: false });
   const [leaderQuery, setLeaderQuery] = useState("");
   const [tenant, setTenant] = useState(null);
   const [access, setAccess] = useState(me?.access || null);
@@ -4843,6 +4859,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [notificationStatus, setNotificationStatus] = useState("");
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isStartingInventory, setIsStartingInventory] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -5118,6 +5135,55 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     selectTenantTab("tasks");
   }
 
+  function openStartInventoryWizard(source = "packet") {
+    setStartInventoryForm(current => ({
+      name: current.name.trim() ? current.name : defaultInventorySessionName(),
+      source
+    }));
+    setStartInventoryStatus({ text: "", isError: false });
+    setIsStartInventoryOpen(true);
+    setIsSidebarOpen(false);
+    setIsNotificationsOpen(false);
+    setIsUserMenuOpen(false);
+  }
+
+  function closeStartInventoryWizard() {
+    if (isStartingInventory) return;
+    setIsStartInventoryOpen(false);
+    setStartInventoryStatus({ text: "", isError: false });
+  }
+
+  async function startInventory(e) {
+    e.preventDefault();
+    const name = startInventoryForm.name.trim();
+    if (!name) {
+      setStartInventoryStatus({ text: "Name the inventory session first.", isError: true });
+      return;
+    }
+
+    try {
+      setIsStartingInventory(true);
+      setStartInventoryStatus({ text: "Starting inventory...", isError: false });
+      const data = await apiRequest("/inventory/sessions", {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { name, status: "active" }
+      });
+      const sessionId = data.session?.id || "";
+      setPreferredSessionId(sessionId);
+      setSessionIntent(startInventoryForm.source === "packet" ? "packet" : "");
+      setStartInventoryForm({ name: defaultInventorySessionName(), source: startInventoryForm.source });
+      setIsStartInventoryOpen(false);
+      selectTenantTab("tasks");
+      setStatus({ text: `Started ${data.session?.name || name}`, isError: false });
+    } catch (error) {
+      setStartInventoryStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsStartingInventory(false);
+    }
+  }
+
   function openNotification(notification) {
     const tab = notification?.action?.tab;
     if (tab === "review" && isTenantAdmin) {
@@ -5378,7 +5444,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               tenantSlug={tenantSlug}
               query={leaderQuery}
               canManage={isTenantAdmin}
-              onOpenSessions={() => openSessions()}
+              onOpenSessions={() => openStartInventoryWizard("packet")}
               onOpenUpload={() => openSessions("packet")}
               onOpenReview={() => selectTenantTab("review")}
             />
@@ -5391,6 +5457,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               canManage={isTenantAdmin}
               canSubmit={canSubmitProof}
               uploadIntent={sessionIntent}
+              preferredSessionId={preferredSessionId}
               onUploadIntentHandled={() => setSessionIntent("")}
               onOpenGuidance={() => selectTenantTab("guidance")}
             />
@@ -5434,6 +5501,83 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           ) : null}
         </div>
       </main>
+
+      {isStartInventoryOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <form
+            className="modal-panel start-inventory-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="startInventoryTitle"
+            onSubmit={startInventory}
+          >
+            <div className="modal-stack">
+              <div className="modal-heading">
+                <span className="modal-icon">
+                  <ListChecks aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="eyebrow">Inventory tasking</p>
+                  <h2 className="modal-title" id="startInventoryTitle">Start inventory</h2>
+                  <p className="modal-copy">Create the session, then decide whether to upload the packet now or build it later.</p>
+                </div>
+              </div>
+
+              <label className="field-label" htmlFor="startInventoryName">Session name</label>
+              <input
+                id="startInventoryName"
+                className="input"
+                value={startInventoryForm.name}
+                placeholder="July sensitive items"
+                onChange={e => setStartInventoryForm(current => ({ ...current, name: e.target.value }))}
+                autoFocus
+              />
+
+              <fieldset className="start-inventory-options">
+                <legend>Packet source</legend>
+                <label className={`start-inventory-choice ${startInventoryForm.source === "packet" ? "active" : ""}`}>
+                  <input
+                    type="radio"
+                    name="startInventorySource"
+                    value="packet"
+                    checked={startInventoryForm.source === "packet"}
+                    onChange={() => setStartInventoryForm(current => ({ ...current, source: "packet" }))}
+                  />
+                  <span>
+                    <strong>Upload packet now</strong>
+                    <small>Open the packet import flow after the session is created.</small>
+                  </span>
+                </label>
+                <label className={`start-inventory-choice ${startInventoryForm.source === "blank" ? "active" : ""}`}>
+                  <input
+                    type="radio"
+                    name="startInventorySource"
+                    value="blank"
+                    checked={startInventoryForm.source === "blank"}
+                    onChange={() => setStartInventoryForm(current => ({ ...current, source: "blank" }))}
+                  />
+                  <span>
+                    <strong>Create blank session</strong>
+                    <small>Start the workspace and add packet rows later.</small>
+                  </span>
+                </label>
+              </fieldset>
+
+              <StatusLine status={startInventoryStatus} />
+
+              <div className="button-row start-inventory-actions">
+                <button className="btn btn-primary" type="submit" disabled={isStartingInventory}>
+                  <Plus aria-hidden="true" />
+                  <span>{isStartingInventory ? "Starting..." : "Start session"}</span>
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={closeStartInventoryWizard} disabled={isStartingInventory}>
+                  <span>Cancel</span>
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
