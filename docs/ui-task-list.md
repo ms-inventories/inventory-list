@@ -90,7 +90,8 @@ Use this as the working backlog before turning individual items into implementat
   - Current issue: hamburger icon exists but does not open/collapse anything.
   - Desired behavior: on mobile it opens the nav drawer; on desktop it collapses the sidebar.
 
-- [ ] **UI-014: Tenant notifications**
+- [x] **UI-014: Tenant notifications**
+  - Status: completed by current Codex thread, 2026-07-09. Notification bell opens a real action panel on desktop/mobile, routes to sessions and review queue, and the review destination label now matches the nav/action label; safe for `UI-015` to continue.
   - Current issue: bell icon has no action.
   - Desired behavior: notification panel for new submissions, proof requests, assigned items, imports completed, and session status changes.
 

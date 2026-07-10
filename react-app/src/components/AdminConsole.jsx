@@ -2329,7 +2329,7 @@ function ReviewPanel({ token, tenantSlug }) {
         </span>
         <div>
           <p className="eyebrow">Platoon admin review</p>
-          <h2>Proof Queue</h2>
+          <h2>Review Queue</h2>
         </div>
       </div>
 
