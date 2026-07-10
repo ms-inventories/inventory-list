@@ -61,7 +61,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: route to a role mapping/status view or hide it.
   - Suggested use: show configured Authentik groups: `876en-admins`, `876en-frg-admins`, `876en-platoon-admin`, and tenant groups like `876en-ms`.
 
-- [ ] **UI-009: Platform sidebar Organizations**
+- [x] **UI-009: Platform sidebar Organizations**
+  - Status: completed by current Codex thread, 2026-07-09. Organizations now routes to the company overview and workspace totals view with focused desktop/mobile QA; safe for `UI-010` to continue.
   - Current issue: `Organizations` is a button with no action.
   - Desired behavior: either implement company/unit organization settings or remove the control.
   - Suggested use: company profile, base domain, default group prefix, FRG branding.
