@@ -43,7 +43,8 @@ Use this as the working backlog before turning individual items into implementat
 
 ## P1: Wire Or Remove Dead Platform Controls
 
-- [ ] **UI-006: Platform sidebar Dashboard**
+- [x] **UI-006: Platform sidebar Dashboard**
+  - Status: completed by current Codex thread, 2026-07-09. Dashboard now routes to a real overview and has focused QA coverage for platform totals, recent platoons, and shortcut navigation; safe for `UI-007` to continue.
   - Current issue: `Dashboard` is a button with no action.
   - Desired behavior: either route to a platform overview page or hide it until implemented.
   - Suggested use: total platoons, active sessions, pending reviews, recent tenant creation, auth health.
