@@ -55,7 +55,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: route to a user management view or hide it.
   - Suggested use: search users, see Authentik-linked identity, tenant membership, roles, last activity.
 
-- [ ] **UI-008: Platform sidebar Roles**
+- [x] **UI-008: Platform sidebar Roles**
+  - Status: completed by current Codex thread, 2026-07-09. Roles now routes to the Authentik group mapping reference with focused desktop/mobile QA for the platform, FRG, platoon admin, and tenant member group names; safe for `UI-009` to continue.
   - Current issue: `Roles` is a button with no action.
   - Desired behavior: route to a role mapping/status view or hide it.
   - Suggested use: show configured Authentik groups: `876en-admins`, `876en-frg-admins`, `876en-platoon-admin`, and tenant groups like `876en-ms`.
