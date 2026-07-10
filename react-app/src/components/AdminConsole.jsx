@@ -202,11 +202,12 @@ async function copyText(value) {
   }
 }
 
-function EmptyPanel({ title, body }) {
+function EmptyPanel({ title, body, action = null }) {
   return (
     <div className="admin-empty">
       <strong>{title}</strong>
       <span>{body}</span>
+      {action ? <div className="admin-empty-action">{action}</div> : null}
     </div>
   );
 }
@@ -1094,6 +1095,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
   const [isReadingPacket, setIsReadingPacket] = useState(false);
   const [printReportId, setPrintReportId] = useState("");
   const packetFileInputRef = useRef(null);
+  const packetTextareaRef = useRef(null);
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
@@ -1321,8 +1323,8 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
     }
   }
 
-  function openPacketFilePicker() {
-    if (!selectedSessionId) {
+  function openPacketFilePicker(sessionId = selectedSessionId) {
+    if (!sessionId) {
       setIsPacketImportOpen(true);
       setStatus({ text: "Start or select an inventory session before uploading the packet.", isError: true });
       return;
@@ -1677,7 +1679,16 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                 ) : null}
               </>
             ) : (
-              <EmptyPanel title="No sessions yet" body="Start a session first, then upload the packet your team received." />
+              <EmptyPanel
+                title="No sessions yet"
+                body="Start with the packet upload flow. It will create the session and keep the imported rows attached to it."
+                action={canManage ? (
+                  <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard()}>
+                    <FileUp aria-hidden="true" />
+                    <span>Upload packet</span>
+                  </button>
+                ) : null}
+              />
             )}
           </div>
         </div>
@@ -1904,7 +1915,16 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                 }) : detailItems.length ? (
                   <EmptyPanel title="No matching rows" body="Clear the search or choose another filter." />
                 ) : (
-                  <EmptyPanel title="No packet rows yet" body="Use Import packet rows to upload a packet or paste rows from the hand receipt." />
+                  <EmptyPanel
+                    title="No packet rows yet"
+                    body="Upload a packet or paste rows from the hand receipt to start tasking the inventory."
+                    action={canManage ? (
+                      <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard(selectedSession.id)}>
+                        <FileUp aria-hidden="true" />
+                        <span>Upload packet</span>
+                      </button>
+                    ) : null}
+                  />
                 )}
               </div>
             </>
@@ -1914,6 +1934,12 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
               body={isPacketUploadIntent
                 ? "Packet upload lives inside a session so the imported rows stay attached to the right inventory."
                 : "Session details and packet rows will appear here."}
+              action={canManage ? (
+                <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard()}>
+                  <FileUp aria-hidden="true" />
+                  <span>{isPacketUploadIntent ? "Start upload" : "Upload packet"}</span>
+                </button>
+              ) : null}
             />
           )}
         </div>
@@ -2030,7 +2056,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                       className="packet-source-card"
                       type="button"
                       disabled={isReadingPacket || isSaving}
-                      onClick={openPacketFilePicker}
+                      onClick={() => openPacketFilePicker(packetWizardSessionId || selectedSessionId)}
                     >
                       <FileUp aria-hidden="true" />
                       <span>
@@ -2038,19 +2064,24 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, o
                         <small>PDF, CSV, text, or image up to 10MB</small>
                       </span>
                     </button>
-                    <div className="packet-source-card passive">
+                    <button
+                      className="packet-source-card"
+                      type="button"
+                      onClick={() => packetTextareaRef.current?.focus()}
+                    >
                       <ClipboardList aria-hidden="true" />
                       <span>
                         <strong>Paste from paper</strong>
-                        <small>One row per line works best.</small>
+                        <small>Jump to the paste box below.</small>
                       </span>
-                    </div>
+                    </button>
                   </div>
 
                   {packetSourceName ? <span className="packet-import-note">Source: {packetSourceName}</span> : null}
                   {packetSourceFile?.size ? <span className="packet-import-note">Stored with import: {formatFileSize(packetSourceFile.size)}</span> : null}
 
                   <textarea
+                    ref={packetTextareaRef}
                     className="input packet-textarea"
                     value={packetRows}
                     placeholder="Paste hand-receipt text or one item per line. Example:&#10;000009148 R20684 RADIAC SET: AN/VDR-2&#10;B67839 BINOCULAR: M24"

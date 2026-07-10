@@ -3256,6 +3256,13 @@ button {
   color: var(--ink);
 }
 
+.admin-empty-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .admin-copy-box {
   display: grid;
   gap: 5px;

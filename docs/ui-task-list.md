@@ -23,7 +23,8 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: production users see a clean access message; admins can open diagnostics from a hidden/support path.
   - Controls affected: launch screen, admin sign-in card, invite accept screen.
 
-- [ ] **UI-003: Finish the packet upload path**
+- [x] **UI-003: Finish the packet upload path**
+  - Status: completed by current Codex thread, 2026-07-09. Safe for `UI-004` to continue; coordinate before changing the tenant dashboard upload button, Sessions import wizard, or packet import empty states again.
   - Current issue: `Upload packet` moves users to Sessions, but the actual file picker only appears after a session exists.
   - Desired behavior: clicking `Upload packet` opens a guided flow: select/create session, choose PDF/spreadsheet, review parsed rows, import.
   - Controls affected: `Upload packet`, `New session`, `Import packet rows`, `Choose PDF or spreadsheet`.
