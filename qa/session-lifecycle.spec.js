@@ -89,4 +89,33 @@ test.describe("session lifecycle", () => {
     await page.locator(".session-archive summary").click();
     await expect(page.locator(".session-archive .session-row", { hasText: sessionName })).toBeVisible();
   });
+
+  test("clears a stale session load error after refresh", async ({ page }) => {
+    let failNextSessionList = false;
+    await page.route("**/*", async route => {
+      const url = new URL(route.request().url());
+      const isSessionList = /\/api\/inventory\/sessions\/?$/.test(url.pathname);
+      if (isSessionList && failNextSessionList && route.request().method() === "GET") {
+        failNextSessionList = false;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Internal server error" })
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto(TENANT_URL);
+    await signInAsPlatoonAdmin(page);
+    await openSessions(page);
+
+    failNextSessionList = true;
+    await page.getByRole("button", { name: "Refresh sessions" }).click();
+    await expect(page.getByText("Internal server error")).toBeVisible();
+    await page.getByRole("button", { name: "Refresh sessions" }).click();
+    await expect(page.getByText("Internal server error")).toHaveCount(0);
+  });
 });

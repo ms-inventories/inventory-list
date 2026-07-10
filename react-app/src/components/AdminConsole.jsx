@@ -1129,6 +1129,16 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
   const sessionDetailRequestRef = useRef(0);
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
 
+  function clearSelectedSessionState() {
+    sessionDetailRequestRef.current += 1;
+    setSelectedSessionId("");
+    setDetail(null);
+    setProofItemId("");
+    setPacketWizardSessionId("");
+    setIsPacketImportOpen(false);
+    clearPacketImport();
+  }
+
   async function loadSessions(nextSelectedId = selectedSessionId) {
     const requestId = sessionListRequestRef.current + 1;
     sessionListRequestRef.current = requestId;
@@ -1148,11 +1158,7 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
       if (selected) {
         detailLoaded = await loadSessionDetail(selected, false, requestId);
       } else {
-        sessionDetailRequestRef.current += 1;
-        setDetail(null);
-        setPacketWizardSessionId("");
-        setIsPacketImportOpen(false);
-        clearPacketImport();
+        clearSelectedSessionState();
       }
 
       if (detailLoaded && requestId === sessionListRequestRef.current) {
@@ -1185,6 +1191,15 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
       return true;
     } catch (error) {
       if (requestId === sessionDetailRequestRef.current && (!sessionListRequestId || sessionListRequestId === sessionListRequestRef.current)) {
+        if (error?.status === 404 && !sessionListRequestId) {
+          clearSelectedSessionState();
+          await loadSessions("");
+          setStatus({
+            text: "That session is no longer available. Pick another session or start a new one.",
+            isError: false
+          });
+          return false;
+        }
         setStatus({ text: getApiErrorMessage(error), isError: true });
       }
       return false;
@@ -1286,6 +1301,10 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
     setPacketWizardSummary(null);
     setIsPacketImportOpen(false);
     setStatus({ text: "", isError: false });
+  }
+
+  async function refreshSessions() {
+    await loadSessions(selectedSessionId);
   }
 
   function requestDeleteSession(session) {
@@ -1765,6 +1784,9 @@ function SessionPanel({ token, tenantSlug, canManage, canSubmit, uploadIntent, p
             <span>Guidance</span>
           </button>
         ) : null}
+        <button className={`icon-button ${onOpenGuidance ? "" : "admin-card-heading-action"}`} type="button" aria-label="Refresh sessions" title="Refresh sessions" onClick={refreshSessions}>
+          <RefreshCw aria-hidden="true" />
+        </button>
       </div>
 
       <div className="session-layout">
