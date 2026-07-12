@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ClipboardList, LogIn, ShieldCheck, UserCheck } from "lucide-react";
+import { APP_NAME } from "../branding.js";
 import { appConfig } from "../config.js";
 import { apiRequest, getApiErrorMessage } from "../lib/api.js";
 import {
@@ -137,7 +138,7 @@ export default function AcceptInvite() {
   return (
     <div className="auth-screen invite-screen">
       <section className="auth-card invite-card" aria-labelledby="inviteTitle">
-        <p className="eyebrow">876 EN Inventory</p>
+        <p className="eyebrow">{APP_NAME}</p>
         <h1 id="inviteTitle">Accept Invite</h1>
 
         {accepted ? (

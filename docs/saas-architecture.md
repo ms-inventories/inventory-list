@@ -178,6 +178,16 @@ Suggested routes:
 
 Same-origin tenant `/api` is preferred because it lets the backend resolve tenant access from the hostname.
 
+Evidence photos and packet-source files require a short-lived, HMAC-protected, host-only HttpOnly media-session cookie issued only after tenant authorization. The cookie is scoped to one tenant's media path, the media route verifies the storage key is linked to an allowed database record, and packet sources require platoon-admin access. Media responses are private/no-store and do not opt into CORS. The signing secret is a dedicated backend-only Coolify secret and is never reused from OIDC or Postgres.
+
+Production tenant frontends and `api.876en.org` are same-site, so `SameSite=Strict` remains usable without broadening the cookie to sibling hosts. Local Docker QA proxies `/api` and `/media` through the Vite tenant origin because Chromium correctly treats `ms.localhost` and bare `localhost` as different sites.
+
+Photo writes use a separate upload registry. The server records the tenant, uploader, declared purpose, detected image signature, actual byte size, expiry, and lifecycle before returning an opaque upload ID. Evidence and known-item transactions consume that ID once under a database row lock; client-supplied storage paths are not an attachment authority. Packet sources enter the same registry already attached to their immutable import batch. An hourly cleanup command deletes only expired staged files, while attached evidence remains retained through session closeout.
+
+Tenant settings reuse `tenants.name` for workspace identity and `tenant_guidance.body` for member instructions. Tenant-wide in-app and workflow-email preferences live in `tenant_settings`; workspace URLs, slugs, and Authentik group mappings remain derived/read-only so application settings cannot silently change identity policy.
+
+The admin Reports view reads one tenant-scoped aggregate endpoint across inventory sessions and rows. Each row includes only the latest proof decision needed for outcome and proof-work classification; evidence files and packet payloads are excluded. CSV and print output are produced from the same active client filters shown on screen.
+
 ## Authentik Setup Notes
 
 Create an OAuth2/OpenID provider and application for Inventory List.

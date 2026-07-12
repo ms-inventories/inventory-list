@@ -6,6 +6,12 @@ import { authenticate, authContext, ensureUser, exchangeOidcCode } from "./auth.
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import {
+  buildMediaUrl,
+  issueMediaSession,
+  mediaStorageKeyFromUrl,
+  normalizeMediaStorageKey
+} from "./media.js";
+import {
   isEmailConfigured,
   sendNewsletterIssueEmail,
   sendNewsletterSubscriberReviewEmail,
@@ -27,6 +33,9 @@ const newsletterIssueSchema = z.object({
   summary: z.string().max(600).optional(),
   body: z.string().min(10).max(10000)
 });
+const newsletterTestSendSchema = z.object({
+  email: z.string().email()
+});
 const frgContentBlockSchema = z.object({
   blockType: z.enum(["announcement", "event", "resource"]),
   title: z.string().min(2).max(140),
@@ -40,6 +49,72 @@ const frgContentBlockSchema = z.object({
 });
 const tenantGuidanceSchema = z.object({
   body: z.string().max(12000).optional()
+});
+const defaultTenantNotificationPreferences = Object.freeze({
+  proof_submitted: true,
+  proof_requests: true,
+  open_rows: true,
+  packet_imports: true,
+  session_closed: true,
+  email_proof_submitted: true,
+  email_proof_requests: true
+});
+const tenantNotificationPreferencesSchema = z.object({
+  proof_submitted: z.boolean().optional(),
+  proof_requests: z.boolean().optional(),
+  open_rows: z.boolean().optional(),
+  packet_imports: z.boolean().optional(),
+  session_closed: z.boolean().optional(),
+  email_proof_submitted: z.boolean().optional(),
+  email_proof_requests: z.boolean().optional()
+}).strict().refine(value => Object.keys(value).length > 0, { message: "Choose at least one notification preference." });
+const tenantSettingsSchema = z.object({
+  displayName: z.string().trim().min(2).max(120).regex(/^[^\u0000-\u001f\u007f]+$/, "Display name contains unsupported characters.").optional(),
+  defaultGuidance: z.string().max(12000).optional(),
+  notificationPreferences: tenantNotificationPreferencesSchema.optional()
+}).strict().refine(value => Object.keys(value).length > 0, { message: "Provide at least one setting." });
+const tenantAuditCategoryPrefixes = Object.freeze({
+  workflow: [
+    "inventory_item.",
+    "inventory_session.",
+    "session_item.",
+    "session_items.",
+    "submission.",
+    "evidence_request."
+  ],
+  access: ["member.", "invitation."],
+  workspace: ["tenant.", "tenant_guidance."],
+  files: ["media_upload."]
+});
+const tenantAuditCategoryOptions = Object.freeze([
+  { value: "workflow", label: "Workflow" },
+  { value: "access", label: "Access" },
+  { value: "workspace", label: "Workspace" },
+  { value: "files", label: "Files and system" },
+  { value: "other", label: "Other" }
+]);
+const tenantAuditCursorSchema = z.string().min(1).max(512).refine(
+  value => Boolean(decodeTenantAuditCursor(value)),
+  { message: "Invalid audit cursor." }
+);
+const tenantAuditQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: tenantAuditCursorSchema.optional(),
+  actor: z.union([z.string().uuid(), z.literal("system")]).optional(),
+  action: z.string().trim().min(1).max(100).regex(/^[a-z0-9_.]+$/).optional(),
+  entityType: z.string().trim().min(1).max(100).regex(/^[a-z0-9_]+$/).optional(),
+  entityId: z.string().uuid().optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  category: z.enum(["workflow", "access", "workspace", "files", "other"]).optional()
+}).strict().superRefine((value, context) => {
+  if (value.from && value.to && Date.parse(value.from) > Date.parse(value.to)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["to"],
+      message: "The end date must be on or after the start date."
+    });
+  }
 });
 const imageMimeTypes = new Map([
   ["image/jpeg", ".jpg"],
@@ -227,6 +302,7 @@ async function getAuthHealth(request, reply) {
     return authHealthResponse({ requestedTenantSlug, code: "token_missing" });
   }
 
+  request.authenticatedSubject = identity.subject || "";
   let user = null;
   try {
     user = await ensureUser(identity);
@@ -350,6 +426,60 @@ function rowToSessionItem(row) {
   };
 }
 
+function rowToReportItem(row) {
+  const item = {
+    id: row.id,
+    sessionId: row.session_id,
+    sessionName: row.session_name,
+    sessionStatus: row.session_status,
+    sessionCreatedAt: row.session_created_at,
+    sessionClosedAt: row.session_closed_at,
+    inventoryItemId: row.inventory_item_id,
+    packetLine: row.packet_line,
+    expectedQty: row.expected_qty,
+    locationHint: row.location_hint,
+    status: row.item_status,
+    assignedTo: row.assigned_to,
+    assignedToEmail: row.assigned_to_email,
+    assignedToName: row.assigned_to_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    inventoryItem: row.inventory_item_id ? {
+      id: row.inventory_item_id,
+      title: row.item_title,
+      commonName: row.common_name,
+      armyName: row.army_name,
+      lin: row.lin,
+      nsn: row.nsn,
+      description: row.description,
+      currentLocation: row.current_location,
+      metadata: row.item_metadata || {}
+    } : null,
+    submissions: []
+  };
+
+  if (row.latest_submission_id) {
+    item.submissions.push({
+      id: row.latest_submission_id,
+      sessionItemId: row.id,
+      submittedBy: row.latest_submitted_by,
+      submittedByEmail: row.latest_submitted_by_email,
+      submittedByName: row.latest_submitted_by_name,
+      status: row.latest_submission_status,
+      locationText: row.latest_location_text,
+      note: row.latest_note,
+      serialNumber: row.latest_serial_number,
+      reviewState: row.latest_review_state,
+      reviewNote: row.latest_review_note,
+      reviewedBy: row.latest_reviewed_by,
+      reviewedAt: row.latest_reviewed_at,
+      createdAt: row.latest_created_at,
+      photos: []
+    });
+  }
+  return item;
+}
+
 function rowToSubmission(row) {
   return {
     id: row.id,
@@ -389,6 +519,7 @@ function rowToImportBatch(row, { includeText = false } = {}) {
     sessionId: row.session_id,
     sourceName: row.source_name,
     sourceMimeType: row.source_mime_type,
+    sourceSizeBytes: row.source_size_bytes == null ? null : Number(row.source_size_bytes),
     sourceStorageKey: row.source_storage_key,
     sourceUrl: row.source_storage_key ? buildMediaUrl(row.source_storage_key) : "",
     rowCount: row.row_count ?? 0,
@@ -416,6 +547,13 @@ function rowToNewsletterSubscriber(row) {
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
     reviewNote: row.review_note,
+    sentCount: Number(row.sent_count || 0),
+    failedCount: Number(row.failed_count || 0),
+    skippedCount: Number(row.skipped_count || 0),
+    lastDeliveryStatus: row.last_delivery_status || null,
+    lastDeliveryError: row.last_delivery_error || null,
+    lastDeliveryAt: row.last_delivery_at || row.last_sent_at || null,
+    lastDeliveryIssueTitle: row.last_delivery_issue_title || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -442,6 +580,22 @@ function rowToNewsletterIssue(row, { includeBody = false } = {}) {
   return issue;
 }
 
+function rowToNewsletterDelivery(row) {
+  return {
+    id: row.id,
+    issueId: row.issue_id,
+    issueTitle: row.issue_title,
+    subscriberId: row.subscriber_id,
+    subscriberName: row.subscriber_display_name,
+    subscriberStatus: row.subscriber_status,
+    email: row.email,
+    status: row.status,
+    error: row.error,
+    sentAt: row.sent_at,
+    createdAt: row.created_at
+  };
+}
+
 function rowToFrgContentBlock(row) {
   return {
     id: row.id,
@@ -466,6 +620,241 @@ function rowToTenantGuidance(row) {
     updatedAt: row?.updated_at || null,
     updatedByEmail: row?.updated_by_email || null,
     updatedByName: row?.updated_by_name || null
+  };
+}
+
+function normalizeTenantNotificationPreferences(value) {
+  const stored = value && typeof value === "object" ? value : {};
+  return Object.fromEntries(
+    Object.entries(defaultTenantNotificationPreferences).map(([key, defaultValue]) => [
+      key,
+      typeof stored[key] === "boolean" ? stored[key] : defaultValue
+    ])
+  );
+}
+
+async function getTenantNotificationPreferences(tenantId, client = null) {
+  const runQuery = client ? client.query.bind(client) : query;
+  const result = await runQuery(
+    "SELECT notification_preferences FROM tenant_settings WHERE tenant_id = $1 LIMIT 1",
+    [tenantId]
+  );
+  return normalizeTenantNotificationPreferences(result.rows[0]?.notification_preferences);
+}
+
+function tenantSettingsResponse(context, row = {}) {
+  const tenantGroup = `${config.oidc.tenantGroupPrefix}${context.tenant.slug}`.toLowerCase();
+  return {
+    displayName: row.name || context.tenant.name,
+    defaultGuidance: row.guidance_body || "",
+    notificationPreferences: normalizeTenantNotificationPreferences(row.notification_preferences),
+    workspace: {
+      slug: context.tenant.slug,
+      status: context.tenant.status,
+      url: tenantBaseUrl(context.tenant),
+      baseDomain: config.baseDomain
+    },
+    groupMapping: {
+      tenantGroup,
+      tenantAdminGroup: config.oidc.tenantAdminGroup,
+      platformAdminGroup: config.oidc.platformAdminGroup
+    }
+  };
+}
+
+function auditTimestamp(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function decodeTenantAuditCursor(value) {
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value || ""), "base64url").toString("utf8"));
+    const createdAt = z.string().datetime({ offset: true }).safeParse(parsed?.createdAt);
+    const id = z.string().uuid().safeParse(parsed?.id);
+    if (!createdAt.success || !id.success) return null;
+    return { createdAt: createdAt.data, id: id.data };
+  } catch {
+    return null;
+  }
+}
+
+function encodeTenantAuditCursor(row) {
+  return Buffer.from(JSON.stringify({
+    createdAt: auditTimestamp(row.created_at),
+    id: row.id
+  }), "utf8").toString("base64url");
+}
+
+function tenantAuditCategoryForAction(action) {
+  const normalized = String(action || "");
+  for (const [category, prefixes] of Object.entries(tenantAuditCategoryPrefixes)) {
+    if (prefixes.some(prefix => normalized.startsWith(prefix))) return category;
+  }
+  return "other";
+}
+
+function auditText(value, maxLength = 600) {
+  if (value === null || value === undefined) return undefined;
+  const normalized = String(value).trim();
+  return normalized ? normalized.slice(0, maxLength) : undefined;
+}
+
+function auditInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function auditBoolean(value) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function compactAuditDetails(details) {
+  return Object.fromEntries(Object.entries(details).filter(([, value]) => value !== undefined && value !== null));
+}
+
+function safeTenantAuditDetails(action, value) {
+  const metadata = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+  if (action === "tenant.created") {
+    return compactAuditDetails({
+      slug: auditText(metadata.slug, 100),
+      hostname: auditText(metadata.hostname, 255),
+      adminEmail: auditText(metadata.adminEmail, 320)
+    });
+  }
+  if (action === "tenant.settings_updated") {
+    const allowedFields = new Set(["display_name", "default_guidance", "notification_preferences"]);
+    const changedFields = Array.isArray(metadata.changedFields)
+      ? metadata.changedFields.map(field => auditText(field, 80)).filter(field => field && allowedFields.has(field)).slice(0, 10)
+      : [];
+    return changedFields.length ? { changedFields } : {};
+  }
+  if (action === "tenant_guidance.updated") {
+    return compactAuditDetails({ length: auditInteger(metadata.length) });
+  }
+  if (action.startsWith("member.")) {
+    return compactAuditDetails({
+      email: auditText(metadata.email, 320),
+      previousRole: auditText(metadata.previousRole, 80),
+      previousStatus: auditText(metadata.previousStatus, 80),
+      role: auditText(metadata.role, 80),
+      status: auditText(metadata.status, 80)
+    });
+  }
+  if (action.startsWith("invitation.")) {
+    return compactAuditDetails({
+      email: auditText(metadata.email, 320),
+      role: auditText(metadata.role, 80),
+      expiresAt: auditTimestamp(metadata.expiresAt)
+    });
+  }
+  if (action === "inventory_item.created") {
+    return compactAuditDetails({ mediaUploadCount: auditInteger(metadata.mediaUploadCount) });
+  }
+  if (action === "inventory_session.created") {
+    return compactAuditDetails({
+      sessionName: auditText(metadata.sessionName, 240),
+      status: auditText(metadata.status, 80)
+    });
+  }
+  if (action === "inventory_session.updated") {
+    return compactAuditDetails({
+      sessionName: auditText(metadata.sessionName, 240),
+      status: auditText(metadata.status, 80)
+    });
+  }
+  if (action === "inventory_session.deleted") {
+    return compactAuditDetails({ name: auditText(metadata.name, 240) });
+  }
+  if (action === "session_items.bulk_created") {
+    return compactAuditDetails({
+      sessionName: auditText(metadata.sessionName, 240),
+      count: auditInteger(metadata.count),
+      matchedCount: auditInteger(metadata.matchedCount),
+      sourceName: auditText(metadata.sourceName, 240)
+    });
+  }
+  if (action === "session_item.created") {
+    return compactAuditDetails({
+      sessionName: auditText(metadata.sessionName, 240),
+      packetLine: auditText(metadata.packetLine, 1000),
+      expectedQty: auditInteger(metadata.expectedQty),
+      locationHint: auditText(metadata.locationHint, 600)
+    });
+  }
+  if (action === "session_item.assigned") {
+    return compactAuditDetails({
+      assignedToEmail: auditText(metadata.assignedToEmail, 320),
+      assignedToRole: auditText(metadata.assignedToRole, 80)
+    });
+  }
+  if (action === "session_item.direct_check") {
+    return compactAuditDetails({
+      status: auditText(metadata.status, 80),
+      note: auditText(metadata.note)
+    });
+  }
+  if (action === "submission.created") {
+    return compactAuditDetails({
+      status: auditText(metadata.status, 80),
+      photoCount: auditInteger(metadata.photoCount)
+    });
+  }
+  if (action === "submission.reviewed") {
+    return compactAuditDetails({
+      decision: auditText(metadata.decision, 80),
+      note: auditText(metadata.note)
+    });
+  }
+  if (action === "evidence_request.created") {
+    const requestedFields = Array.isArray(metadata.requestedFields)
+      ? metadata.requestedFields.map(field => auditText(field, 80)).filter(Boolean).slice(0, 20)
+      : [];
+    return compactAuditDetails({
+      requestedFields: requestedFields.length ? requestedFields : undefined,
+      message: auditText(metadata.message)
+    });
+  }
+  if (action.startsWith("media_upload.")) {
+    return compactAuditDetails({
+      purpose: auditText(metadata.purpose, 80),
+      mimeType: auditText(metadata.mimeType, 160),
+      sizeBytes: auditInteger(metadata.sizeBytes),
+      attachedToType: auditText(metadata.attachedToType, 100),
+      ownerOverride: auditBoolean(metadata.ownerOverride)
+    });
+  }
+
+  return {};
+}
+
+function rowToTenantAuditEvent(row) {
+  const details = safeTenantAuditDetails(row.action, row.metadata);
+  const context = row.context_session_id ? {
+    sessionId: row.context_session_id,
+    sessionName: auditText(details.sessionName, 240) || auditText(row.context_session_name, 240) || null,
+    sessionItemId: row.context_session_item_id || null,
+    packetLine: auditText(row.context_packet_line, 1000) || null
+  } : null;
+
+  return {
+    id: row.id,
+    action: row.action,
+    category: tenantAuditCategoryForAction(row.action),
+    entity: {
+      type: row.entity_type,
+      id: row.entity_id || null
+    },
+    actor: row.actor_user_id ? {
+      id: row.actor_user_id,
+      displayName: row.actor_display_name || null,
+      email: row.actor_email || null
+    } : null,
+    details,
+    context,
+    createdAt: auditTimestamp(row.created_at)
   };
 }
 
@@ -531,17 +920,41 @@ function normalizeFrgContentPayload(body) {
   };
 }
 
-function safeStorageKey(key) {
-  const normalized = String(key || "").replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!normalized || normalized.includes("..")) return "";
-  return normalized;
+function localMediaStorageKeys(value) {
+  const storageKeys = new Set();
+  const visit = current => {
+    if (typeof current === "string") {
+      const storageKey = mediaStorageKeyFromUrl(current);
+      if (storageKey) storageKeys.add(storageKey);
+      return;
+    }
+    if (Array.isArray(current)) {
+      current.forEach(visit);
+      return;
+    }
+    if (current && typeof current === "object") {
+      Object.values(current).forEach(visit);
+    }
+  };
+  visit(value);
+  return [...storageKeys];
 }
 
-function buildMediaUrl(storageKey) {
-  const safeKey = safeStorageKey(storageKey);
-  if (!safeKey) return "";
-  const base = String(config.storage.publicMediaBaseUrl || "/media").replace(/\/+$/, "");
-  return `${base}/${safeKey}`;
+function imageBufferMatchesMimeType(buffer, mimeType) {
+  if (mimeType === "image/jpeg") {
+    return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (mimeType === "image/png") {
+    return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+  if (mimeType === "image/gif") {
+    const signature = buffer.subarray(0, 6).toString("ascii");
+    return signature === "GIF87a" || signature === "GIF89a";
+  }
+  if (mimeType === "image/webp") {
+    return buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+  }
+  return false;
 }
 
 function parseImagePayload(body) {
@@ -573,6 +986,11 @@ function parseImagePayload(body) {
   const buffer = Buffer.from(base64, "base64");
   if (!buffer.length || buffer.length > 12 * 1024 * 1024) {
     const error = new Error("Image must be 12MB or smaller");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!imageBufferMatchesMimeType(buffer, mimeType)) {
+    const error = new Error("Image data does not match mimeType");
     error.statusCode = 400;
     throw error;
   }
@@ -627,8 +1045,42 @@ async function saveBufferToStorage(storageKey, buffer) {
   }
 
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, buffer);
+  await fs.writeFile(absolutePath, buffer, { flag: "wx" });
   return storageKey;
+}
+
+async function deleteStoredFile(storageKey) {
+  const normalized = normalizeMediaStorageKey(storageKey);
+  if (!normalized) return;
+  const rootPath = path.resolve(config.storage.root);
+  const absolutePath = path.resolve(rootPath, normalized);
+  if (!absolutePath.startsWith(rootPath + path.sep)) return;
+  try {
+    await fs.unlink(absolutePath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+async function verifyRegisteredUploadFile(upload) {
+  const storageKey = normalizeMediaStorageKey(upload?.storage_key);
+  if (!storageKey) throw requestError("Photo upload is unavailable. Upload the file again.", 409);
+  const rootPath = path.resolve(config.storage.root);
+  const absolutePath = path.resolve(rootPath, storageKey);
+  if (!absolutePath.startsWith(rootPath + path.sep)) {
+    throw requestError("Photo upload is unavailable. Upload the file again.", 409);
+  }
+
+  let stat;
+  try {
+    stat = await fs.stat(absolutePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") throw requestError("Photo upload is unavailable. Upload the file again.", 409);
+    throw error;
+  }
+  if (!stat.isFile() || (upload.size_bytes != null && Number(upload.size_bytes) !== stat.size)) {
+    throw requestError("Photo upload is unavailable. Upload the file again.", 409);
+  }
 }
 
 async function saveUploadedImage(tenant, body) {
@@ -637,7 +1089,8 @@ async function saveUploadedImage(tenant, body) {
   const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   const fileName = `${crypto.randomUUID()}${extension}`;
   const storageKey = `tenants/${tenant.slug}/submissions/${month}/${fileName}`;
-  return saveBufferToStorage(storageKey, buffer);
+  await saveBufferToStorage(storageKey, buffer);
+  return { storageKey, sizeBytes: buffer.length };
 }
 
 async function savePacketImportSource(tenant, body) {
@@ -646,7 +1099,83 @@ async function savePacketImportSource(tenant, body) {
   const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   const fileName = `${crypto.randomUUID()}${extension}`;
   const storageKey = `tenants/${tenant.slug}/packet-imports/${month}/${fileName}`;
-  return saveBufferToStorage(storageKey, buffer);
+  await saveBufferToStorage(storageKey, buffer);
+  return { storageKey, sizeBytes: buffer.length };
+}
+
+function requestError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+async function lockStagedMediaUpload(client, {
+  uploadId,
+  tenantId,
+  userId,
+  purpose,
+  canUseAnyUploader = false
+}) {
+  const result = await client.query(
+    `
+      SELECT *
+      FROM media_uploads
+      WHERE id = $1
+        AND tenant_id = $2
+      FOR UPDATE
+    `,
+    [uploadId, tenantId]
+  );
+  const upload = result.rows[0];
+  if (!upload) throw requestError("Photo upload is invalid. Upload the file again.");
+  if (upload.purpose !== purpose) throw requestError("Photo upload is not valid for this use.");
+  if (upload.state !== "staged") throw requestError("Photo upload has already been used.", 409);
+  if (upload.staged_expires_at && new Date(upload.staged_expires_at).getTime() <= Date.now()) {
+    throw requestError("Photo upload has expired. Upload the file again.");
+  }
+  if (!canUseAnyUploader && upload.uploaded_by !== userId) {
+    throw requestError("Photo upload belongs to another user.", 403);
+  }
+  await verifyRegisteredUploadFile(upload);
+  return upload;
+}
+
+async function attachMediaUpload(client, upload, {
+  tenantId,
+  actorUserId,
+  attachedToType,
+  attachedToId
+}) {
+  const result = await client.query(
+    `
+      UPDATE media_uploads
+      SET
+        state = 'attached',
+        staged_expires_at = NULL,
+        attached_to_type = $2,
+        attached_to_id = $3,
+        attached_at = now()
+      WHERE id = $1
+        AND state = 'staged'
+      RETURNING *
+    `,
+    [upload.id, attachedToType, attachedToId]
+  );
+  if (!result.rows[0]) throw requestError("Photo upload has already been used.", 409);
+  await createAuditEvent(client, {
+    tenantId,
+    actorUserId,
+    action: "media_upload.attached",
+    entityType: "media_upload",
+    entityId: upload.id,
+    metadata: {
+      purpose: upload.purpose,
+      attachedToType,
+      attachedToId,
+      ownerOverride: Boolean(upload.uploaded_by && upload.uploaded_by !== actorUserId)
+    }
+  });
+  return result.rows[0];
 }
 
 async function createAuditEvent(client, { tenantId, actorUserId, action, entityType, entityId, metadata = {} }) {
@@ -669,8 +1198,12 @@ function hashInviteToken(token) {
 
 function tenantBaseUrl(tenant) {
   const slug = String(tenant?.slug || "").toLowerCase();
-  if (slug) return `https://${slug}.${config.baseDomain}`;
-  return config.publicAppUrl;
+  const url = new URL(config.publicAppUrl);
+  if (slug) url.hostname = `${slug}.${config.baseDomain}`;
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 function buildInviteUrl(tenant, token) {
@@ -898,6 +1431,8 @@ async function getTenantAdminRecipients(tenantId, excludeUserId = null) {
 }
 
 async function notifyTenantAdminsOfSubmission(context, submission, { photoCount = 0 } = {}) {
+  const preferences = await getTenantNotificationPreferences(context.tenant.id);
+  if (!preferences.email_proof_submitted) return;
   const recipients = await getTenantAdminRecipients(context.tenant.id, context.user.id);
   if (!recipients.length) return;
 
@@ -923,6 +1458,8 @@ async function notifyTenantAdminsOfSubmission(context, submission, { photoCount 
 }
 
 async function notifySubmitterOfProofRequest(context, submissionId, decisionNote) {
+  const preferences = await getTenantNotificationPreferences(context.tenant.id);
+  if (!preferences.email_proof_requests) return;
   const result = await query(
     `
       SELECT sub.id,
@@ -990,6 +1527,8 @@ async function requireTenantContext(request, reply, roles = []) {
     reply.code(404);
     throw new Error("Tenant not found for this hostname");
   }
+
+  issueMediaSession(request.res, context);
 
   return context;
 }
@@ -1091,19 +1630,107 @@ function route(app, method, path, handler) {
   });
 }
 
+function statusCodeForError(error) {
+  if (error instanceof z.ZodError) return 400;
+  if (error?.type === "entity.too.large") return 413;
+  if (error?.message === "Origin not allowed") return 403;
+  if (error?.code === "23505") return 409;
+  if (["22P02", "22001", "23502"].includes(error?.code)) return 400;
+  if (error?.code === "23503") return 409;
+
+  const explicitStatus = Number(error?.statusCode || error?.status || 0);
+  return explicitStatus >= 400 && explicitStatus <= 599 ? explicitStatus : 500;
+}
+
+function publicErrorFor(error, statusCode) {
+  const message = String(error?.message || "Request failed");
+
+  if (error instanceof z.ZodError) {
+    return { code: "validation_failed", message: "Validation failed" };
+  }
+  if (error?.type === "entity.too.large" || /must be .*mb or smaller|payload too large|entity too large/i.test(message)) {
+    return { code: "upload_too_large", message: "The upload is too large." };
+  }
+  if (/unsupported (file|image) type/i.test(message)) {
+    return { code: "unsupported_file_type", message };
+  }
+  if (error?.message === "Origin not allowed") {
+    return { code: "cors_origin_denied", message: "This site is not allowed to call the inventory API." };
+  }
+  if (error?.code === "23505") {
+    return { code: "database_conflict", message: "That record already exists." };
+  }
+  if (error?.code === "23503") {
+    return { code: "invalid_reference", message: "A related record is missing or still in use." };
+  }
+  if (["22P02", "22001", "23502"].includes(error?.code)) {
+    return { code: "invalid_input", message: "The submitted data is invalid." };
+  }
+  if (/enoent|eacces|storage/i.test(`${error?.code || ""} ${message}`) && statusCode >= 500) {
+    return { code: "storage_unavailable", message: "File storage is temporarily unavailable." };
+  }
+
+  if (statusCode === 400) return { code: "invalid_request", message };
+  if (statusCode === 401) return { code: "authentication_required", message: "Authentication required" };
+  if (statusCode === 403) return { code: "access_denied", message };
+  if (statusCode === 404) {
+    return {
+      code: /tenant/i.test(message) ? "tenant_not_found" : "not_found",
+      message
+    };
+  }
+  if (statusCode === 409) return { code: "conflict", message };
+  if (statusCode === 413) return { code: "upload_too_large", message: "The upload is too large." };
+  if (statusCode === 422) return { code: "invalid_identity", message };
+  if (statusCode >= 500) {
+    return { code: "internal_error", message: "The server could not complete this request." };
+  }
+
+  return { code: "request_failed", message };
+}
+
 function registerErrorHandler(app) {
   app.use((error, request, response, next) => {
-    console.error(error);
-
-    if (error instanceof z.ZodError) {
-      response.status(400).json(badRequestFromZod(error));
+    if (response.headersSent) {
+      next(error);
       return;
     }
+    const requestId = request.requestId || crypto.randomUUID();
+    const statusCode = statusCodeForError(error);
+    const publicError = publicErrorFor(error, statusCode);
+    let tenantSlug = null;
+    try {
+      tenantSlug = tenantSlugFromHost(request) || null;
+    } catch {
+      tenantSlug = null;
+    }
 
-    const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
-    response.status(statusCode).json({
-      error: statusCode >= 500 ? "Internal server error" : error.message
-    });
+    response.setHeader("X-Request-ID", requestId);
+    console.error(JSON.stringify({
+      event: "api_request_failed",
+      requestId,
+      method: request.method,
+      path: request.path,
+      tenantSlug,
+      authenticatedSubject: request.authenticatedSubject || null,
+      statusCode,
+      errorClass: error?.name || "Error",
+      errorCode: error?.code || null,
+      publicCode: publicError.code,
+      errorMessage: String(error?.message || error),
+      stack: statusCode >= 500 ? error?.stack || null : undefined
+    }));
+
+    const payload = {
+      error: publicError.message,
+      code: publicError.code,
+      requestId
+    };
+    if (error instanceof z.ZodError) {
+      payload.details = badRequestFromZod(error).details;
+    }
+
+    response.status(statusCode).json(payload);
   });
 }
 
@@ -1291,7 +1918,7 @@ export function registerRoutes(app) {
   route(app, "get", "/api/newsletter/admin", async (request, reply) => {
     await requireFrgAdmin(request, reply);
 
-    const [issueResult, statsResult, subscriberResult, contentResult] = await Promise.all([
+    const [issueResult, statsResult, subscriberResult, contentResult, deliveryResult] = await Promise.all([
       query(
         `
           SELECT i.*,
@@ -1323,16 +1950,43 @@ export function registerRoutes(app) {
       ),
       query(
         `
-          SELECT *
-          FROM newsletter_subscribers
+          SELECT s.*,
+            COUNT(d.id) FILTER (WHERE d.status = 'sent')::int AS sent_count,
+            COUNT(d.id) FILTER (WHERE d.status = 'failed')::int AS failed_count,
+            COUNT(d.id) FILTER (WHERE d.status = 'skipped')::int AS skipped_count,
+            latest.status AS last_delivery_status,
+            latest.error AS last_delivery_error,
+            COALESCE(latest.sent_at, latest.created_at) AS last_delivery_at,
+            latest.sent_at AS last_sent_at,
+            latest.issue_title AS last_delivery_issue_title
+          FROM newsletter_subscribers s
+          LEFT JOIN newsletter_deliveries d ON d.email = s.email
+          LEFT JOIN LATERAL (
+            SELECT d2.status,
+              d2.error,
+              d2.sent_at,
+              d2.created_at,
+              i2.title AS issue_title
+            FROM newsletter_deliveries d2
+            LEFT JOIN newsletter_issues i2 ON i2.id = d2.issue_id
+            WHERE d2.email = s.email
+            ORDER BY d2.created_at DESC
+            LIMIT 1
+          ) latest ON true
+          GROUP BY s.id,
+            latest.status,
+            latest.error,
+            latest.sent_at,
+            latest.created_at,
+            latest.issue_title
           ORDER BY
-            CASE status
+            CASE s.status
               WHEN 'pending' THEN 0
               WHEN 'active' THEN 1
               WHEN 'rejected' THEN 2
               ELSE 3
             END,
-            updated_at DESC
+            s.updated_at DESC
           LIMIT 40
         `
       ),
@@ -1350,6 +2004,19 @@ export function registerRoutes(app) {
             sort_order ASC,
             updated_at DESC
         `
+      ),
+      query(
+        `
+          SELECT d.*,
+            i.title AS issue_title,
+            s.display_name AS subscriber_display_name,
+            s.status AS subscriber_status
+          FROM newsletter_deliveries d
+          JOIN newsletter_issues i ON i.id = d.issue_id
+          LEFT JOIN newsletter_subscribers s ON s.id = d.subscriber_id
+          ORDER BY d.created_at DESC
+          LIMIT 200
+        `
       )
     ]);
 
@@ -1366,7 +2033,8 @@ export function registerRoutes(app) {
       deliverySettings: {
         emailConfigured: isEmailConfigured()
       },
-      subscribers: subscriberResult.rows.map(rowToNewsletterSubscriber)
+      subscribers: subscriberResult.rows.map(rowToNewsletterSubscriber),
+      deliveries: deliveryResult.rows.map(rowToNewsletterDelivery)
     };
   });
 
@@ -1705,6 +2373,58 @@ export function registerRoutes(app) {
     return { issue: rowToNewsletterIssue(published, { includeBody: true }), delivery };
   });
 
+  route(app, "post", "/api/newsletter/admin/issues/:issueId/test-send", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+    const body = parseBody(newsletterTestSendSchema, request.body);
+    const email = body.email.trim().toLowerCase();
+
+    const issueResult = await query(
+      `
+        SELECT *
+        FROM newsletter_issues
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [request.params.issueId]
+    );
+
+    if (!issueResult.rows[0]) {
+      reply.code(404);
+      throw new Error("Newsletter issue not found");
+    }
+
+    const issue = rowToNewsletterIssue(issueResult.rows[0], { includeBody: true });
+    let result;
+    try {
+      result = await sendNewsletterIssueEmail({
+        to: email,
+        issue,
+        unsubscribeUrl: buildNewsletterUnsubscribeUrl(email)
+      });
+    } catch (error) {
+      result = { sent: false, reason: "send_failed", error: error.message || "delivery_failed" };
+    }
+
+    await query(
+      `
+        INSERT INTO audit_events (tenant_id, actor_user_id, action, entity_type, entity_id, metadata)
+        VALUES (NULL, $1, 'newsletter.issue.test_sent', 'newsletter_issue', $2, $3::jsonb)
+      `,
+      [
+        auth.user.id,
+        issue.id,
+        JSON.stringify({
+          email,
+          sent: Boolean(result.sent),
+          reason: result.reason || null,
+          error: result.error || null
+        })
+      ]
+    );
+
+    return { testSend: result, email };
+  });
+
   route(app, "get", "/api/platform/tenants", async (request, reply) => {
     await requirePlatformAdmin(request, reply);
 
@@ -1813,6 +2533,271 @@ export function registerRoutes(app) {
     };
   });
 
+  route(app, "get", "/api/tenant/audit-events", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const filters = tenantAuditQuerySchema.parse(request.query || {});
+    const cursor = filters.cursor ? decodeTenantAuditCursor(filters.cursor) : null;
+    const where = ["event.tenant_id = $1"];
+    const values = [context.tenant.id];
+    const addValue = value => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+
+    if (cursor) {
+      const createdAtParameter = addValue(cursor.createdAt);
+      const idParameter = addValue(cursor.id);
+      where.push(`(event.created_at, event.id) < (${createdAtParameter}::timestamptz, ${idParameter}::uuid)`);
+    }
+    if (filters.actor === "system") {
+      where.push("event.actor_user_id IS NULL");
+    } else if (filters.actor) {
+      where.push(`event.actor_user_id = ${addValue(filters.actor)}::uuid`);
+    }
+    if (filters.action) where.push(`event.action = ${addValue(filters.action)}`);
+    if (filters.entityType) where.push(`event.entity_type = ${addValue(filters.entityType)}`);
+    if (filters.entityId) where.push(`event.entity_id = ${addValue(filters.entityId)}::uuid`);
+    if (filters.from) where.push(`event.created_at >= ${addValue(filters.from)}::timestamptz`);
+    if (filters.to) where.push(`event.created_at <= ${addValue(filters.to)}::timestamptz`);
+    if (filters.category && filters.category !== "other") {
+      const categoryPrefixes = addValue(tenantAuditCategoryPrefixes[filters.category]);
+      where.push(`EXISTS (
+        SELECT 1
+        FROM unnest(${categoryPrefixes}::text[]) AS category_prefix(value)
+        WHERE starts_with(event.action, category_prefix.value)
+      )`);
+    } else if (filters.category === "other") {
+      const knownPrefixes = addValue(Object.values(tenantAuditCategoryPrefixes).flat());
+      where.push(`NOT EXISTS (
+        SELECT 1
+        FROM unnest(${knownPrefixes}::text[]) AS category_prefix(value)
+        WHERE starts_with(event.action, category_prefix.value)
+      )`);
+    }
+
+    const limitParameter = addValue(filters.limit + 1);
+    const [eventResult, optionResult, actorResult] = await Promise.all([
+      query(
+        `
+          SELECT event.*,
+            actor.email AS actor_email,
+            actor.display_name AS actor_display_name,
+            COALESCE(direct_session.id, item_session.id, submission_session.id, request_session.id) AS context_session_id,
+            COALESCE(direct_session.name, item_session.name, submission_session.name, request_session.name) AS context_session_name,
+            COALESCE(
+              CASE WHEN item_session.id IS NOT NULL THEN direct_item.id END,
+              CASE WHEN submission_session.id IS NOT NULL THEN submission_item.id END,
+              CASE WHEN request_session.id IS NOT NULL THEN request_item.id END
+            ) AS context_session_item_id,
+            COALESCE(
+              CASE WHEN item_session.id IS NOT NULL THEN direct_item.packet_line END,
+              CASE WHEN submission_session.id IS NOT NULL THEN submission_item.packet_line END,
+              CASE WHEN request_session.id IS NOT NULL THEN request_item.packet_line END
+            ) AS context_packet_line
+          FROM audit_events event
+          LEFT JOIN app_users actor ON actor.id = event.actor_user_id
+          LEFT JOIN inventory_sessions direct_session
+            ON event.entity_type = 'inventory_session'
+            AND direct_session.id = event.entity_id
+            AND direct_session.tenant_id = event.tenant_id
+          LEFT JOIN inventory_session_items direct_item
+            ON event.entity_type = 'inventory_session_item'
+            AND direct_item.id = event.entity_id
+          LEFT JOIN inventory_sessions item_session
+            ON item_session.id = direct_item.session_id
+            AND item_session.tenant_id = event.tenant_id
+          LEFT JOIN item_submissions event_submission
+            ON event.entity_type = 'item_submission'
+            AND event_submission.id = event.entity_id
+          LEFT JOIN inventory_session_items submission_item
+            ON submission_item.id = event_submission.session_item_id
+          LEFT JOIN inventory_sessions submission_session
+            ON submission_session.id = submission_item.session_id
+            AND submission_session.tenant_id = event.tenant_id
+          LEFT JOIN evidence_requests event_request
+            ON event.entity_type = 'evidence_request'
+            AND event_request.id = event.entity_id
+          LEFT JOIN item_submissions request_submission
+            ON request_submission.id = event_request.submission_id
+          LEFT JOIN inventory_session_items request_item
+            ON request_item.id = request_submission.session_item_id
+          LEFT JOIN inventory_sessions request_session
+            ON request_session.id = request_item.session_id
+            AND request_session.tenant_id = event.tenant_id
+          WHERE ${where.join("\n            AND ")}
+          ORDER BY event.created_at DESC, event.id DESC
+          LIMIT ${limitParameter}
+        `,
+        values
+      ),
+      query(
+        `
+          SELECT DISTINCT action, entity_type
+          FROM audit_events
+          WHERE tenant_id = $1
+          ORDER BY action, entity_type
+        `,
+        [context.tenant.id]
+      ),
+      query(
+        `
+          SELECT DISTINCT event.actor_user_id, actor.email, actor.display_name
+          FROM audit_events event
+          LEFT JOIN app_users actor ON actor.id = event.actor_user_id
+          WHERE event.tenant_id = $1
+          ORDER BY actor.display_name NULLS LAST, actor.email NULLS LAST, event.actor_user_id NULLS LAST
+        `,
+        [context.tenant.id]
+      )
+    ]);
+
+    const hasMore = eventResult.rows.length > filters.limit;
+    const pageRows = eventResult.rows.slice(0, filters.limit);
+    const actions = [...new Set(optionResult.rows.map(row => row.action))];
+    const entityTypes = [...new Set(optionResult.rows.map(row => row.entity_type))];
+    const actors = actorResult.rows.map(row => row.actor_user_id ? {
+      id: row.actor_user_id,
+      displayName: row.display_name || null,
+      email: row.email || null
+    } : {
+      id: "system",
+      displayName: "System",
+      email: null
+    });
+
+    request.res.setHeader("Cache-Control", "private, no-store");
+    return {
+      events: pageRows.map(rowToTenantAuditEvent),
+      nextCursor: hasMore && pageRows.length ? encodeTenantAuditCursor(pageRows[pageRows.length - 1]) : null,
+      filterOptions: {
+        categories: tenantAuditCategoryOptions,
+        actors,
+        actions,
+        entityTypes
+      }
+    };
+  });
+
+  route(app, "get", "/api/tenant/settings", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const result = await query(
+      `
+        SELECT tenant.name,
+          guidance.body AS guidance_body,
+          guidance.updated_at AS guidance_updated_at,
+          settings.notification_preferences,
+          settings.updated_at AS settings_updated_at,
+          updater.email AS updated_by_email,
+          updater.display_name AS updated_by_name
+        FROM tenants tenant
+        LEFT JOIN tenant_guidance guidance ON guidance.tenant_id = tenant.id
+        LEFT JOIN tenant_settings settings ON settings.tenant_id = tenant.id
+        LEFT JOIN app_users updater ON updater.id = COALESCE(settings.updated_by, guidance.updated_by)
+        WHERE tenant.id = $1
+        LIMIT 1
+      `,
+      [context.tenant.id]
+    );
+
+    return { settings: tenantSettingsResponse(context, result.rows[0]) };
+  });
+
+  route(app, "patch", "/api/tenant/settings", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(tenantSettingsSchema, request.body);
+
+    const saved = await withTransaction(async client => {
+      await client.query("SELECT id FROM tenants WHERE id = $1 FOR UPDATE", [context.tenant.id]);
+      const currentResult = await client.query(
+        `
+          SELECT tenant.name,
+            guidance.body AS guidance_body,
+            settings.notification_preferences
+          FROM tenants tenant
+          LEFT JOIN tenant_guidance guidance ON guidance.tenant_id = tenant.id
+          LEFT JOIN tenant_settings settings ON settings.tenant_id = tenant.id
+          WHERE tenant.id = $1
+        `,
+        [context.tenant.id]
+      );
+      const current = currentResult.rows[0];
+      const nextPreferences = {
+        ...normalizeTenantNotificationPreferences(current?.notification_preferences),
+        ...(body.notificationPreferences || {})
+      };
+
+      if (body.displayName !== undefined) {
+        await client.query(
+          "UPDATE tenants SET name = $1 WHERE id = $2",
+          [body.displayName.trim(), context.tenant.id]
+        );
+      }
+
+      if (body.defaultGuidance !== undefined) {
+        await client.query(
+          `
+            INSERT INTO tenant_guidance (tenant_id, body, updated_by)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (tenant_id) DO UPDATE SET
+              body = EXCLUDED.body,
+              updated_by = EXCLUDED.updated_by,
+              updated_at = now()
+          `,
+          [context.tenant.id, body.defaultGuidance.trim(), context.user.id]
+        );
+      }
+
+      await client.query(
+        `
+          INSERT INTO tenant_settings (tenant_id, notification_preferences, updated_by)
+          VALUES ($1, $2::jsonb, $3)
+          ON CONFLICT (tenant_id) DO UPDATE SET
+            notification_preferences = EXCLUDED.notification_preferences,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = now()
+        `,
+        [context.tenant.id, JSON.stringify(nextPreferences), context.user.id]
+      );
+
+      const changedFields = [
+        body.displayName !== undefined ? "display_name" : "",
+        body.defaultGuidance !== undefined ? "default_guidance" : "",
+        body.notificationPreferences !== undefined ? "notification_preferences" : ""
+      ].filter(Boolean);
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "tenant.settings_updated",
+        entityType: "tenant",
+        entityId: context.tenant.id,
+        metadata: { changedFields }
+      });
+
+      const savedResult = await client.query(
+        `
+          SELECT tenant.name,
+            guidance.body AS guidance_body,
+            guidance.updated_at AS guidance_updated_at,
+            settings.notification_preferences,
+            settings.updated_at AS settings_updated_at,
+            updater.email AS updated_by_email,
+            updater.display_name AS updated_by_name
+          FROM tenants tenant
+          LEFT JOIN tenant_guidance guidance ON guidance.tenant_id = tenant.id
+          LEFT JOIN tenant_settings settings ON settings.tenant_id = tenant.id
+          LEFT JOIN app_users updater ON updater.id = settings.updated_by
+          WHERE tenant.id = $1
+          LIMIT 1
+        `,
+        [context.tenant.id]
+      );
+      return savedResult.rows[0];
+    });
+
+    context.tenant.name = saved.name;
+    return { settings: tenantSettingsResponse(context, saved) };
+  });
+
   route(app, "get", "/api/tenant/guidance", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
     const result = await query(
@@ -1876,6 +2861,7 @@ export function registerRoutes(app) {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
     const notifications = [];
     const isTenantAdmin = hasTenantRole(context, ["tenant_admin"]);
+    const preferences = await getTenantNotificationPreferences(context.tenant.id);
 
     if (isTenantAdmin) {
       const pendingProofResult = await query(
@@ -2109,8 +3095,16 @@ export function registerRoutes(app) {
     }
 
     const priorityRank = { high: 0, medium: 1, low: 2 };
+    const preferenceForType = {
+      proof_submitted: "proof_submitted",
+      proof_request: "proof_requests",
+      assignment: "open_rows",
+      packet_import: "packet_imports",
+      session_closed: "session_closed"
+    };
     const sortedNotifications = notifications
       .filter(notification => notification.createdAt)
+      .filter(notification => preferences[preferenceForType[notification.type]] !== false)
       .sort((left, right) => {
         const leftPriority = priorityRank[left.priority] ?? 9;
         const rightPriority = priorityRank[right.priority] ?? 9;
@@ -2686,6 +3680,88 @@ export function registerRoutes(app) {
     return { items: result.rows.map(rowToInventoryItem) };
   });
 
+  route(app, "get", "/api/inventory/reports", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const [sessionResult, rowResult] = await Promise.all([
+      query(
+        `
+          SELECT session.*,
+            COUNT(item.id)::int AS item_count,
+            COUNT(item.id) FILTER (WHERE item.status IN ('found', 'approved'))::int AS found_count,
+            COUNT(item.id) FILTER (WHERE item.status = 'needs_review')::int AS needs_review_count
+          FROM inventory_sessions session
+          LEFT JOIN inventory_session_items item ON item.session_id = session.id
+          WHERE session.tenant_id = $1
+          GROUP BY session.id
+          ORDER BY session.created_at DESC
+        `,
+        [context.tenant.id]
+      ),
+      query(
+        `
+          SELECT item.id,
+            item.session_id,
+            item.inventory_item_id,
+            item.packet_line,
+            item.expected_qty,
+            item.location_hint,
+            item.status AS item_status,
+            item.assigned_to,
+            item.created_at,
+            item.updated_at,
+            session.name AS session_name,
+            session.status AS session_status,
+            session.created_at AS session_created_at,
+            session.closed_at AS session_closed_at,
+            inventory.title AS item_title,
+            inventory.common_name,
+            inventory.army_name,
+            inventory.lin,
+            inventory.nsn,
+            inventory.description,
+            inventory.current_location,
+            inventory.metadata AS item_metadata,
+            assignee.email AS assigned_to_email,
+            assignee.display_name AS assigned_to_name,
+            latest.id AS latest_submission_id,
+            latest.submitted_by AS latest_submitted_by,
+            latest.status AS latest_submission_status,
+            latest.location_text AS latest_location_text,
+            latest.note AS latest_note,
+            latest.serial_number AS latest_serial_number,
+            latest.review_state AS latest_review_state,
+            latest.review_note AS latest_review_note,
+            latest.reviewed_by AS latest_reviewed_by,
+            latest.reviewed_at AS latest_reviewed_at,
+            latest.created_at AS latest_created_at,
+            submitter.email AS latest_submitted_by_email,
+            submitter.display_name AS latest_submitted_by_name
+          FROM inventory_session_items item
+          JOIN inventory_sessions session ON session.id = item.session_id
+          LEFT JOIN inventory_items inventory ON inventory.id = item.inventory_item_id
+          LEFT JOIN app_users assignee ON assignee.id = item.assigned_to
+          LEFT JOIN LATERAL (
+            SELECT submission.*
+            FROM item_submissions submission
+            WHERE submission.session_item_id = item.id
+            ORDER BY submission.created_at DESC, submission.id DESC
+            LIMIT 1
+          ) latest ON true
+          LEFT JOIN app_users submitter ON submitter.id = latest.submitted_by
+          WHERE session.tenant_id = $1
+          ORDER BY session.created_at DESC, item.created_at, item.id
+        `,
+        [context.tenant.id]
+      )
+    ]);
+
+    return {
+      sessions: sessionResult.rows.map(rowToSession),
+      rows: rowResult.rows.map(rowToReportItem),
+      generatedAt: new Date().toISOString()
+    };
+  });
+
   route(app, "post", "/api/inventory/items", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
@@ -2697,12 +3773,40 @@ export function registerRoutes(app) {
         nsn: z.string().optional(),
         description: z.string().optional(),
         currentLocation: z.string().optional(),
-        metadata: z.record(z.unknown()).optional()
+        metadata: z.record(z.unknown()).optional(),
+        mediaUploadIds: z.array(z.string().uuid()).max(8).optional()
       }),
       request.body
     );
 
+    const mediaUploadIds = body.mediaUploadIds || [];
+    if (new Set(mediaUploadIds).size !== mediaUploadIds.length) {
+      throw requestError("Each inventory reference upload can only be attached once.");
+    }
+    const localReferenceKeys = localMediaStorageKeys(body.metadata || {});
+    if (localReferenceKeys.length !== mediaUploadIds.length) {
+      throw requestError("Each local inventory reference must include its matching upload ID.");
+    }
+
     const item = await withTransaction(async client => {
+      const referenceUploads = [];
+      for (const uploadId of [...mediaUploadIds].sort()) {
+        referenceUploads.push(await lockStagedMediaUpload(client, {
+          uploadId,
+          tenantId: context.tenant.id,
+          userId: context.user.id,
+          purpose: "inventory_reference",
+          canUseAnyUploader: true
+        }));
+      }
+      const attachedStorageKeys = new Set(referenceUploads.map(upload => upload.storage_key));
+      if (
+        attachedStorageKeys.size !== localReferenceKeys.length ||
+        localReferenceKeys.some(storageKey => !attachedStorageKeys.has(storageKey))
+      ) {
+        throw requestError("Inventory reference upload IDs do not match the local media URLs.");
+      }
+
       const result = await client.query(
         `
           INSERT INTO inventory_items
@@ -2724,12 +3828,29 @@ export function registerRoutes(app) {
         ]
       );
 
+      for (const [index, upload] of referenceUploads.entries()) {
+        await attachMediaUpload(client, upload, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          attachedToType: "inventory_item",
+          attachedToId: result.rows[0].id
+        });
+        await client.query(
+          `
+            INSERT INTO inventory_item_media (inventory_item_id, media_upload_id, sort_order)
+            VALUES ($1, $2, $3)
+          `,
+          [result.rows[0].id, upload.id, index]
+        );
+      }
+
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
         action: "inventory_item.created",
         entityType: "inventory_item",
-        entityId: result.rows[0].id
+        entityId: result.rows[0].id,
+        metadata: { mediaUploadCount: referenceUploads.length }
       });
 
       return result.rows[0];
@@ -2785,7 +3906,11 @@ export function registerRoutes(app) {
         actorUserId: context.user.id,
         action: "inventory_session.created",
         entityType: "inventory_session",
-        entityId: result.rows[0].id
+        entityId: result.rows[0].id,
+        metadata: {
+          sessionName: result.rows[0].name,
+          status: result.rows[0].status
+        }
       });
 
       return result.rows[0];
@@ -2940,7 +4065,10 @@ export function registerRoutes(app) {
         action: "inventory_session.updated",
         entityType: "inventory_session",
         entityId: result.rows[0].id,
-        metadata: { status: body.status || null }
+        metadata: {
+          sessionName: result.rows[0].name,
+          status: body.status || null
+        }
       });
 
       return result.rows[0];
@@ -3017,44 +4145,73 @@ export function registerRoutes(app) {
       request.body
     );
 
-    let matchedItem = null;
-    if (!body.inventoryItemId && body.packetLine) {
-      const inventoryResult = await query(
+    const created = await withTransaction(async client => {
+      const sessionResult = await client.query(
         `
-          SELECT id, title, common_name, army_name, lin, nsn, description, current_location
-          FROM inventory_items
-          WHERE tenant_id = $1
+          SELECT id, name
+          FROM inventory_sessions
+          WHERE id = $1 AND tenant_id = $2
+          LIMIT 1
+          FOR UPDATE
         `,
-        [context.tenant.id]
+        [request.params.sessionId, context.tenant.id]
       );
-      matchedItem = findInventoryItemMatch(body.packetLine, inventoryResult.rows.map(itemMatchProfile))?.item || null;
-    }
+      const session = sessionResult.rows[0];
+      if (!session) return null;
 
-    const result = await query(
-      `
-        INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint)
-        SELECT s.id, $2, $3, $4, $5
-        FROM inventory_sessions s
-        WHERE s.id = $1 AND s.tenant_id = $6
-        RETURNING *
-      `,
-      [
-        request.params.sessionId,
-        body.inventoryItemId || matchedItem?.id || null,
-        body.packetLine || null,
-        body.expectedQty ?? null,
-        body.locationHint || matchedItem?.current_location || null,
-        context.tenant.id
-      ]
-    );
+      let matchedItem = null;
+      if (!body.inventoryItemId && body.packetLine) {
+        const inventoryResult = await client.query(
+          `
+            SELECT id, title, common_name, army_name, lin, nsn, description, current_location
+            FROM inventory_items
+            WHERE tenant_id = $1
+          `,
+          [context.tenant.id]
+        );
+        matchedItem = findInventoryItemMatch(body.packetLine, inventoryResult.rows.map(itemMatchProfile))?.item || null;
+      }
 
-    if (!result.rows[0]) {
+      const result = await client.query(
+        `
+          INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING *
+        `,
+        [
+          session.id,
+          body.inventoryItemId || matchedItem?.id || null,
+          body.packetLine || null,
+          body.expectedQty ?? null,
+          body.locationHint || matchedItem?.current_location || null
+        ]
+      );
+      const sessionItem = result.rows[0];
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "session_item.created",
+        entityType: "inventory_session_item",
+        entityId: sessionItem.id,
+        metadata: {
+          sessionName: session.name,
+          packetLine: sessionItem.packet_line,
+          expectedQty: sessionItem.expected_qty,
+          locationHint: sessionItem.location_hint
+        }
+      });
+
+      return sessionItem;
+    });
+
+    if (!created) {
       reply.code(404);
       throw new Error("Session not found");
     }
 
     reply.code(201);
-    return { sessionItem: result.rows[0] };
+    return { sessionItem: created };
   });
 
   route(app, "post", "/api/inventory/sessions/:sessionId/items/bulk", async (request, reply) => {
@@ -3074,6 +4231,7 @@ export function registerRoutes(app) {
           sourceFile: z.object({
             fileName: z.string().max(240).optional(),
             mimeType: z.string().max(120),
+            size: z.number().int().nonnegative().max(10 * 1024 * 1024).optional(),
             dataUrl: z.string().optional(),
             base64: z.string().optional()
           }).optional()
@@ -3096,9 +4254,12 @@ export function registerRoutes(app) {
       throw new Error("Packet import batch schema is not installed. Run backend/db/003_packet_import_batches.sql.");
     }
 
-    const created = await withTransaction(async client => {
+    let packetSourceFile = null;
+    let created;
+    try {
+      created = await withTransaction(async client => {
       const sessionResult = await client.query(
-        "SELECT id FROM inventory_sessions WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+        "SELECT id, name FROM inventory_sessions WHERE id = $1 AND tenant_id = $2 LIMIT 1",
         [request.params.sessionId, context.tenant.id]
       );
 
@@ -3115,9 +4276,10 @@ export function registerRoutes(app) {
       const matchableInventoryItems = inventoryResult.rows.map(itemMatchProfile);
       let importBatch = null;
       if (hasImportBatch) {
-        const sourceStorageKey = body.importBatch?.sourceFile
+        const sourceUpload = body.importBatch?.sourceFile
           ? await savePacketImportSource(context.tenant, body.importBatch.sourceFile)
           : null;
+        packetSourceFile = sourceUpload?.storageKey || null;
         const batchResult = await client.query(
           `
             INSERT INTO packet_import_batches (
@@ -3125,12 +4287,13 @@ export function registerRoutes(app) {
               session_id,
               source_name,
               source_mime_type,
+              source_size_bytes,
               source_storage_key,
               extracted_text,
               row_count,
               created_by
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
           `,
           [
@@ -3138,13 +4301,67 @@ export function registerRoutes(app) {
             request.params.sessionId,
             body.importBatch?.sourceName || body.importBatch?.sourceFile?.fileName || null,
             body.importBatch?.sourceMimeType || body.importBatch?.sourceFile?.mimeType || null,
-            sourceStorageKey,
+            sourceUpload?.sizeBytes ?? body.importBatch?.sourceFile?.size ?? null,
+            sourceUpload?.storageKey || null,
             body.importBatch?.extractedText || null,
             body.items.length,
             context.user.id
           ]
         );
         importBatch = batchResult.rows[0];
+        if (sourceUpload) {
+          const mediaResult = await client.query(
+            `
+              INSERT INTO media_uploads (
+                tenant_id,
+                uploaded_by,
+                storage_key,
+                original_file_name,
+                mime_type,
+                size_bytes,
+                purpose,
+                state,
+                attached_to_type,
+                attached_to_id,
+                attached_at
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, 'packet_source', 'attached', 'packet_import_batch', $7, now())
+              RETURNING id
+            `,
+            [
+              context.tenant.id,
+              context.user.id,
+              sourceUpload.storageKey,
+              body.importBatch?.sourceName || body.importBatch?.sourceFile?.fileName || null,
+              body.importBatch?.sourceMimeType || body.importBatch?.sourceFile?.mimeType || "application/octet-stream",
+              sourceUpload.sizeBytes,
+              importBatch.id
+            ]
+          );
+          const linkedBatch = await client.query(
+            `
+              UPDATE packet_import_batches
+              SET media_upload_id = $1
+              WHERE id = $2
+              RETURNING *
+            `,
+            [mediaResult.rows[0].id, importBatch.id]
+          );
+          await createAuditEvent(client, {
+            tenantId: context.tenant.id,
+            actorUserId: context.user.id,
+            action: "media_upload.attached",
+            entityType: "media_upload",
+            entityId: mediaResult.rows[0].id,
+            metadata: {
+              purpose: "packet_source",
+              attachedToType: "packet_import_batch",
+              attachedToId: importBatch.id,
+              ownerOverride: false
+            }
+          });
+          importBatch = linkedBatch.rows[0];
+        }
       }
 
       const rows = [];
@@ -3197,6 +4414,7 @@ export function registerRoutes(app) {
         entityType: "inventory_session",
         entityId: request.params.sessionId,
         metadata: {
+          sessionName: sessionResult.rows[0].name,
           count: rows.length,
           matchedCount,
           importBatchId: importBatch?.id || null,
@@ -3204,8 +4422,21 @@ export function registerRoutes(app) {
         }
       });
 
-      return { rows, importBatch };
-    });
+        return { rows, importBatch };
+      });
+      packetSourceFile = null;
+    } catch (error) {
+      if (packetSourceFile) {
+        await deleteStoredFile(packetSourceFile).catch(cleanupError => {
+          console.error(JSON.stringify({
+            event: "packet_source_cleanup_failed",
+            storageKey: packetSourceFile,
+            errorMessage: cleanupError?.message || String(cleanupError)
+          }));
+        });
+      }
+      throw error;
+    }
 
     if (!created) {
       reply.code(404);
@@ -3223,24 +4454,84 @@ export function registerRoutes(app) {
     const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor"]);
     const body = parseBody(
       z.object({
-        fileName: z.string().optional(),
+        fileName: z.string().max(240).optional(),
         mimeType: z.enum([...imageMimeTypes.keys()]),
         dataUrl: z.string().optional(),
         base64: z.string().optional(),
         caption: z.string().optional(),
-        kind: z.enum(photoKinds).default("general")
+        kind: z.enum(photoKinds).default("general"),
+        purpose: z.enum(["evidence", "inventory_reference"]).default("evidence")
       }),
       request.body
     );
+    if (body.purpose === "inventory_reference" && !hasTenantRole(context, ["tenant_admin"])) {
+      throw requestError("Only platoon admins can stage inventory reference photos.", 403);
+    }
 
-    const storageKey = await saveUploadedImage(context.tenant, body);
+    const stored = await saveUploadedImage(context.tenant, body);
+    let upload;
+    try {
+      upload = await withTransaction(async client => {
+        const result = await client.query(
+          `
+            INSERT INTO media_uploads (
+              tenant_id,
+              uploaded_by,
+              storage_key,
+              original_file_name,
+              mime_type,
+              size_bytes,
+              purpose,
+              staged_expires_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8::int * interval '1 hour'))
+            RETURNING *
+          `,
+          [
+            context.tenant.id,
+            context.user.id,
+            stored.storageKey,
+            body.fileName || null,
+            body.mimeType,
+            stored.sizeBytes,
+            body.purpose,
+            config.storage.mediaUploadStagingTtlHours
+          ]
+        );
+        await createAuditEvent(client, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          action: "media_upload.staged",
+          entityType: "media_upload",
+          entityId: result.rows[0].id,
+          metadata: {
+            purpose: body.purpose,
+            mimeType: body.mimeType,
+            sizeBytes: stored.sizeBytes
+          }
+        });
+        return result.rows[0];
+      });
+    } catch (error) {
+      await deleteStoredFile(stored.storageKey).catch(cleanupError => {
+        console.error(JSON.stringify({
+          event: "media_upload_cleanup_failed",
+          storageKey: stored.storageKey,
+          errorMessage: cleanupError?.message || String(cleanupError)
+        }));
+      });
+      throw error;
+    }
 
+    reply.code(201);
     return {
       photo: {
-        storageKey,
-        url: buildMediaUrl(storageKey),
+        uploadId: upload.id,
+        url: buildMediaUrl(upload.storage_key),
         caption: body.caption || null,
-        kind: body.kind
+        kind: body.kind,
+        purpose: upload.purpose,
+        expiresAt: upload.staged_expires_at
       }
     };
   });
@@ -3254,32 +4545,44 @@ export function registerRoutes(app) {
       request.body
     );
     const canManageAssignments = hasTenantRole(context, ["tenant_admin"]);
-    const requestedMemberId = body.memberId === "self" ? context.membership?.id || null : body.memberId || null;
+    const isSelfAssignment = body.memberId === "self";
+    const requestedMemberId = isSelfAssignment ? null : body.memberId || null;
 
-    if (!canManageAssignments) {
-      if (!requestedMemberId || requestedMemberId !== context.membership?.id) {
-        reply.code(403);
-        throw new Error("Contributors can only assign rows to themselves.");
-      }
+    if (!canManageAssignments && !isSelfAssignment) {
+      reply.code(403);
+      throw new Error("Contributors can only claim rows for themselves.");
     }
 
     const updated = await withTransaction(async client => {
       const currentResult = await client.query(
         `
-          SELECT si.id
+          SELECT si.id, si.assigned_to, s.status AS session_status
           FROM inventory_session_items si
           JOIN inventory_sessions s ON s.id = si.session_id
           WHERE si.id = $1
             AND s.tenant_id = $2
-          FOR UPDATE OF si
+          FOR UPDATE OF si, s
         `,
         [request.params.sessionItemId, context.tenant.id]
       );
 
       if (!currentResult.rows[0]) return null;
+      if (currentResult.rows[0].session_status === "closed") return { sessionClosed: true };
 
       let assignedUser = null;
-      if (requestedMemberId) {
+      if (isSelfAssignment) {
+        if (currentResult.rows[0].assigned_to && currentResult.rows[0].assigned_to !== context.user.id) {
+          reply.code(409);
+          throw new Error("This row is already assigned to another user.");
+        }
+
+        assignedUser = {
+          user_id: context.user.id,
+          email: context.user.email,
+          display_name: context.user.display_name,
+          role: context.membership?.role || null
+        };
+      } else if (requestedMemberId) {
         const memberResult = await client.query(
           `
             SELECT m.id, m.user_id, m.role, u.email, u.display_name
@@ -3348,6 +4651,10 @@ export function registerRoutes(app) {
       reply.code(404);
       throw new Error("Session item not found");
     }
+    if (updated.sessionClosed) {
+      reply.code(409);
+      throw new Error("Closed sessions are read-only.");
+    }
 
     return {
       assignment: {
@@ -3374,6 +4681,21 @@ export function registerRoutes(app) {
     );
 
     const updated = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT si.id, s.status AS session_status
+          FROM inventory_session_items si
+          JOIN inventory_sessions s ON s.id = si.session_id
+          WHERE si.id = $1
+            AND s.tenant_id = $2
+          FOR UPDATE OF si, s
+        `,
+        [request.params.sessionItemId, context.tenant.id]
+      );
+
+      if (!currentResult.rows[0]) return null;
+      if (currentResult.rows[0].session_status === "closed") return { sessionClosed: true };
+
       const result = await client.query(
         `
           UPDATE inventory_session_items si
@@ -3405,6 +4727,10 @@ export function registerRoutes(app) {
       reply.code(404);
       throw new Error("Session item not found");
     }
+    if (updated.sessionClosed) {
+      reply.code(409);
+      throw new Error("Closed sessions are read-only.");
+    }
 
     return { sessionItem: updated };
   });
@@ -3419,26 +4745,45 @@ export function registerRoutes(app) {
         serialNumber: z.string().optional(),
         photoIds: z.array(z.string().uuid()).optional(),
         photos: z.array(z.object({
-          storageKey: z.string().min(8),
+          uploadId: z.string().uuid(),
           caption: z.string().optional(),
           kind: z.enum(photoKinds).default("general")
         })).max(8).optional()
       }),
       request.body
     );
+    const photos = body.photos || [];
+    const photoUploadIds = photos.map(photo => photo.uploadId);
+    if (new Set(photoUploadIds).size !== photoUploadIds.length) {
+      throw requestError("Each photo upload can only be attached once.");
+    }
 
     const submission = await withTransaction(async client => {
       const sessionItemResult = await client.query(
         `
-          SELECT si.id, si.packet_line, s.name AS session_name
+          SELECT si.id, si.packet_line, s.name AS session_name, s.status AS session_status
           FROM inventory_session_items si
           JOIN inventory_sessions s ON s.id = si.session_id
           WHERE si.id = $1 AND s.tenant_id = $2
+          FOR UPDATE OF si, s
         `,
         [request.params.sessionItemId, context.tenant.id]
       );
 
       if (!sessionItemResult.rows[0]) return null;
+      if (sessionItemResult.rows[0].session_status === "closed") return { sessionClosed: true };
+
+      const lockedUploads = new Map();
+      for (const uploadId of [...photoUploadIds].sort()) {
+        const upload = await lockStagedMediaUpload(client, {
+          uploadId,
+          tenantId: context.tenant.id,
+          userId: context.user.id,
+          purpose: "evidence",
+          canUseAnyUploader: hasTenantRole(context, ["tenant_admin"])
+        });
+        lockedUploads.set(upload.id, upload);
+      }
 
       const result = await client.query(
         `
@@ -3457,22 +4802,23 @@ export function registerRoutes(app) {
         ]
       );
 
-      const photos = body.photos || [];
       for (const photo of photos) {
-        const storageKey = safeStorageKey(photo.storageKey);
-        if (!storageKey.startsWith(`tenants/${context.tenant.slug}/`)) {
-          const error = new Error("Photo does not belong to this tenant");
-          error.statusCode = 400;
-          throw error;
-        }
+        const upload = lockedUploads.get(photo.uploadId);
+        if (!upload) throw requestError("Photo upload is invalid. Upload the file again.");
 
         await client.query(
           `
-            INSERT INTO submission_photos (submission_id, storage_key, caption, kind)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO submission_photos (submission_id, media_upload_id, storage_key, caption, kind)
+            VALUES ($1, $2, $3, $4, $5)
           `,
-          [result.rows[0].id, storageKey, photo.caption || null, photo.kind || "general"]
+          [result.rows[0].id, upload.id, upload.storage_key, photo.caption || null, photo.kind || "general"]
         );
+        await attachMediaUpload(client, upload, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          attachedToType: "item_submission",
+          attachedToId: result.rows[0].id
+        });
       }
 
       await client.query(
@@ -3490,7 +4836,7 @@ export function registerRoutes(app) {
         action: "submission.created",
         entityType: "item_submission",
         entityId: result.rows[0].id,
-        metadata: { status: body.status, photoIds: body.photoIds || [], photoCount: photos.length }
+        metadata: { status: body.status, mediaUploadIds: photoUploadIds, photoCount: photos.length }
       });
 
       return {
@@ -3503,6 +4849,10 @@ export function registerRoutes(app) {
     if (!submission) {
       reply.code(404);
       throw new Error("Session item not found");
+    }
+    if (submission.sessionClosed) {
+      reply.code(409);
+      throw new Error("Closed sessions are read-only.");
     }
 
     runNotification("Proof submission", () => notifyTenantAdminsOfSubmission(context, submission, {

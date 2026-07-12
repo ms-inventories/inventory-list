@@ -18,9 +18,10 @@
     "qa:test:headed": "playwright test --config=playwright.qa.config.mjs --headed",
     "build:frontend": "npm --prefix react-app run build",
     "check:packet": "node --test scripts/packet-parser.test.mjs",
+    "check:search": "node --test scripts/search.test.mjs",
     "check:api": "npm --prefix backend run check",
     "check:static": "node --check ocr.js && node --check script.js && node --check admin.js",
-    "check": "npm run check:static && npm run check:api && npm run check:packet && npm run build:frontend"
+    "check": "npm run check:static && npm run check:api && npm run check:packet && npm run check:search && npm run build:frontend"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1"

@@ -2,6 +2,7 @@ import { appConfig } from "../config.js";
 import { readAuthSession } from "./auth.js";
 
 const QA_IDENTITY_KEY = "inventory.qa.identity";
+const LAST_API_REQUEST_ID_KEY = "inventory.lastApiRequestId";
 
 export class ApiError extends Error {
   constructor(message, status = 0, details = {}) {
@@ -10,6 +11,7 @@ export class ApiError extends Error {
     this.status = status;
     this.details = details && typeof details === "object" ? details : { raw: details };
     this.code = this.details.code || "";
+    this.requestId = this.details.requestId || "";
   }
 }
 
@@ -33,6 +35,23 @@ export function saveQaIdentity(identity) {
 
 export function clearQaIdentity() {
   localStorage.removeItem(QA_IDENTITY_KEY);
+}
+
+export function readLastApiRequestId() {
+  try {
+    return sessionStorage.getItem(LAST_API_REQUEST_ID_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberApiRequestId(requestId) {
+  if (!requestId) return;
+  try {
+    sessionStorage.setItem(LAST_API_REQUEST_ID_KEY, requestId);
+  } catch {
+    // Diagnostics storage is best-effort only.
+  }
 }
 
 function buildApiUrl(path) {
@@ -72,7 +91,8 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
-      cache: "no-store"
+      cache: "no-store",
+      credentials: "include"
     });
   } catch (error) {
     throw new ApiError(API_NETWORK_MESSAGE, 0, {
@@ -83,6 +103,7 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
   }
 
   const text = await response.text();
+  const responseRequestId = response.headers.get("X-Request-ID") || "";
   let data = null;
   if (text) {
     try {
@@ -97,14 +118,22 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
   }
 
   if (!response.ok) {
-    throw new ApiError(data?.error || `Request failed (${response.status})`, response.status, data || { url });
+    const details = data && typeof data === "object" ? { ...data } : { url };
+    if (!details.requestId && responseRequestId) details.requestId = responseRequestId;
+    rememberApiRequestId(details.requestId);
+    throw new ApiError(data?.error || `Request failed (${response.status})`, response.status, details);
   }
 
   return data || {};
 }
 
 export function getApiErrorMessage(error) {
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    const message = error.message || "Request failed";
+    return error.requestId && !message.includes(error.requestId)
+      ? `${message.replace(/[.\s]+$/, "")}. Reference ID: ${error.requestId}.`
+      : message;
+  }
   const message = typeof error === "string" ? error : error?.message || error?.text || "";
   if (/failed to fetch|networkerror|load failed/i.test(message)) return API_NETWORK_MESSAGE;
   return message || "Request failed";

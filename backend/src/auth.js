@@ -283,6 +283,7 @@ export async function authContext(request, reply) {
     throw new Error("Authentication required");
   }
 
+  request.authenticatedSubject = identity.subject || "";
   const user = await ensureUser(identity);
   return { identity, user };
 }

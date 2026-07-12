@@ -21,6 +21,11 @@ async function seedQaRootSession(page) {
   }, qaRootAdmin);
 }
 
+async function activatePlatformNav(page, name, isMobileProject) {
+  if (isMobileProject) await page.getByRole("button", { name: "Open platform menu" }).click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 test.describe("Platform dashboard", () => {
   test("dashboard nav opens a real platform overview and shortcuts", async ({ page }, testInfo) => {
     const isMobileProject = Boolean(testInfo.project.use.isMobile);
@@ -33,27 +38,27 @@ test.describe("Platform dashboard", () => {
     await expect(page.getByRole("heading", { name: "Recent platoons" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Admin actions" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Platoons" }).click();
+    await activatePlatformNav(page, "Platoons", isMobileProject);
     await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
     await expect(page.getByPlaceholder("Search platoons by name or subdomain...")).toBeVisible();
 
-    await page.getByRole("button", { name: "Dashboard" }).click();
+    await activatePlatformNav(page, "Dashboard", isMobileProject);
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
 
     const reviewUsersShortcut = page.getByRole("button", { name: "Review users" });
     await expect(reviewUsersShortcut).toBeVisible();
     if (isMobileProject) {
-      await page.getByRole("button", { name: "Users", exact: true }).click();
+      await activatePlatformNav(page, "Users", true);
     } else {
       await reviewUsersShortcut.click();
     }
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+    await activatePlatformNav(page, "Dashboard", isMobileProject);
     const viewAllShortcut = page.getByRole("button", { name: "View all" });
     await expect(viewAllShortcut).toBeVisible();
     if (isMobileProject) {
-      await page.getByRole("button", { name: "Platoons", exact: true }).click();
+      await activatePlatformNav(page, "Platoons", true);
     } else {
       await viewAllShortcut.click();
     }

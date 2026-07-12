@@ -54,6 +54,12 @@ Run parser checks with:
 npm run check:packet
 ```
 
+## Source History
+
+File-based imports keep the original filename, MIME type, byte size, uploader, upload time, stored source link, extracted text, and imported row count. Pasted text imports keep a named text record without a source-file link.
+
+Import batches are intentionally immutable. Replacing or deleting an old source would weaken the row history, so uploading a corrected packet creates a new batch instead. The existing batch remains available for comparison and retry.
+
 ## Known Limits
 
 - Photos of paper still depend on OCR quality before parser rules run.

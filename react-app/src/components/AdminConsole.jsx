@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  BarChart3,
   Bell,
   BookOpen,
   Building2,
@@ -10,11 +11,15 @@ import {
   ClipboardList,
   ClipboardPlus,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   Download,
+  ExternalLink,
   FileText,
   FileUp,
   Home,
+  History,
   ListChecks,
   LogIn,
   LogOut,
@@ -22,19 +27,26 @@ import {
   Megaphone,
   Menu,
   MessageSquare,
+  MoreHorizontal,
   Plus,
   Printer,
   RefreshCw,
   Search,
   Send,
+  Settings,
   ShieldCheck,
   Trash2,
   UserPlus,
   Users,
-  XCircle
+  X,
+  XCircle,
+  ZoomIn,
+  ZoomOut
 } from "lucide-react";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "../config.js";
-import { apiRequest, clearQaIdentity, getApiErrorMessage, saveQaIdentity } from "../lib/api.js";
+import { APP_NAME } from "../branding.js";
+import { apiRequest, clearQaIdentity, getApiErrorMessage, readLastApiRequestId, saveQaIdentity } from "../lib/api.js";
+import { matchesSearch, metadataSearchText, searchTerms } from "../lib/search.js";
 import {
   beginOidcLogin,
   clearAuthSession,
@@ -222,6 +234,75 @@ function EmptyPanel({ title, body, action = null }) {
   );
 }
 
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => window.matchMedia?.(query).matches || false);
+
+  useEffect(() => {
+    const media = window.matchMedia?.(query);
+    if (!media) return undefined;
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, [query]);
+
+  return matches;
+}
+
+function ResponsiveActionMenu({ label = "More actions", ariaLabel = label, children, className = "" }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (!menuRef.current?.contains(event.target)) setIsOpen(false);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setIsOpen(false);
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div ref={menuRef} className={`responsive-action-menu ${className}`.trim()}>
+      <button
+        ref={triggerRef}
+        className="btn btn-secondary"
+        type="button"
+        aria-label={ariaLabel}
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen(open => !open)}
+      >
+        <MoreHorizontal aria-hidden="true" />
+        <span>{label}</span>
+      </button>
+      {isOpen ? (
+        <div
+          className="responsive-action-panel"
+          onClick={event => {
+            if (event.target.closest("button, a")) setIsOpen(false);
+          }}
+        >
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AdminHeader({ me, tenantSlug, mode = "", onRefresh, onLogout }) {
   const adminHost = isAdminHostname();
   const isNewsletterMode = mode === "newsletter";
@@ -235,14 +316,14 @@ function AdminHeader({ me, tenantSlug, mode = "", onRefresh, onLogout }) {
   return (
     <header className="app-header">
       <div>
-        <p className="eyebrow">876 EN Inventory</p>
+        <p className="eyebrow">{APP_NAME}</p>
         <h1>{title}</h1>
         <p className="header-copy">{subtitle}</p>
       </div>
       <div className="header-actions">
-        <a className="btn btn-secondary" href="/">
-          <ClipboardList aria-hidden="true" />
-          <span>Inventory</span>
+        <a className="btn btn-secondary" href="/#/launch">
+          <LogIn aria-hidden="true" />
+          <span>Launch app</span>
         </a>
         <button className="btn btn-secondary" type="button" onClick={onRefresh}>
           <RefreshCw aria-hidden="true" />
@@ -350,7 +431,15 @@ function getProtectedAuthErrorMessage(error) {
 function StatusLine({ status }) {
   if (!status?.text) return null;
   const text = /failed to fetch/i.test(status.text) ? getApiErrorMessage(new Error(status.text)) : status.text;
-  return <div className={`admin-status ${status.isError ? "error" : ""}`}>{text}</div>;
+  return (
+    <div
+      className={`admin-status ${status.isError ? "error" : ""}`}
+      role={status.isError ? "alert" : "status"}
+      aria-live={status.isError ? "assertive" : "polite"}
+    >
+      {text}
+    </div>
+  );
 }
 
 function formatFileSize(bytes) {
@@ -359,6 +448,16 @@ function formatFileSize(bytes) {
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(value / 1024))} KB`;
 }
+
+const supportedPacketMimeTypes = new Set([
+  "application/pdf",
+  "text/plain",
+  "text/csv",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif"
+]);
 
 function describePacketSourceType(source = {}) {
   const mimeType = String(source.mimeType || "").toLowerCase();
@@ -403,14 +502,6 @@ function getInventoryItemImages(item) {
   return [...new Set(values)]
     .filter(value => /^(https?:\/\/|data:image\/|\/media\/|\/assets\/|images\/|assets\/)/i.test(value))
     .slice(0, 3);
-}
-
-function metadataSearchText(metadata) {
-  try {
-    return JSON.stringify(metadata || {});
-  } catch {
-    return "";
-  }
 }
 
 function sessionProgress(session) {
@@ -515,14 +606,9 @@ function sessionItemAssignedToUser(item, me) {
   );
 }
 
-function sessionItemMatchesFilter(item, filter, me = null) {
-  if (filter === "mine") return sessionItemAssignedToUser(item, me);
-  if (filter === "action") return sessionItemNeedsAction(item);
-  if (filter === "review") return sessionItemNeedsReview(item);
-  if (filter === "requests") return itemNeedsMoreProof(item);
-  if (filter === "problems") return sessionItemHasProblem(item);
-  if (filter === "complete") return sessionItemIsComplete(item);
-  return true;
+function sessionItemAssignmentBucket(item, me = null) {
+  if (!item?.assignedTo && !item?.assignedToEmail) return "available";
+  return sessionItemAssignedToUser(item, me) ? "mine" : "team";
 }
 
 function getSessionItemSearchText(item) {
@@ -546,17 +632,23 @@ function getSessionItemSearchText(item) {
     latest?.reviewNote,
     latest?.submittedByEmail,
     latest?.submittedByName,
+    (item?.submissions || []).flatMap(submission => [
+      submission?.status,
+      submission?.reviewState,
+      submission?.locationText,
+      submission?.serialNumber,
+      submission?.note,
+      submission?.reviewNote,
+      submission?.submittedByEmail,
+      submission?.submittedByName
+    ]),
     item?.assignedToEmail,
     item?.assignedToName
-  ].filter(Boolean).join(" ").toLowerCase();
+  ].flat(Infinity).filter(Boolean).join(" ").toLowerCase();
 }
 
 function sessionItemMatchesQuery(item, query) {
-  const terms = String(query || "").toLowerCase().trim().split(/\s+/).filter(Boolean);
-  if (!terms.length) return true;
-
-  const haystack = getSessionItemSearchText(item);
-  return terms.every(term => haystack.includes(term));
+  return matchesSearch(getSessionItemSearchText(item), query);
 }
 
 function formatReviewState(value) {
@@ -598,6 +690,23 @@ function itemDisplayName(item) {
   return item?.inventoryItem?.commonName || item?.inventoryItem?.title || item?.packetLine || "Untitled row";
 }
 
+function reportItemIsResolved(item) {
+  return ["approved", "found"].includes(item?.status);
+}
+
+function reportItemOutcome(item) {
+  const latest = latestSubmission(item);
+  if (item?.status === "approved") {
+    return latest?.reviewState === "approved" && ["found", "not_found", "mismatch"].includes(latest.status)
+      ? latest.status
+      : "found";
+  }
+  if (item?.status === "needs_review" && ["found", "not_found", "mismatch"].includes(latest?.status)) {
+    return latest.status;
+  }
+  return item?.status || "unchecked";
+}
+
 function buildSessionReport(session, items) {
   const rows = items || [];
   const counts = {
@@ -627,11 +736,8 @@ function buildSessionReport(session, items) {
     if (submission?.reviewState === "rejected") counts.rejectedProof += 1;
   });
 
-  const resolved = counts.approved + counts.found;
-  const issueRows = rows.filter(item => {
-    const latest = latestSubmission(item);
-    return !["approved", "found"].includes(item.status) || ["pending", "request_more_info", "rejected"].includes(latest?.reviewState);
-  });
+  const resolved = rows.filter(reportItemIsResolved).length;
+  const issueRows = rows.filter(item => !reportItemIsResolved(item));
 
   return {
     session,
@@ -685,7 +791,8 @@ function buildSessionReportText(report) {
 }
 
 function csvCell(value) {
-  const text = value === null || value === undefined ? "" : String(value);
+  let text = value === null || value === undefined ? "" : String(value);
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
 }
 
@@ -732,6 +839,71 @@ function buildSessionReportCsv(report) {
     .join("\r\n");
 }
 
+function buildReportsCsv(rows) {
+  const headers = [
+    "Session",
+    "Session Status",
+    "Item",
+    "Packet Line",
+    "LIN",
+    "NSN",
+    "Expected Qty",
+    "Outcome",
+    "Workflow Status",
+    "Proof Status",
+    "Location",
+    "Serial",
+    "Note",
+    "Submitted By",
+    "Updated"
+  ];
+  const values = (rows || []).map(item => {
+    const latest = latestSubmission(item);
+    return [
+      item.sessionName || "",
+      formatItemStatus(item.sessionStatus),
+      itemDisplayName(item),
+      item.packetLine || "",
+      item.inventoryItem?.lin || "",
+      item.inventoryItem?.nsn || "",
+      item.expectedQty ?? "",
+      formatItemStatus(reportItemOutcome(item)),
+      formatItemStatus(item.status),
+      latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof",
+      latest?.locationText || item.inventoryItem?.currentLocation || item.locationHint || "",
+      latest?.serialNumber || "",
+      latest?.note || latest?.reviewNote || "",
+      latest ? submissionPerson(latest) : "",
+      formatDate(latest?.createdAt || item.updatedAt || item.createdAt)
+    ];
+  });
+  return [headers, ...values].map(row => row.map(csvCell).join(",")).join("\r\n");
+}
+
+function reportSummary(rows) {
+  const summary = {
+    total: rows.length,
+    resolved: 0,
+    found: 0,
+    missing: 0,
+    mismatch: 0,
+    unchecked: 0,
+    proofWork: 0
+  };
+  rows.forEach(item => {
+    const outcome = reportItemOutcome(item);
+    const proofState = latestSubmission(item)?.reviewState;
+    if (reportItemIsResolved(item)) summary.resolved += 1;
+    if (outcome === "found") summary.found += 1;
+    else if (outcome === "not_found") summary.missing += 1;
+    else if (outcome === "mismatch") summary.mismatch += 1;
+    else summary.unchecked += 1;
+    if (["pending", "request_more_info", "rejected"].includes(proofState)) summary.proofWork += 1;
+  });
+  summary.completion = summary.total ? Math.round((summary.resolved / summary.total) * 100) : 0;
+  return summary;
+}
+
 function safeFileNamePart(value) {
   return String(value || "inventory-session")
     .toLowerCase()
@@ -758,6 +930,32 @@ const proofRequestOptions = [
   { value: "location", label: "Location" },
   { value: "damage", label: "Damage" }
 ];
+
+const proofPhotoKindLabels = {
+  general: "General photo",
+  serial: "Serial photo",
+  location: "Location photo",
+  damage: "Damage photo"
+};
+
+function proofPhotoLabel(photo) {
+  return proofPhotoKindLabels[photo?.kind] || "Proof photo";
+}
+
+function proofPhotoAlt(photo) {
+  const label = proofPhotoLabel(photo);
+  return photo?.caption ? `${label}: ${photo.caption}` : label;
+}
+
+function applicableProofRequest(history = [], evidence = null) {
+  if (evidence?.reviewState === "request_more_info" && evidence?.reviewNote) return evidence.reviewNote;
+  const evidenceCreatedAt = Date.parse(evidence?.createdAt || "") || Number.POSITIVE_INFINITY;
+  return history.find(historyItem => (
+    historyItem.reviewState === "request_more_info" &&
+    historyItem.reviewNote &&
+    (Date.parse(historyItem.createdAt || "") || 0) <= evidenceCreatedAt
+  ))?.reviewNote || "";
+}
 
 function countLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${Number(count) === 1 ? singular : plural}`;
@@ -889,6 +1087,14 @@ function newsletterPayload(form) {
     summary: form.summary.trim() || undefined,
     body: form.body.trim()
   };
+}
+
+function deliveryStatusLabel(status) {
+  return {
+    sent: "Sent",
+    skipped: "Skipped",
+    failed: "Failed"
+  }[status] || status || "Unknown";
 }
 
 function newsletterBodyParagraphs(body) {
@@ -1131,6 +1337,331 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
   );
 }
 
+function SessionItemDrawer({
+  item,
+  session,
+  importBatch,
+  canManage,
+  canSubmit,
+  canClaim,
+  isSaving,
+  directCheckAction,
+  isClosed,
+  status,
+  assignableMembers,
+  assignedMemberId,
+  proofOpen,
+  token,
+  tenantSlug,
+  onAssign,
+  onClaim,
+  onDirectCheck,
+  onOpenProof,
+  onOpenReview,
+  onOpenPhoto,
+  onProofCancel,
+  onProofSaved,
+  onStatus,
+  onClose
+}) {
+  if (!item) return null;
+
+  const title = itemDisplayName(item);
+  const latest = latestSubmission(item);
+  const needsMoreProof = latest?.reviewState === "request_more_info";
+  const pendingProof = latest?.reviewState === "pending";
+  const isDirectCheckPending = Boolean(directCheckAction);
+  const knownImages = getInventoryItemImages(item.inventoryItem);
+  const assignedName = assignedPerson(item);
+
+  function handleKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+    } else if (event.key === "Tab") {
+      const focusable = [...event.currentTarget.querySelectorAll(
+        'button:not([disabled]), a[href], select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )].filter(element => element.getClientRects().length);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
+  return (
+    <div
+      className="session-item-drawer-backdrop"
+      role="presentation"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <aside
+        className="session-item-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sessionItemDrawerTitle"
+        aria-describedby="sessionItemDrawerPacketLine"
+        onKeyDown={handleKeyDown}
+      >
+        <header className="session-item-drawer-heading">
+          <div>
+            <p className="eyebrow">{session?.name || "Inventory session"}</p>
+            <h2 id="sessionItemDrawerTitle">{title}</h2>
+            <p id="sessionItemDrawerPacketLine">{item.packetLine || "No packet text"}</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="Close item details" onClick={onClose} autoFocus>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="session-item-drawer-body">
+          <StatusLine status={status} />
+
+          <div className="session-item-drawer-summary">
+            <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
+            <span>{item.expectedQty == null ? "Quantity not listed" : `Expected quantity ${item.expectedQty}`}</span>
+            <span>{assignedName ? `Assigned to ${assignedName}` : "Unassigned"}</span>
+          </div>
+
+          <section className="session-detail-section" aria-labelledby="sessionRowDetailsTitle">
+            <div className="session-detail-section-heading">
+              <div>
+                <p className="eyebrow">Packet row</p>
+                <h3 id="sessionRowDetailsTitle">Inventory details</h3>
+              </div>
+            </div>
+            <dl className="session-detail-facts">
+              <div>
+                <dt>Packet line</dt>
+                <dd>{item.packetLine || "Not provided"}</dd>
+              </div>
+              <div>
+                <dt>Location hint</dt>
+                <dd>{item.locationHint || "Not provided"}</dd>
+              </div>
+              <div>
+                <dt>Assignment</dt>
+                <dd>{assignedName || "Unassigned"}</dd>
+              </div>
+              {item.assignedByName || item.assignedByEmail ? (
+                <div>
+                  <dt>Assigned by</dt>
+                  <dd>{item.assignedByName || item.assignedByEmail}{item.assignedAt ? ` - ${formatDate(item.assignedAt)}` : ""}</dd>
+                </div>
+              ) : null}
+              {item.directVerifiedByEmail ? (
+                <div>
+                  <dt>Direct check</dt>
+                  <dd>{item.directVerifiedByEmail}</dd>
+                </div>
+              ) : null}
+              <div>
+                <dt>Last updated</dt>
+                <dd>{formatDate(item.updatedAt || item.createdAt)}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="session-detail-section" aria-labelledby="knownItemDetailsTitle">
+            <div className="session-detail-section-heading">
+              <div>
+                <p className="eyebrow">Friendly reference</p>
+                <h3 id="knownItemDetailsTitle">Known item</h3>
+              </div>
+              {item.inventoryItem ? <span className="session-detail-match">Matched</span> : null}
+            </div>
+            {item.inventoryItem ? (
+              <>
+                <dl className="session-detail-facts">
+                  <div>
+                    <dt>Common name</dt>
+                    <dd>{item.inventoryItem.commonName || item.inventoryItem.title || "Not provided"}</dd>
+                  </div>
+                  <div>
+                    <dt>Army name</dt>
+                    <dd>{item.inventoryItem.armyName || "Not provided"}</dd>
+                  </div>
+                  <div>
+                    <dt>LIN</dt>
+                    <dd>{item.inventoryItem.lin || "Not provided"}</dd>
+                  </div>
+                  <div>
+                    <dt>NSN</dt>
+                    <dd>{item.inventoryItem.nsn || "Not provided"}</dd>
+                  </div>
+                  <div>
+                    <dt>Known location</dt>
+                    <dd>{item.inventoryItem.currentLocation || "Not provided"}</dd>
+                  </div>
+                  <div>
+                    <dt>Description</dt>
+                    <dd>{item.inventoryItem.description || "Not provided"}</dd>
+                  </div>
+                </dl>
+                {knownImages.length ? (
+                  <div className="session-detail-known-photos" aria-label="Known item photos">
+                    {knownImages.map((url, index) => (
+                      <a href={url} target="_blank" rel="noreferrer" key={url} aria-label={`Open known item photo ${index + 1}`}>
+                        <img src={url} alt={`${title} reference ${index + 1}`} loading="lazy" />
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="session-detail-empty">This packet row is not matched to a known inventory item yet.</p>
+            )}
+          </section>
+
+          <section className="session-detail-section" aria-labelledby="packetSourceDetailsTitle">
+            <div className="session-detail-section-heading">
+              <div>
+                <p className="eyebrow">Traceability</p>
+                <h3 id="packetSourceDetailsTitle">Packet source</h3>
+              </div>
+            </div>
+            {importBatch ? (
+              <div className="session-detail-source">
+                <div>
+                  <strong>{importBatch.sourceName || "Packet import"}</strong>
+                  <span>
+                    Imported {formatDate(importBatch.createdAt)}
+                    {importBatch.createdByName || importBatch.createdByEmail ? ` by ${importBatch.createdByName || importBatch.createdByEmail}` : ""}
+                  </span>
+                  <small>
+                    {importBatch.sourceMimeType || "Pasted packet text"}
+                    {importBatch.sourceSizeBytes ? ` - ${formatFileSize(importBatch.sourceSizeBytes)}` : ""}
+                  </small>
+                </div>
+                {importBatch.sourceUrl ? (
+                  <a className="btn btn-secondary btn-small" href={importBatch.sourceUrl} target="_blank" rel="noreferrer">
+                    <FileText aria-hidden="true" />
+                    <span>Open source</span>
+                  </a>
+                ) : null}
+              </div>
+            ) : item.importBatchId ? (
+              <p className="session-detail-empty">Imported from a packet batch. Source details are available to platoon admins.</p>
+            ) : (
+              <p className="session-detail-empty">This row was added manually and is not linked to a packet batch.</p>
+            )}
+          </section>
+
+          <section className="session-detail-section" aria-labelledby="proofHistoryDetailsTitle">
+            <div className="session-detail-section-heading">
+              <div>
+                <p className="eyebrow">Evidence</p>
+                <h3 id="proofHistoryDetailsTitle">Proof history</h3>
+              </div>
+              <span>{countLabel(item.submissions?.length || 0, "submission")}</span>
+            </div>
+            {item.submissions?.length ? (
+              <div className="session-detail-proof-list">
+                {item.submissions.map(submission => (
+                  <article className="session-detail-proof" key={submission.id}>
+                    <div className="session-detail-proof-heading">
+                      <div>
+                        <strong>{formatReviewState(submission.reviewState)}</strong>
+                        <span>{submissionPerson(submission)} - {formatDate(submission.createdAt)}</span>
+                      </div>
+                      <span className={`status-pill ${submission.status}`}>{formatItemStatus(submission.status)}</span>
+                    </div>
+                    <div className="session-detail-proof-facts">
+                      {submission.locationText ? <span>Location: {submission.locationText}</span> : null}
+                      {submission.serialNumber ? <span>Serial: {submission.serialNumber}</span> : null}
+                    </div>
+                    {submission.note ? <p>{submission.note}</p> : null}
+                    {submission.reviewNote ? (
+                      <p className={submission.reviewState === "request_more_info" ? "session-detail-proof-request" : ""}>
+                        {submission.reviewState === "request_more_info" ? "Requested" : "Review note"}: {submission.reviewNote}
+                      </p>
+                    ) : null}
+                    <ProofPhotoStrip
+                      photos={submission.photos}
+                      compact
+                      label={`Evidence from ${submissionPerson(submission)}`}
+                      onOpen={index => onOpenPhoto(submission, index)}
+                    />
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="session-detail-empty">No proof has been submitted for this row.</p>
+            )}
+          </section>
+
+          {proofOpen ? (
+            <section className="session-detail-section session-detail-proof-form" aria-label="Submit proof">
+              <ProofForm
+                item={item}
+                token={token}
+                tenantSlug={tenantSlug}
+                requestNote={needsMoreProof ? latest.reviewNote : applicableProofRequest(item.submissions, latest)}
+                onCancel={onProofCancel}
+                onSaved={onProofSaved}
+                onStatus={onStatus}
+              />
+            </section>
+          ) : null}
+        </div>
+
+        <footer className="session-item-drawer-actions">
+          {canClaim ? (
+            <button className="btn btn-secondary btn-small" type="button" disabled={isSaving || isDirectCheckPending} onClick={onClaim}>
+              <UserPlus aria-hidden="true" />
+              <span>Claim item</span>
+            </button>
+          ) : null}
+          {canSubmit && !isClosed ? (
+            <button className="btn btn-primary btn-small" type="button" disabled={isDirectCheckPending} onClick={onOpenProof}>
+              <Camera aria-hidden="true" />
+              <span>{needsMoreProof ? "Respond with proof" : "Add proof"}</span>
+            </button>
+          ) : null}
+          {canManage && pendingProof && !isClosed && onOpenReview ? (
+            <button className="btn btn-secondary btn-small" type="button" disabled={isDirectCheckPending} onClick={onOpenReview}>
+              <MessageSquare aria-hidden="true" />
+              <span>Review proof</span>
+            </button>
+          ) : null}
+          {canManage ? (
+            <label className="session-assignment-control">
+              <span>Assign</span>
+              <select value={assignedMemberId} disabled={isSaving || isDirectCheckPending || isClosed} onChange={event => onAssign(event.target.value)}>
+                <option value="">Unassigned</option>
+                {assignableMembers.map(member => (
+                  <option value={member.id} key={member.id}>
+                    {member.displayName || member.email || formatRole(member.role)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {canManage && !isClosed ? (
+            <>
+              <button className="btn btn-secondary btn-small" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => onDirectCheck("approved")}>
+                <CheckCircle2 aria-hidden="true" />
+                <span>{directCheckAction === "approved" ? "Marking found..." : "Found"}</span>
+              </button>
+              <button className="btn btn-secondary btn-small" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => onDirectCheck("not_found")}>
+                <span>{directCheckAction === "not_found" ? "Marking not found..." : "Not found"}</span>
+              </button>
+            </>
+          ) : null}
+        </footer>
+      </aside>
+    </div>
+  );
+}
+
 function SessionPanel({
   token,
   tenantSlug,
@@ -1138,10 +1669,15 @@ function SessionPanel({
   members = [],
   canManage,
   canSubmit,
+  query = "",
+  onQueryChange = () => {},
   uploadIntent,
   preferredSessionId = "",
+  preferredSessionItemId = "",
   onUploadIntentHandled,
-  onOpenGuidance
+  onPreferredSessionItemHandled,
+  onSessionChange,
+  onOpenReview
 }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
@@ -1160,20 +1696,30 @@ function SessionPanel({
   const [packetWizardSessionId, setPacketWizardSessionId] = useState("");
   const [packetWizardSessionName, setPacketWizardSessionName] = useState("");
   const [packetWizardSummary, setPacketWizardSummary] = useState(null);
-  const [sessionItemQuery, setSessionItemQuery] = useState("");
-  const [sessionItemFilter, setSessionItemFilter] = useState("all");
+  const [sessionItemFilter, setSessionItemFilter] = useState("available");
   const [proofItemId, setProofItemId] = useState("");
+  const [detailItemId, setDetailItemId] = useState("");
+  const [detailPhotoViewer, setDetailPhotoViewer] = useState(null);
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
+  const [isLoadingSessions, setIsLoadingSessions] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isReadingPacket, setIsReadingPacket] = useState(false);
   const [deleteSessionTarget, setDeleteSessionTarget] = useState(null);
   const [closeSessionTarget, setCloseSessionTarget] = useState(null);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
+  const [directCheckActions, setDirectCheckActions] = useState(() => new Map());
+  const [sessionStatusActions, setSessionStatusActions] = useState(() => new Map());
   const [printReportId, setPrintReportId] = useState("");
+  const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
   const packetFileInputRef = useRef(null);
   const packetTextareaRef = useRef(null);
+  const detailItemTriggerRef = useRef(null);
+  const detailPhotoTriggerRef = useRef(null);
+  const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
+  const directCheckActionRef = useRef(new Map());
+  const sessionStatusActionRef = useRef(new Map());
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
 
   function clearSelectedSessionState() {
@@ -1181,6 +1727,8 @@ function SessionPanel({
     setSelectedSessionId("");
     setDetail(null);
     setProofItemId("");
+    setDetailItemId("");
+    setDetailPhotoViewer(null);
     setPacketWizardSessionId("");
     setIsPacketImportOpen(false);
     clearPacketImport();
@@ -1189,15 +1737,16 @@ function SessionPanel({
   async function loadSessions(nextSelectedId = selectedSessionId) {
     const requestId = sessionListRequestRef.current + 1;
     sessionListRequestRef.current = requestId;
+    setIsLoadingSessions(true);
 
     try {
       setStatus({ text: "Loading inventory sessions...", isError: false });
       const data = await apiRequest("/inventory/sessions", { token, tenantSlug });
-      if (requestId !== sessionListRequestRef.current) return;
+      if (requestId !== sessionListRequestRef.current) return false;
 
       const loaded = sortSessionsByAttention(data.sessions || []);
       setSessions(loaded);
-      const selected = nextSelectedId && loaded.some(session => session.id === nextSelectedId && session.status !== "closed")
+      const selected = nextSelectedId && loaded.some(session => session.id === nextSelectedId)
         ? nextSelectedId
         : loaded.find(session => session.status !== "closed")?.id || "";
       setSelectedSessionId(selected);
@@ -1211,9 +1760,15 @@ function SessionPanel({
       if (detailLoaded && requestId === sessionListRequestRef.current) {
         setStatus({ text: "", isError: false });
       }
+      return detailLoaded && requestId === sessionListRequestRef.current;
     } catch (error) {
       if (requestId === sessionListRequestRef.current) {
         setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
+      return false;
+    } finally {
+      if (requestId === sessionListRequestRef.current) {
+        setIsLoadingSessions(false);
       }
     }
   }
@@ -1234,7 +1789,7 @@ function SessionPanel({
       if (sessionListRequestId && sessionListRequestId !== sessionListRequestRef.current) return false;
 
       setDetail(data);
-      setStatus({ text: "", isError: false });
+      if (showStatus) setStatus({ text: "", isError: false });
       return true;
     } catch (error) {
       if (requestId === sessionDetailRequestRef.current && (!sessionListRequestId || sessionListRequestId === sessionListRequestRef.current)) {
@@ -1265,10 +1820,26 @@ function SessionPanel({
   }, [uploadIntent, onUploadIntentHandled]);
 
   useEffect(() => {
-    setSessionItemQuery("");
-    setSessionItemFilter("all");
+    onQueryChange("");
+    setSessionItemFilter("available");
     setProofItemId("");
+    setDetailItemId("");
+    setDetailPhotoViewer(null);
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (!preferredSessionItemId || !detail?.items?.some(item => item.id === preferredSessionItemId)) return;
+    openItemDetail(preferredSessionItemId);
+    onPreferredSessionItemHandled?.();
+  }, [preferredSessionItemId, detail?.items, onPreferredSessionItemHandled]);
+
+  async function selectSession(sessionId) {
+    if (!sessionId) return;
+    setStatus({ text: "", isError: false });
+    setSelectedSessionId(sessionId);
+    onSessionChange?.(sessionId);
+    await loadSessionDetail(sessionId);
+  }
 
   function findDuplicateOpenEmptySession(name) {
     const normalizedName = normalizeSessionName(name);
@@ -1283,6 +1854,7 @@ function SessionPanel({
   async function openExistingEmptySession(session, message = "") {
     if (!session?.id) return "";
     setSelectedSessionId(session.id);
+    onSessionChange?.(session.id);
     setPacketWizardMode("existing");
     setPacketWizardSessionId(session.id);
     setPacketWizardSessionName("");
@@ -1318,6 +1890,7 @@ function SessionPanel({
       setNewSessionName("");
       setIsSessionCreateOpen(false);
       setStatus({ text: `Started ${data.session.name}`, isError: false });
+      onSessionChange?.(data.session.id);
       await loadSessions(data.session.id);
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -1328,6 +1901,7 @@ function SessionPanel({
 
   function openPacketWizard(sessionId = selectedSessionId) {
     const fallbackSessionId = sessionId || selectedSessionId || openSessions[0]?.id || "";
+    setPacketWizardModeTouched(false);
     clearPacketImport();
     setPacketWizardOpen(true);
     setPacketWizardStep(1);
@@ -1340,6 +1914,7 @@ function SessionPanel({
   }
 
   function closePacketWizard() {
+    setPacketWizardModeTouched(false);
     clearPacketImport();
     setPacketWizardOpen(false);
     setPacketWizardStep(1);
@@ -1367,40 +1942,45 @@ function SessionPanel({
   }
 
   function requestCloseSession(session) {
-    if (!session || session.status === "closed") return;
+    if (!session || session.status === "closed" || sessionStatusActionRef.current.has(session.id)) return;
     setCloseSessionTarget(session);
     setStatus({ text: "", isError: false });
   }
 
   function closeCloseSessionDialog() {
-    if (isSaving) return;
+    if (isSaving || (closeSessionTarget?.id && sessionStatusActionRef.current.has(closeSessionTarget.id))) return;
     setCloseSessionTarget(null);
   }
 
   async function confirmCloseSession() {
     if (!closeSessionTarget?.id) return;
     const target = closeSessionTarget;
-    setCloseSessionTarget(null);
-    await updateSessionStatus("closed", target.id);
+    const didClose = await updateSessionStatus("closed", target.id);
+    if (didClose) setCloseSessionTarget(null);
   }
 
   async function preparePacketWizardSession() {
-    if (packetWizardMode === "existing") {
-      const sessionId = packetWizardSessionId || selectedSessionId;
+    const currentWizard = packetWizardCurrentRef.current;
+    const fallbackSessionId = currentWizard.sessionId;
+    const shouldUseExistingSession = currentWizard.mode === "existing";
+
+    if (shouldUseExistingSession) {
+      const sessionId = fallbackSessionId;
       if (!sessionId) {
         setStatus({ text: "Choose a session or create a new one first.", isError: true });
         return "";
       }
 
       setSelectedSessionId(sessionId);
-      await loadSessionDetail(sessionId, false);
+      onSessionChange?.(sessionId);
       setPacketWizardSessionId(sessionId);
       setPacketWizardStep(2);
       setStatus({ text: "", isError: false });
+      void loadSessionDetail(sessionId, false);
       return sessionId;
     }
 
-    const name = packetWizardSessionName.trim();
+    const name = currentWizard.sessionName.trim();
     if (!name) {
       setStatus({ text: "Name the inventory session first.", isError: true });
       return "";
@@ -1429,6 +2009,7 @@ function SessionPanel({
       setPacketWizardMode("existing");
       setPacketWizardSessionId(data.session.id);
       setSelectedSessionId(data.session.id);
+      onSessionChange?.(data.session.id);
       await loadSessions(data.session.id);
       setPacketWizardStep(2);
       setStatus({ text: `Started ${data.session.name}`, isError: false });
@@ -1470,6 +2051,11 @@ function SessionPanel({
 
   async function readPacketUpload(file) {
     if (!file) return;
+    const mimeType = packetMimeTypeForFile(file);
+    if (!supportedPacketMimeTypes.has(mimeType)) {
+      setStatus({ text: "Choose a PDF, CSV, text file, or JPEG/PNG/WebP/GIF image.", isError: true });
+      return;
+    }
     if (file.size > 10 * 1024 * 1024) {
       setStatus({ text: "Packet source files must be 10MB or smaller.", isError: true });
       return;
@@ -1485,7 +2071,7 @@ function SessionPanel({
       setPacketRows(text);
       setPacketSourceFile({
         fileName: file.name,
-        mimeType: packetMimeTypeForFile(file),
+        mimeType,
         dataUrl,
         size: file.size
       });
@@ -1495,7 +2081,7 @@ function SessionPanel({
         packetWizardSessionId || selectedSessionId,
         {
           fileName: file.name,
-          mimeType: packetMimeTypeForFile(file),
+          mimeType,
           size: file.size
         }
       );
@@ -1572,6 +2158,7 @@ function SessionPanel({
       importBatch.sourceFile = {
         fileName: packetSourceFile.fileName,
         mimeType: packetSourceFile.mimeType,
+        size: packetSourceFile.size,
         dataUrl: packetSourceFile.dataUrl
       };
     }
@@ -1609,21 +2196,43 @@ function SessionPanel({
   }
 
   async function updateDirectCheck(sessionItemId, nextStatus) {
+    if (!sessionItemId || directCheckActionRef.current.has(sessionItemId)) return false;
+
+    directCheckActionRef.current.set(sessionItemId, nextStatus);
+    setDirectCheckActions(current => {
+      const next = new Map(current);
+      next.set(sessionItemId, nextStatus);
+      return next;
+    });
+
+    const target = detail?.items?.find(item => item.id === sessionItemId);
+    const targetLabel = target ? itemDisplayName(target) : "session item";
+    const actionLabel = nextStatus === "approved" ? "found" : "not found";
     try {
+      setStatus({ text: `Marking ${targetLabel} ${actionLabel}...`, isError: false });
       await apiRequest(`/session-items/${sessionItemId}/direct-check`, {
         method: "PATCH",
         token,
         tenantSlug,
         body: { status: nextStatus }
       });
-      setStatus({ text: "Session item updated.", isError: false });
-      await loadSessions(selectedSessionId);
+      const refreshed = await loadSessions(selectedSessionId);
+      if (refreshed) setStatus({ text: "Session item updated.", isError: false });
+      return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+      return false;
+    } finally {
+      directCheckActionRef.current.delete(sessionItemId);
+      setDirectCheckActions(current => {
+        const next = new Map(current);
+        next.delete(sessionItemId);
+        return next;
+      });
     }
   }
 
-  async function updateSessionItemAssignment(sessionItemId, memberId) {
+  async function updateSessionItemAssignment(sessionItemId, memberId, { claim = false } = {}) {
     try {
       setIsSaving(true);
       await apiRequest(`/session-items/${sessionItemId}/assignment`, {
@@ -1632,30 +2241,62 @@ function SessionPanel({
         tenantSlug,
         body: { memberId: memberId || null }
       });
-      setStatus({ text: memberId ? "Row assigned." : "Row assignment cleared.", isError: false });
+      setStatus({
+        text: claim ? "Item claimed. Add proof below." : memberId ? "Row assigned." : "Row assignment cleared.",
+        isError: false
+      });
       await loadSessionDetail(selectedSessionId, false);
+      if (claim) {
+        setSessionItemFilter("mine");
+        setProofItemId(sessionItemId);
+      } else if (!memberId) {
+        setSessionItemFilter("available");
+      } else {
+        const target = assignmentOptions.find(member => member.id === memberId);
+        setSessionItemFilter(target?.userId && target.userId === me?.user?.id ? "mine" : "team");
+      }
+      return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (error?.status === 409) await loadSessionDetail(selectedSessionId, false);
+      return false;
     } finally {
       setIsSaving(false);
     }
   }
 
   async function updateSessionStatus(nextStatus, sessionIdOverride = selectedSessionId) {
-    if (!sessionIdOverride) return;
+    if (!sessionIdOverride || sessionStatusActionRef.current.has(sessionIdOverride)) return false;
     const sessionId = sessionIdOverride;
 
+    sessionStatusActionRef.current.set(sessionId, nextStatus);
+    setSessionStatusActions(current => {
+      const next = new Map(current);
+      next.set(sessionId, nextStatus);
+      return next;
+    });
+
     try {
+      setStatus({ text: nextStatus === "closed" ? "Closing session..." : "Reopening session...", isError: false });
       await apiRequest(`/inventory/sessions/${sessionId}`, {
         method: "PATCH",
         token,
         tenantSlug,
         body: { status: nextStatus }
       });
-      setStatus({ text: `Session marked ${nextStatus}.`, isError: false });
-      await loadSessions(nextStatus === "closed" ? "" : sessionId);
+      const refreshed = await loadSessions(nextStatus === "closed" ? "" : sessionId);
+      if (refreshed) setStatus({ text: `Session marked ${nextStatus}.`, isError: false });
+      return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+      return false;
+    } finally {
+      sessionStatusActionRef.current.delete(sessionId);
+      setSessionStatusActions(current => {
+        const next = new Map(current);
+        next.delete(sessionId);
+        return next;
+      });
     }
   }
 
@@ -1729,53 +2370,155 @@ function SessionPanel({
     ),
     [members]
   );
+  const assignmentOptions = useMemo(() => {
+    const options = [...assignableMembers];
+    const currentUserId = me?.user?.id || "";
+    if (currentUserId && !options.some(member => member.userId === currentUserId)) {
+      options.unshift({
+        id: "self",
+        userId: currentUserId,
+        displayName: `${me?.user?.display_name || me?.user?.email || "Current user"} (you)`,
+        email: me?.user?.email || "",
+        role: me?.membership?.role || (canManage ? "tenant_admin" : "contributor")
+      });
+    }
+    return options;
+  }, [assignableMembers, me?.user?.id, me?.user?.display_name, me?.user?.email, me?.membership?.role, canManage]);
   const assignedMemberIdByUserId = useMemo(() => {
     const lookup = new Map();
-    assignableMembers.forEach(member => {
+    assignmentOptions.forEach(member => {
       if (member.userId) lookup.set(member.userId, member.id);
     });
     return lookup;
-  }, [assignableMembers]);
+  }, [assignmentOptions]);
   const detailItems = useMemo(
     () => [...(detail?.items || [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
     [detail?.items]
   );
   const sessionItemFilterCounts = useMemo(() => ({
-    all: detailItems.length,
-    mine: detailItems.filter(item => sessionItemAssignedToUser(item, me)).length,
-    action: detailItems.filter(sessionItemNeedsAction).length,
-    review: detailItems.filter(sessionItemNeedsReview).length,
-    requests: detailItems.filter(itemNeedsMoreProof).length,
-    problems: detailItems.filter(sessionItemHasProblem).length,
-    complete: detailItems.filter(sessionItemIsComplete).length
+    available: detailItems.filter(item => sessionItemAssignmentBucket(item, me) === "available").length,
+    mine: detailItems.filter(item => sessionItemAssignmentBucket(item, me) === "mine").length,
+    team: detailItems.filter(item => sessionItemAssignmentBucket(item, me) === "team").length
   }), [detailItems, me]);
   const visibleDetailItems = useMemo(
-    () => detailItems.filter(item => sessionItemMatchesFilter(item, sessionItemFilter, me) && sessionItemMatchesQuery(item, sessionItemQuery)),
-    [detailItems, sessionItemFilter, sessionItemQuery, me]
+    () => detailItems.filter(item => sessionItemAssignmentBucket(item, me) === sessionItemFilter && sessionItemMatchesQuery(item, query)),
+    [detailItems, sessionItemFilter, query, me]
   );
   const sessionItemFilterOptions = [
-    ["all", "All"],
-    ["mine", "Mine"],
-    ["action", "Action"],
-    ["review", "Review"],
-    ["requests", "Requests"],
-    ["problems", "Problems"],
-    ["complete", "Complete"]
+    ["available", "Available"],
+    ["mine", "My work"],
+    ["team", "Team"]
   ];
   const sessionReport = useMemo(
     () => selectedSession ? buildSessionReport(selectedSession, detail?.items || []) : null,
     [selectedSession, detail?.items]
   );
   const importBatches = detail?.importBatches || [];
+  const detailItem = detailItems.find(item => item.id === detailItemId) || null;
+  const detailItemImportBatch = detailItem?.importBatchId
+    ? importBatches.find(batch => batch.id === detailItem.importBatchId) || null
+    : null;
+  const detailItemAssignedMemberId = detailItem?.assignedTo
+    ? assignedMemberIdByUserId.get(detailItem.assignedTo) || ""
+    : "";
+
+  useEffect(() => {
+    if (detailItemId && !detailItem) {
+      setDetailItemId("");
+      setDetailPhotoViewer(null);
+    }
+  }, [detailItemId, detailItem]);
+
+  useEffect(() => {
+    if (!detailItem && !detailPhotoViewer) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [Boolean(detailItem), Boolean(detailPhotoViewer)]);
+
+  useEffect(() => {
+    if (!detailItem || detailPhotoViewer) return undefined;
+    const handleEscape = event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeItemDetail();
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [Boolean(detailItem), Boolean(detailPhotoViewer)]);
+
+  function openItemDetail(itemId) {
+    detailItemTriggerRef.current = document.activeElement;
+    setProofItemId("");
+    setDetailItemId(itemId);
+  }
+
+  function closeItemDetail() {
+    setProofItemId("");
+    setDetailPhotoViewer(null);
+    setDetailItemId("");
+    window.requestAnimationFrame(() => detailItemTriggerRef.current?.focus?.());
+  }
+
+  function openDetailPhotoViewer(submission, index) {
+    if (!detailItem || !submission?.photos?.length) return;
+    detailPhotoTriggerRef.current = document.activeElement;
+    setDetailPhotoViewer({
+      photos: submission.photos,
+      index,
+      isZoomed: false,
+      packetLine: detailItem.packetLine || itemDisplayName(detailItem),
+      sessionName: selectedSession?.name || "Inventory session",
+      submittedBy: submissionPerson(submission),
+      createdAt: submission.createdAt,
+      locationText: submission.locationText,
+      serialNumber: submission.serialNumber,
+      note: submission.note,
+      requestedProof: applicableProofRequest(detailItem.submissions, submission)
+    });
+  }
+
+  function closeDetailPhotoViewer() {
+    setDetailPhotoViewer(null);
+    window.requestAnimationFrame(() => detailPhotoTriggerRef.current?.focus?.());
+  }
+
+  function moveDetailPhotoViewer(delta) {
+    setDetailPhotoViewer(current => {
+      if (!current?.photos?.length) return current;
+      const index = (current.index + delta + current.photos.length) % current.photos.length;
+      return { ...current, index, isZoomed: false };
+    });
+  }
+
+  function selectDetailPhotoViewer(index) {
+    setDetailPhotoViewer(current => current ? { ...current, index, isZoomed: false } : current);
+  }
   const packetRowsReadyCount = sanitizePacketDraftRows(packetDraftRows).length;
   const lowConfidencePacketRowCount = packetDraftRows.filter(row => row.confidence === "low").length;
   const packetIgnoredPreview = packetParseSummary?.ignoredLines || [];
   const selectedSessionIsClosed = selectedSession?.status === "closed";
-  const currentMemberId = me?.membership?.id || "";
+  const selectedSessionStatusAction = selectedSession?.id ? sessionStatusActions.get(selectedSession.id) || "" : "";
+  const closeSessionAction = closeSessionTarget?.id ? sessionStatusActions.get(closeSessionTarget.id) || "" : "";
+  const detailItemDirectCheckAction = detailItem?.id ? directCheckActions.get(detailItem.id) || "" : "";
+  const detailItemAssignedToCurrentUser = detailItem ? sessionItemAssignedToUser(detailItem, me) : false;
+  const detailCanClaim = Boolean(detailItem && canSubmit && !detailItem?.assignedTo && !selectedSessionIsClosed);
+  const detailCanSubmitProof = Boolean(detailItem && canSubmit && (canManage || detailItemAssignedToCurrentUser));
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
   );
+  const packetWizardFallbackSessionId = packetWizardSessionId || selectedSessionId || openSessions[0]?.id || "";
+  const effectivePacketWizardMode = (
+    !packetWizardModeTouched && !packetWizardSessionName.trim() && packetWizardFallbackSessionId
+  ) ? "existing" : packetWizardMode;
+  packetWizardCurrentRef.current = {
+    mode: effectivePacketWizardMode,
+    sessionId: packetWizardFallbackSessionId,
+    sessionName: packetWizardSessionName
+  };
   const reviewSessions = useMemo(
     () => openSessions.filter(session => sessionNeedsReview(session)),
     [openSessions]
@@ -1798,14 +2541,6 @@ function SessionPanel({
   const foundRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
   const overallProgress = totalRows ? Math.round((foundRows / totalRows) * 100) : 0;
 
-  useEffect(() => {
-    if (!packetWizardOpen || packetWizardStep !== 1 || packetWizardSessionId || packetWizardSessionName.trim()) return;
-    const fallbackSessionId = openSessions[0]?.id || "";
-    if (!fallbackSessionId) return;
-    setPacketWizardMode("existing");
-    setPacketWizardSessionId(fallbackSessionId);
-  }, [packetWizardOpen, packetWizardStep, packetWizardSessionId, packetWizardSessionName, openSessions]);
-
   function renderSessionButton(session) {
     const progress = sessionProgress(session);
     return (
@@ -1813,11 +2548,7 @@ function SessionPanel({
         className={`session-row ${session.id === selectedSessionId ? "active" : ""}`}
         type="button"
         key={session.id}
-        onClick={() => {
-          setStatus({ text: "", isError: false });
-          setSelectedSessionId(session.id);
-          loadSessionDetail(session.id);
-        }}
+        onClick={() => selectSession(session.id)}
       >
         <span className="session-row-copy">
           <strong>{session.name}</strong>
@@ -1860,13 +2591,7 @@ function SessionPanel({
           <p className="eyebrow">Inventory tasking</p>
           <h2>Sessions</h2>
         </div>
-        {onOpenGuidance ? (
-          <button className="btn btn-secondary btn-small admin-card-heading-action" type="button" onClick={onOpenGuidance}>
-            <BookOpen aria-hidden="true" />
-            <span>Guidance</span>
-          </button>
-        ) : null}
-        <button className={`icon-button ${onOpenGuidance ? "" : "admin-card-heading-action"}`} type="button" aria-label="Refresh sessions" title="Refresh sessions" onClick={refreshSessions}>
+        <button className="icon-button admin-card-heading-action" type="button" aria-label="Refresh sessions" title="Refresh sessions" onClick={refreshSessions}>
           <RefreshCw aria-hidden="true" />
         </button>
       </div>
@@ -1891,7 +2616,7 @@ function SessionPanel({
           {canManage ? (
             <details
               className="session-create"
-              open={isSessionCreateOpen || !sessions.length}
+              open={isSessionCreateOpen || (!isLoadingSessions && !sessions.length)}
               onToggle={event => setIsSessionCreateOpen(event.currentTarget.open)}
             >
               <summary className="btn btn-secondary">
@@ -1969,18 +2694,18 @@ function SessionPanel({
                   <span className="badge">{selectedSession.needsReviewCount || 0} needs review</span>
                   {canManage ? (
                     Number(selectedSession.itemCount || 0) === 0 ? (
-                      <button className="btn btn-danger-soft btn-small" type="button" onClick={() => requestDeleteSession(selectedSession)}>
+                      <button className="btn btn-danger-soft btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestDeleteSession(selectedSession)}>
                         <Trash2 aria-hidden="true" />
                         <span>Delete draft</span>
                       </button>
                     ) : (
                       selectedSession.status !== "closed" ? (
-                        <button className="btn btn-secondary btn-small" type="button" onClick={() => requestCloseSession(selectedSession)}>
-                          <span>Close out</span>
+                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestCloseSession(selectedSession)}>
+                          <span>{selectedSessionStatusAction === "closed" ? "Closing..." : "Close out"}</span>
                         </button>
                       ) : (
-                        <button className="btn btn-secondary btn-small" type="button" onClick={() => updateSessionStatus("active")}>
-                          <span>Reopen</span>
+                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => updateSessionStatus("active")}>
+                          <span>{selectedSessionStatusAction === "active" ? "Reopening..." : "Reopen"}</span>
                         </button>
                       )
                     )
@@ -2012,6 +2737,8 @@ function SessionPanel({
                           <span>
                             {batch.rowCount || 0} rows - {formatDate(batch.createdAt)}
                             {batch.sourceMimeType ? ` - ${batch.sourceMimeType}` : ""}
+                            {batch.sourceSizeBytes ? ` - ${formatFileSize(batch.sourceSizeBytes)}` : ""}
+                            {batch.createdByName || batch.createdByEmail ? ` - uploaded by ${batch.createdByName || batch.createdByEmail}` : ""}
                           </span>
                         </div>
                         <div className="packet-import-history-actions">
@@ -2059,15 +2786,7 @@ function SessionPanel({
 
               {detailItems.length ? (
                 <div className="session-item-toolbar">
-                  <label className="session-item-search">
-                    <Search aria-hidden="true" />
-                    <input
-                      value={sessionItemQuery}
-                      placeholder="Search rows, serial, location..."
-                      onChange={e => setSessionItemQuery(e.target.value)}
-                    />
-                  </label>
-                  <div className="session-filter-strip" aria-label="Session row filters">
+                  <div className="session-filter-strip session-assignment-tabs" role="group" aria-label="Work assignment lists">
                     {sessionItemFilterOptions.map(([value, label]) => (
                       <button
                         className={sessionItemFilter === value ? "active" : ""}
@@ -2081,14 +2800,13 @@ function SessionPanel({
                     ))}
                   </div>
                   <div className="session-filter-meta">
-                    <span>{visibleDetailItems.length} of {detailItems.length} shown</span>
-                    {(sessionItemQuery.trim() || sessionItemFilter !== "all") ? (
+                    <span>{visibleDetailItems.length} in this list</span>
+                    {query.trim() ? (
                       <button
                         className="btn btn-secondary btn-small"
                         type="button"
                         onClick={() => {
-                          setSessionItemQuery("");
-                          setSessionItemFilter("all");
+                          onQueryChange("");
                         }}
                       >
                         <RefreshCw aria-hidden="true" />
@@ -2099,7 +2817,7 @@ function SessionPanel({
                 </div>
               ) : null}
 
-              <div className="session-items">
+              <div className="session-items" role="region" aria-label="Session row results">
                 {visibleDetailItems.length ? visibleDetailItems.map(item => {
                   const submission = latestSubmission(item);
                   const needsMoreProof = submission?.reviewState === "request_more_info";
@@ -2108,10 +2826,12 @@ function SessionPanel({
                   const knownDescription = item.inventoryItem?.description || "";
                   const imageUrls = getInventoryItemImages(item.inventoryItem);
                   const assignedName = assignedPerson(item);
-                  const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
                   const assignedToCurrentUser = sessionItemAssignedToUser(item, me);
-                  const canAssignToMe = Boolean(canSubmit && !assignedToCurrentUser && !selectedSessionIsClosed && (currentMemberId || !canManage));
-                  const selfAssignmentTarget = currentMemberId || "self";
+                  const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
+                  const canClaim = Boolean(canSubmit && !item.assignedTo && !selectedSessionIsClosed);
+                  const canSubmitItemProof = Boolean(canSubmit && (canManage || assignedToCurrentUser));
+                  const directCheckAction = directCheckActions.get(item.id) || "";
+                  const isDirectCheckPending = Boolean(directCheckAction);
                   return (
                     <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} key={item.id}>
                       <div className="session-item-main">
@@ -2153,15 +2873,15 @@ function SessionPanel({
                       </div>
                       <div className="session-item-actions">
                         {canManage ? (
-                          <label className="session-assignment-control">
+                          <label className="session-assignment-control session-row-secondary-action">
                             <span>Assign</span>
                             <select
                               value={assignedMemberId}
-                              disabled={isSaving || selectedSessionIsClosed}
+                              disabled={isSaving || isDirectCheckPending || selectedSessionIsClosed}
                               onChange={event => updateSessionItemAssignment(item.id, event.target.value)}
                             >
                               <option value="">Unassigned</option>
-                              {assignableMembers.map(member => (
+                              {assignmentOptions.map(member => (
                                 <option value={member.id} key={member.id}>
                                   {member.displayName || member.email || formatRole(member.role)}
                                 </option>
@@ -2170,36 +2890,46 @@ function SessionPanel({
                           </label>
                         ) : null}
                         <span className={`status-pill ${item.status}`}>{item.status}</span>
-                        {canAssignToMe ? (
+                        <button
+                          className="btn btn-secondary btn-small session-row-details-action"
+                          type="button"
+                          aria-label={`Open details for ${itemDisplayName(item)}`}
+                          aria-haspopup="dialog"
+                          onClick={() => openItemDetail(item.id)}
+                        >
+                          <ChevronRight aria-hidden="true" />
+                          <span>Details</span>
+                        </button>
+                        {canClaim ? (
                           <button
-                            className="btn btn-secondary btn-small"
+                            className="btn btn-secondary btn-small session-row-secondary-action"
                             type="button"
-                            disabled={isSaving}
-                            onClick={() => updateSessionItemAssignment(item.id, selfAssignmentTarget)}
+                            disabled={isSaving || isDirectCheckPending}
+                            onClick={() => updateSessionItemAssignment(item.id, "self", { claim: true })}
                           >
                             <UserPlus aria-hidden="true" />
-                            <span>Assign to me</span>
+                            <span>Claim item</span>
                           </button>
                         ) : null}
-                        {canManage ? (
+                        {canManage && !selectedSessionIsClosed ? (
                           <>
-                            <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "approved")}>
+                            <button className="btn btn-secondary btn-small session-row-secondary-action" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => updateDirectCheck(item.id, "approved")}>
                               <CheckCircle2 aria-hidden="true" />
-                              <span>Found</span>
+                              <span>{directCheckAction === "approved" ? "Marking found..." : "Found"}</span>
                             </button>
-                            <button className="btn btn-secondary btn-small" type="button" onClick={() => updateDirectCheck(item.id, "not_found")}>
-                              <span>Not found</span>
+                            <button className="btn btn-secondary btn-small session-row-secondary-action" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => updateDirectCheck(item.id, "not_found")}>
+                              <span>{directCheckAction === "not_found" ? "Marking not found..." : "Not found"}</span>
                             </button>
                           </>
                         ) : null}
-                        {canSubmit && selectedSession.status !== "closed" ? (
-                          <button className="btn btn-primary btn-small" type="button" onClick={() => setProofItemId(item.id)}>
+                        {canSubmitItemProof && selectedSession.status !== "closed" ? (
+                          <button className="btn btn-primary btn-small session-row-primary-action" type="button" disabled={isDirectCheckPending} onClick={() => setProofItemId(item.id)}>
                             <Camera aria-hidden="true" />
                             <span>{needsMoreProof ? "Respond" : pendingProof ? "Add proof" : "Proof"}</span>
                           </button>
                         ) : null}
                       </div>
-                      {proofItemId === item.id ? (
+                      {proofItemId === item.id && detailItemId !== item.id ? (
                         <ProofForm
                           item={item}
                           token={token}
@@ -2216,7 +2946,22 @@ function SessionPanel({
                     </article>
                   );
                 }) : detailItems.length ? (
-                  <EmptyPanel title="No matching rows" body="Clear the search or choose another filter." />
+                  <EmptyPanel
+                    title={query.trim()
+                      ? "No matching items"
+                      : sessionItemFilter === "available"
+                        ? "No items available to claim"
+                        : sessionItemFilter === "mine"
+                          ? "No items assigned to you"
+                          : "No team assignments"}
+                    body={query.trim()
+                      ? "Clear the search or try another assignment list."
+                      : sessionItemFilter === "available"
+                        ? "Choose My work or Team to see claimed items."
+                        : sessionItemFilter === "mine"
+                          ? "Claim an available item to start working it."
+                          : "Items claimed by teammates will appear here."}
+                  />
                 ) : (
                   <EmptyPanel
                     title="No packet rows yet"
@@ -2247,6 +2992,50 @@ function SessionPanel({
           )}
         </div>
       </div>
+
+      <SessionItemDrawer
+        item={detailItem}
+        session={selectedSession}
+        importBatch={detailItemImportBatch}
+        canManage={canManage}
+        canSubmit={detailCanSubmitProof}
+        canClaim={detailCanClaim}
+        isSaving={isSaving}
+        directCheckAction={detailItemDirectCheckAction}
+        isClosed={selectedSessionIsClosed}
+        status={status}
+        assignableMembers={assignmentOptions}
+        assignedMemberId={detailItemAssignedMemberId}
+        proofOpen={Boolean(detailItem && proofItemId === detailItem.id)}
+        token={token}
+        tenantSlug={tenantSlug}
+        onAssign={memberId => updateSessionItemAssignment(detailItem.id, memberId)}
+        onClaim={() => updateSessionItemAssignment(detailItem.id, "self", { claim: true })}
+        onDirectCheck={nextStatus => updateDirectCheck(detailItem.id, nextStatus)}
+        onOpenProof={() => setProofItemId(detailItem.id)}
+        onOpenReview={canManage && onOpenReview ? () => {
+          setProofItemId("");
+          setDetailPhotoViewer(null);
+          setDetailItemId("");
+          onOpenReview();
+        } : null}
+        onOpenPhoto={openDetailPhotoViewer}
+        onProofCancel={() => setProofItemId("")}
+        onProofSaved={() => {
+          setProofItemId("");
+          loadSessions(selectedSessionId);
+        }}
+        onStatus={setStatus}
+        onClose={closeItemDetail}
+      />
+
+      <ProofPhotoViewer
+        viewer={detailPhotoViewer}
+        onClose={closeDetailPhotoViewer}
+        onMove={moveDetailPhotoViewer}
+        onSelect={selectDetailPhotoViewer}
+        onToggleZoom={() => setDetailPhotoViewer(current => current ? { ...current, isZoomed: !current.isZoomed } : current)}
+      />
 
       {packetWizardOpen ? (
         <div className="modal-backdrop packet-wizard-backdrop" role="presentation">
@@ -2290,12 +3079,15 @@ function SessionPanel({
                   </div>
 
                   {openSessions.length ? (
-                    <label className={`packet-choice ${packetWizardMode === "existing" ? "active" : ""}`}>
+                    <label className={`packet-choice ${effectivePacketWizardMode === "existing" ? "active" : ""}`}>
                       <input
                         type="radio"
                         name="packetSessionMode"
-                        checked={packetWizardMode === "existing"}
-                        onChange={() => setPacketWizardMode("existing")}
+                        checked={effectivePacketWizardMode === "existing"}
+                        onChange={() => {
+                          setPacketWizardModeTouched(true);
+                          setPacketWizardMode("existing");
+                        }}
                       />
                       <span>
                         <strong>Use an open session</strong>
@@ -2303,8 +3095,8 @@ function SessionPanel({
                       </span>
                       <select
                         className="input"
-                        value={packetWizardSessionId}
-                        disabled={packetWizardMode !== "existing"}
+                        value={packetWizardFallbackSessionId}
+                        disabled={effectivePacketWizardMode !== "existing"}
                         onChange={e => setPacketWizardSessionId(e.target.value)}
                       >
                         {openSessions.map(session => (
@@ -2316,12 +3108,15 @@ function SessionPanel({
                     </label>
                   ) : null}
 
-                  <label className={`packet-choice ${packetWizardMode === "new" ? "active" : ""}`}>
+                  <label className={`packet-choice ${effectivePacketWizardMode === "new" ? "active" : ""}`}>
                     <input
                       type="radio"
                       name="packetSessionMode"
-                      checked={packetWizardMode === "new"}
-                      onChange={() => setPacketWizardMode("new")}
+                      checked={effectivePacketWizardMode === "new"}
+                      onChange={() => {
+                        setPacketWizardModeTouched(true);
+                        setPacketWizardMode("new");
+                      }}
                     />
                     <span>
                       <strong>Start a new session</strong>
@@ -2330,7 +3125,7 @@ function SessionPanel({
                     <input
                       className="input"
                       value={packetWizardSessionName}
-                      disabled={packetWizardMode !== "new"}
+                      disabled={effectivePacketWizardMode !== "new"}
                       placeholder="July sensitive items"
                       onChange={e => setPacketWizardSessionName(e.target.value)}
                     />
@@ -2340,8 +3135,17 @@ function SessionPanel({
                     <button className="btn btn-secondary" type="button" onClick={closePacketWizard}>
                       <span>Cancel</span>
                     </button>
-                    <button className="btn btn-primary" type="button" disabled={isSaving} onClick={preparePacketWizardSession}>
-                      <span>{isSaving ? "Starting..." : "Continue"}</span>
+                    <button
+                      className="btn btn-primary"
+                      type="button"
+                      disabled={isSaving || isLoadingSessions || (
+                        effectivePacketWizardMode === "existing"
+                          ? !packetWizardFallbackSessionId
+                          : !packetWizardSessionName.trim()
+                      )}
+                      onClick={preparePacketWizardSession}
+                    >
+                      <span>{isSaving ? "Starting..." : isLoadingSessions ? "Loading sessions..." : "Continue"}</span>
                     </button>
                   </div>
                 </div>
@@ -2620,12 +3424,13 @@ function SessionPanel({
                   needs review
                 </span>
               </div>
+              <StatusLine status={status} />
               <div className="button-row start-inventory-actions">
-                <button className="btn btn-primary" type="button" onClick={confirmCloseSession} disabled={isSaving}>
+                <button className="btn btn-primary" type="button" onClick={confirmCloseSession} disabled={isSaving || Boolean(closeSessionAction)}>
                   <CheckCircle2 aria-hidden="true" />
-                  <span>{isSaving ? "Closing..." : "Close session"}</span>
+                  <span>{closeSessionAction === "closed" ? "Closing..." : "Close session"}</span>
                 </button>
-                <button className="btn btn-secondary" type="button" onClick={closeCloseSessionDialog} disabled={isSaving}>
+                <button className="btn btn-secondary" type="button" onClick={closeCloseSessionDialog} disabled={isSaving || Boolean(closeSessionAction)}>
                   <span>Cancel</span>
                 </button>
               </div>
@@ -2669,13 +3474,223 @@ function SessionPanel({
   );
 }
 
-function ReviewPanel({ token, tenantSlug }) {
+function ProofPhotoStrip({ photos = [], onOpen, compact = false, label = "Submitted proof photos" }) {
+  if (!photos.length) return null;
+
+  return (
+    <div className={`proof-photo-strip ${compact ? "compact" : ""}`} aria-label={label}>
+      {photos.map((photo, index) => (
+        <button
+          className="proof-photo-thumbnail"
+          type="button"
+          key={photo.id || photo.storageKey}
+          aria-label={`View ${proofPhotoAlt(photo)}`}
+          aria-haspopup="dialog"
+          onClick={() => onOpen(index)}
+        >
+          <img src={photo.url} alt="" loading="lazy" />
+          <span className="proof-photo-thumbnail-copy">
+            <strong>{proofPhotoLabel(photo)}</strong>
+            {photo.caption ? <small>{photo.caption}</small> : null}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
+  if (!viewer?.photos?.length) return null;
+
+  const photo = viewer.photos[viewer.index] || viewer.photos[0];
+  const photoCount = viewer.photos.length;
+  const position = Math.min(viewer.index + 1, photoCount);
+
+  function handleKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+    } else if (event.key === "ArrowLeft" && photoCount > 1) {
+      event.preventDefault();
+      onMove(-1);
+    } else if (event.key === "ArrowRight" && photoCount > 1) {
+      event.preventDefault();
+      onMove(1);
+    } else if (event.key === "Tab") {
+      const focusable = [...event.currentTarget.querySelectorAll(
+        'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
+  return (
+    <div
+      className="proof-viewer-backdrop"
+      role="presentation"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="proof-viewer-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="proofViewerTitle"
+        aria-describedby="proofViewerContext"
+        onKeyDown={handleKeyDown}
+      >
+        <header className="proof-viewer-heading">
+          <div>
+            <p className="eyebrow">{viewer.sessionName || "Submitted evidence"}</p>
+            <h2 id="proofViewerTitle">Evidence photo</h2>
+            <p id="proofViewerContext">{viewer.packetLine || "Inventory proof"}</p>
+          </div>
+          <button className="proof-viewer-icon-button" type="button" aria-label="Close evidence viewer" onClick={onClose} autoFocus>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="proof-viewer-content">
+          <div className="proof-viewer-stage">
+            <div className={`proof-viewer-image-scroll ${viewer.isZoomed ? "zoomed" : ""}`}>
+              <img src={photo.url} alt={`${proofPhotoAlt(photo)} for ${viewer.packetLine || "inventory proof"}`} />
+            </div>
+            <span className="proof-viewer-count" aria-live="polite">{position} of {photoCount}</span>
+            {photoCount > 1 ? (
+              <>
+                <button className="proof-viewer-nav previous" type="button" aria-label="Previous photo" onClick={() => onMove(-1)}>
+                  <ChevronLeft aria-hidden="true" />
+                </button>
+                <button className="proof-viewer-nav next" type="button" aria-label="Next photo" onClick={() => onMove(1)}>
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </>
+            ) : null}
+          </div>
+
+          <aside className="proof-viewer-details">
+            <div className="proof-viewer-photo-heading">
+              <span>{proofPhotoLabel(photo)}</span>
+              <strong>{photo.caption || proofPhotoLabel(photo)}</strong>
+            </div>
+
+            <dl className="proof-viewer-facts">
+              <div>
+                <dt>Submitted by</dt>
+                <dd>{viewer.submittedBy || "Unknown"}</dd>
+              </div>
+              {viewer.createdAt ? (
+                <div>
+                  <dt>Submitted</dt>
+                  <dd>{formatDate(viewer.createdAt)}</dd>
+                </div>
+              ) : null}
+              {viewer.locationText ? (
+                <div>
+                  <dt>Location</dt>
+                  <dd>{viewer.locationText}</dd>
+                </div>
+              ) : null}
+              {viewer.serialNumber ? (
+                <div>
+                  <dt>Serial</dt>
+                  <dd>{viewer.serialNumber}</dd>
+                </div>
+              ) : null}
+            </dl>
+
+            {viewer.note ? (
+              <div className="proof-viewer-note">
+                <strong>Submitter note</strong>
+                <p>{viewer.note}</p>
+              </div>
+            ) : null}
+
+            {viewer.requestedProof ? (
+              <div className="proof-viewer-request">
+                <strong>Requested proof</strong>
+                <p>{viewer.requestedProof}</p>
+              </div>
+            ) : null}
+
+            <div className="proof-viewer-tools">
+              <button className="btn btn-secondary btn-small" type="button" aria-pressed={viewer.isZoomed} onClick={onToggleZoom}>
+                {viewer.isZoomed ? <ZoomOut aria-hidden="true" /> : <ZoomIn aria-hidden="true" />}
+                <span>{viewer.isZoomed ? "Fit photo" : "Zoom photo"}</span>
+              </button>
+              <a className="btn btn-secondary btn-small" href={photo.url} target="_blank" rel="noreferrer">
+                <ExternalLink aria-hidden="true" />
+                <span>Open original</span>
+              </a>
+            </div>
+          </aside>
+        </div>
+
+        {photoCount > 1 ? (
+          <div className="proof-viewer-thumbnails" aria-label="All evidence photos">
+            {viewer.photos.map((item, index) => (
+              <button
+                className={index === viewer.index ? "active" : ""}
+                type="button"
+                key={item.id || item.storageKey}
+                aria-label={`Show ${proofPhotoAlt(item)}`}
+                aria-current={index === viewer.index ? "true" : undefined}
+                onClick={() => onSelect(index)}
+              >
+                <img src={item.url} alt="" loading="lazy" />
+                <span>{proofPhotoLabel(item)}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function ReviewPanel({ token, tenantSlug, query = "" }) {
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading review queue...", isError: false });
   const [requestingSubmissionId, setRequestingSubmissionId] = useState("");
   const [proofRequestMessage, setProofRequestMessage] = useState("");
   const [proofRequestFields, setProofRequestFields] = useState(["serial_photo", "wide_photo"]);
   const [isRequestingProof, setIsRequestingProof] = useState(false);
+  const [reviewingSubmissionId, setReviewingSubmissionId] = useState("");
+  const [photoViewer, setPhotoViewer] = useState(null);
+  const photoViewerTriggerRef = useRef(null);
+  const hasSearchQuery = searchTerms(query).length > 0;
+  const visibleSubmissions = submissions.filter(submission => matchesSearch([
+    submission.sessionItem?.packetLine,
+    submission.session?.name,
+    submission.submittedByName,
+    submission.submittedByEmail,
+    submission.status,
+    submission.reviewState,
+    submission.locationText,
+    submission.serialNumber,
+    submission.note,
+    submission.reviewNote,
+    (submission.history || []).flatMap(historyItem => [
+      historyItem.status,
+      historyItem.reviewState,
+      historyItem.submittedByName,
+      historyItem.submittedByEmail,
+      historyItem.locationText,
+      historyItem.serialNumber,
+      historyItem.note,
+      historyItem.reviewNote
+    ])
+  ], query));
 
   async function loadQueue() {
     try {
@@ -2692,9 +3707,22 @@ function ReviewPanel({ token, tenantSlug }) {
     loadQueue();
   }, [tenantSlug, token]);
 
+  useEffect(() => {
+    if (!photoViewer) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [Boolean(photoViewer)]);
+
   async function review(submissionId, decision, note = "") {
+    const submission = submissions.find(item => item.id === submissionId);
+    const packetLine = submission?.sessionItem?.packetLine || "the submitted proof";
+    const actionLabel = decision === "approved" ? "Approved" : "Rejected";
     try {
-      setStatus({ text: "Updating review...", isError: false });
+      setReviewingSubmissionId(submissionId);
+      setStatus({ text: `${actionLabel === "Approved" ? "Approving" : "Rejecting"} ${packetLine}...`, isError: false });
       await apiRequest(`/submissions/${submissionId}/review`, {
         method: "PATCH",
         token,
@@ -2702,8 +3730,11 @@ function ReviewPanel({ token, tenantSlug }) {
         body: { decision, note }
       });
       await loadQueue();
+      setStatus({ text: `${actionLabel} proof for ${packetLine}.`, isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setReviewingSubmissionId("");
     }
   }
 
@@ -2743,12 +3774,50 @@ function ReviewPanel({ token, tenantSlug }) {
       setProofRequestMessage("");
       setProofRequestFields(["serial_photo", "wide_photo"]);
       await loadQueue();
-      setStatus({ text: "Proof request sent.", isError: false });
+      const submission = submissions.find(item => item.id === requestingSubmissionId);
+      const packetLine = submission?.sessionItem?.packetLine || "the submitted proof";
+      setStatus({ text: `Proof request sent for ${packetLine}.`, isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
       setIsRequestingProof(false);
     }
+  }
+
+  function openPhotoViewer(submission, evidence, photos, index) {
+    const requestedProof = applicableProofRequest(submission.history, evidence) || submission.reviewNote || "";
+
+    photoViewerTriggerRef.current = document.activeElement;
+    setPhotoViewer({
+      photos,
+      index,
+      isZoomed: false,
+      packetLine: submission.sessionItem?.packetLine || "Inventory proof",
+      sessionName: submission.session?.name || "Submitted evidence",
+      submittedBy: submissionPerson(evidence),
+      createdAt: evidence.createdAt,
+      locationText: evidence.locationText,
+      serialNumber: evidence.serialNumber,
+      note: evidence.note,
+      requestedProof
+    });
+  }
+
+  function closePhotoViewer() {
+    setPhotoViewer(null);
+    window.requestAnimationFrame(() => photoViewerTriggerRef.current?.focus?.());
+  }
+
+  function movePhotoViewer(delta) {
+    setPhotoViewer(current => {
+      if (!current?.photos?.length) return current;
+      const index = (current.index + delta + current.photos.length) % current.photos.length;
+      return { ...current, index, isZoomed: false };
+    });
+  }
+
+  function selectPhotoViewer(index) {
+    setPhotoViewer(current => current ? { ...current, index, isZoomed: false } : current);
   }
 
   return (
@@ -2763,8 +3832,10 @@ function ReviewPanel({ token, tenantSlug }) {
         </div>
       </div>
 
-      <div className="review-list">
-        {submissions.length ? submissions.map(submission => (
+      <StatusLine status={status} />
+
+      <div className="review-list" role="region" aria-label="Review queue results">
+        {visibleSubmissions.length ? visibleSubmissions.map(submission => (
           <article className="review-card" key={submission.id}>
             <div className="review-card-main">
               <strong>{submission.sessionItem?.packetLine || "Packet row"}</strong>
@@ -2777,15 +3848,10 @@ function ReviewPanel({ token, tenantSlug }) {
               ) : null}
             </div>
 
-            {submission.photos?.length ? (
-              <div className="review-photo-grid">
-                {submission.photos.map(photo => (
-                  <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.storageKey}>
-                    <img src={photo.url} alt={photo.caption || photo.kind || "Proof"} loading="lazy" />
-                  </a>
-                ))}
-              </div>
-            ) : null}
+            <ProofPhotoStrip
+              photos={submission.photos}
+              onOpen={index => openPhotoViewer(submission, submission, submission.photos, index)}
+            />
 
             {(submission.history || []).length > 1 ? (
               <div className="proof-timeline">
@@ -2812,15 +3878,12 @@ function ReviewPanel({ token, tenantSlug }) {
                         {historyItem.reviewState === "request_more_info" && historyItem.reviewNote ? (
                           <small className="proof-timeline-request">Requested: {historyItem.reviewNote}</small>
                         ) : null}
-                        {historyItem.photos?.length ? (
-                          <div className="proof-timeline-photos">
-                            {historyItem.photos.map(photo => (
-                              <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.storageKey}>
-                                <img src={photo.url} alt={photo.caption || photo.kind || "Proof"} loading="lazy" />
-                              </a>
-                            ))}
-                          </div>
-                        ) : null}
+                        <ProofPhotoStrip
+                          photos={historyItem.photos}
+                          compact
+                          label={`Photos submitted by ${submissionPerson(historyItem)}`}
+                          onOpen={index => openPhotoViewer(submission, historyItem, historyItem.photos, index)}
+                        />
                       </div>
                     </div>
                   ))}
@@ -2829,21 +3892,32 @@ function ReviewPanel({ token, tenantSlug }) {
             ) : null}
 
             <div className="review-actions">
-              <button className="btn btn-primary btn-small" type="button" onClick={() => review(submission.id, "approved")}>
+              <button
+                className="btn btn-primary btn-small"
+                type="button"
+                disabled={reviewingSubmissionId === submission.id || isRequestingProof}
+                onClick={() => review(submission.id, "approved")}
+              >
                 <CheckCircle2 aria-hidden="true" />
-                <span>Approve</span>
+                <span>{reviewingSubmissionId === submission.id ? "Updating..." : "Approve"}</span>
               </button>
               <button
                 className="btn btn-secondary btn-small"
                 type="button"
+                disabled={reviewingSubmissionId === submission.id || isRequestingProof}
                 onClick={() => openProofRequest(submission)}
               >
                 <Camera aria-hidden="true" />
                 <span>More proof</span>
               </button>
-              <button className="btn btn-danger-soft btn-small" type="button" onClick={() => review(submission.id, "rejected")}>
+              <button
+                className="btn btn-danger-soft btn-small"
+                type="button"
+                disabled={reviewingSubmissionId === submission.id || isRequestingProof}
+                onClick={() => review(submission.id, "rejected")}
+              >
                 <XCircle aria-hidden="true" />
-                <span>Reject</span>
+                <span>{reviewingSubmissionId === submission.id ? "Updating..." : "Reject"}</span>
               </button>
             </div>
 
@@ -2888,11 +3962,21 @@ function ReviewPanel({ token, tenantSlug }) {
             ) : null}
           </article>
         )) : (
-          <EmptyPanel title="Nothing to review" body="Submitted proof will appear here." />
+          <EmptyPanel
+            title={hasSearchQuery ? "No matching review work" : "Nothing to review"}
+            body={hasSearchQuery ? "Clear the search or try a packet line, session, submitter, serial, location, or proof note." : "Submitted proof will appear here."}
+          />
         )}
       </div>
 
-      <StatusLine status={status} />
+      <ProofPhotoViewer
+        viewer={photoViewer}
+        onClose={closePhotoViewer}
+        onMove={movePhotoViewer}
+        onSelect={selectPhotoViewer}
+        onToggleZoom={() => setPhotoViewer(current => current ? { ...current, isZoomed: !current.isZoomed } : current)}
+      />
+
     </section>
   );
 }
@@ -2901,6 +3985,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [issues, setIssues] = useState([]);
   const [contentBlocks, setContentBlocks] = useState([]);
   const [subscribers, setSubscribers] = useState([]);
+  const [deliveries, setDeliveries] = useState([]);
   const [subscriberStats, setSubscriberStats] = useState({ pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
   const [deliverySettings, setDeliverySettings] = useState({ emailConfigured: false });
   const [activeSection, setActiveSection] = useState("content");
@@ -2908,15 +3993,17 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [selectedContentBlockId, setSelectedContentBlockId] = useState("");
   const [form, setForm] = useState(() => newsletterIssueForm());
   const [contentForm, setContentForm] = useState(() => frgContentForm());
+  const [testEmail, setTestEmail] = useState(() => me?.user?.email || "");
   const [query, setQuery] = useState("");
   const [contentQuery, setContentQuery] = useState("");
   const [contentTypeFilter, setContentTypeFilter] = useState("all");
   const [subscriberQuery, setSubscriberQuery] = useState("");
-  const [subscriberStatusFilter, setSubscriberStatusFilter] = useState("all");
+  const [subscriberStatusFilter, setSubscriberStatusFilter] = useState("pending");
   const [reviewNotes, setReviewNotes] = useState({});
   const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isSendingTest, setIsSendingTest] = useState(false);
   const [isSavingContent, setIsSavingContent] = useState(false);
   const [isDeletingContent, setIsDeletingContent] = useState(false);
   const [reviewingSubscriberId, setReviewingSubscriberId] = useState("");
@@ -2924,41 +4011,41 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
   const selectedContentBlock = contentBlocks.find(block => block.id === selectedContentBlockId) || null;
-  const normalizedQuery = query.trim().toLowerCase();
-  const normalizedContentQuery = contentQuery.trim().toLowerCase();
-  const normalizedSubscriberQuery = subscriberQuery.trim().toLowerCase();
   const filteredContentBlocks = contentBlocks.filter(block => {
     const matchesType = contentTypeFilter === "all" || block.blockType === contentTypeFilter;
-    const matchesQuery = !normalizedContentQuery || [
+    const matchesQuery = matchesSearch([
       block.title,
       block.summary,
       block.body,
       block.status,
+      block.href,
+      block.linkLabel,
       contentTypeLabel(block.blockType)
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedContentQuery);
+    ], contentQuery);
     return matchesType && matchesQuery;
   });
-  const filteredIssues = issues.filter(issue => {
-    if (!normalizedQuery) return true;
-    return [
+  const filteredIssues = issues.filter(issue => matchesSearch([
       issue.title,
       issue.editionLabel,
       issue.summary,
+      issue.body,
       issue.status
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
-  });
+    ], query));
   const filteredSubscribers = subscribers.filter(subscriber => {
     const matchesStatus = subscriberStatusFilter === "all" || subscriber.status === subscriberStatusFilter;
-    const matchesQuery = !normalizedSubscriberQuery || [
+    const matchesQuery = matchesSearch([
       subscriber.displayName,
       subscriber.email,
       subscriber.platoon,
       subscriber.supervisorName,
       subscriber.status,
       subscriber.reviewNote
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedSubscriberQuery);
+    ], subscriberQuery);
     return matchesStatus && matchesQuery;
   });
+  const selectedIssueDeliveries = selectedIssueId
+    ? deliveries.filter(delivery => delivery.issueId === selectedIssueId)
+    : [];
   const previewLines = newsletterBodyParagraphs(form.body);
 
   async function loadNewsletter() {
@@ -2968,9 +4055,11 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       const nextIssues = data.issues || [];
       const nextContentBlocks = data.contentBlocks || [];
       const nextSubscribers = data.subscribers || [];
+      const nextDeliveries = data.deliveries || [];
       setIssues(nextIssues);
       setContentBlocks(nextContentBlocks);
       setSubscribers(nextSubscribers);
+      setDeliveries(nextDeliveries);
       setSubscriberStats(data.subscriberStats || { pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
       setDeliverySettings(data.deliverySettings || { emailConfigured: false });
 
@@ -3151,9 +4240,56 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     }
   }
 
+  async function sendTestIssue() {
+    if (!selectedIssueId) {
+      setStatus({ text: "Save the issue before sending a test.", isError: true });
+      return;
+    }
+
+    const email = testEmail.trim();
+    if (!email) {
+      setStatus({ text: "Enter a test email address.", isError: true });
+      return;
+    }
+
+    setIsSendingTest(true);
+    try {
+      const data = await apiRequest(`/newsletter/admin/issues/${selectedIssueId}/test-send`, {
+        method: "POST",
+        token,
+        body: { email }
+      });
+      const result = data.testSend || {};
+      setStatus({
+        text: result.sent
+          ? `Test email sent to ${data.email || email}.`
+          : `Test email was not sent: ${result.reason || result.error || "delivery unavailable"}.`,
+        isError: !result.sent && result.reason !== "smtp_not_configured"
+      });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSendingTest(false);
+    }
+  }
+
   function exportSubscribers() {
     const rows = [
-      ["Email", "Name", "Platoon", "Immediate Supervisor", "Status", "Approved/Requested", "Updated"],
+      [
+        "Email",
+        "Name",
+        "Platoon",
+        "Immediate Supervisor",
+        "Status",
+        "Approved/Requested",
+        "Updated",
+        "Emails Sent",
+        "Failed",
+        "Skipped",
+        "Last Delivery",
+        "Last Issue",
+        "Last Error"
+      ],
       ...subscribers.map(subscriber => [
         subscriber.email,
         subscriber.displayName || "",
@@ -3161,12 +4297,56 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         subscriber.supervisorName || "",
         subscriber.status,
         formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt),
-        formatDate(subscriber.updatedAt)
+        formatDate(subscriber.updatedAt),
+        subscriber.sentCount || 0,
+        subscriber.failedCount || 0,
+        subscriber.skippedCount || 0,
+        subscriber.lastDeliveryAt ? `${deliveryStatusLabel(subscriber.lastDeliveryStatus)} - ${formatDate(subscriber.lastDeliveryAt)}` : "",
+        subscriber.lastDeliveryIssueTitle || "",
+        subscriber.lastDeliveryError || ""
       ])
     ];
     const csv = rows.map(row => row.map(csvCell).join(",")).join("\n");
     downloadTextFile(`newsletter-subscribers-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv");
   }
+
+  function exportDeliveries() {
+    const rows = [
+      ["Issue", "Email", "Subscriber", "Subscriber Status", "Delivery Status", "Error", "Sent At", "Recorded At"],
+      ...deliveries.map(delivery => [
+        delivery.issueTitle || "",
+        delivery.email || "",
+        delivery.subscriberName || "",
+        delivery.subscriberStatus || "",
+        deliveryStatusLabel(delivery.status),
+        delivery.error || "",
+        delivery.sentAt ? formatDate(delivery.sentAt) : "",
+        delivery.createdAt ? formatDate(delivery.createdAt) : ""
+      ])
+    ];
+    const csv = rows.map(row => row.map(csvCell).join(",")).join("\n");
+    downloadTextFile(`newsletter-deliveries-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv");
+  }
+
+  function exportSelectedIssueDeliveries() {
+    if (!selectedIssue) return;
+    const rows = [
+      ["Issue", "Email", "Subscriber", "Subscriber Status", "Delivery Status", "Error", "Sent At", "Recorded At"],
+      ...selectedIssueDeliveries.map(delivery => [
+        delivery.issueTitle || selectedIssue.title || "",
+        delivery.email || "",
+        delivery.subscriberName || "",
+        delivery.subscriberStatus || "",
+        deliveryStatusLabel(delivery.status),
+        delivery.error || "",
+        delivery.sentAt ? formatDate(delivery.sentAt) : "",
+        delivery.createdAt ? formatDate(delivery.createdAt) : ""
+      ])
+    ];
+    const csv = rows.map(row => row.map(csvCell).join(",")).join("\n");
+    downloadTextFile(`newsletter-${safeFileNamePart(selectedIssue.title)}-deliveries.csv`, csv, "text/csv");
+  }
+
 
   async function reviewSubscriber(subscriberId, decision) {
     setReviewingSubscriberId(subscriberId);
@@ -3220,6 +4400,17 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   };
   const activeMeta = sectionMeta[activeSection] || sectionMeta.content;
   const publishedContentCount = contentBlocks.filter(block => block.status === "published").length;
+  const isEmailConfigured = Boolean(deliverySettings.emailConfigured);
+  const subscriberEmptyTitle = subscribers.length
+    ? subscriberStatusFilter === "pending"
+      ? "No pending requests"
+      : "No matching subscribers"
+    : "No subscribers yet";
+  const subscriberEmptyBody = subscribers.length
+    ? subscriberStatusFilter === "pending"
+      ? "New public newsletter requests will appear here first."
+      : "Adjust the search or status filter."
+    : "Public newsletter signups will appear here.";
 
   return (
     <div className="platform-shell newsletter-shell">
@@ -3291,6 +4482,12 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               <p>{activeMeta.copy}</p>
             </div>
             <div className="newsletter-heading-actions">
+              {activeSection !== "content" ? (
+                <span className={`newsletter-delivery-status ${isEmailConfigured ? "ready" : "offline"}`} title={isEmailConfigured ? "Newsletter email delivery is configured." : "Newsletter email delivery is not configured in this environment."}>
+                  <MailPlus aria-hidden="true" />
+                  <span>{isEmailConfigured ? "Email ready" : "Email offline"}</span>
+                </span>
+              ) : null}
               <a className="btn btn-secondary" href={`https://${appConfig.baseDomain}/`} target="_blank" rel="noreferrer">
                 <Home aria-hidden="true" />
                 <span>View public site</span>
@@ -3302,20 +4499,26 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                 </button>
               ) : null}
               {activeSection === "issues" ? (
-                <button className="btn btn-primary" type="button" onClick={startNewDraft}>
-                  <Plus aria-hidden="true" />
-                  <span>New issue</span>
-                </button>
+                <>
+                  <button className="btn btn-secondary" type="button" onClick={exportDeliveries} disabled={!deliveries.length}>
+                    <Download aria-hidden="true" />
+                    <span>Export deliveries</span>
+                  </button>
+                  <button className="btn btn-primary" type="button" onClick={startNewDraft}>
+                    <Plus aria-hidden="true" />
+                    <span>New issue</span>
+                  </button>
+                </>
               ) : null}
             </div>
           </div>
 
           <StatusLine status={status} />
 
-          {activeSection !== "content" && !deliverySettings.emailConfigured ? (
-            <div className="newsletter-delivery-note" role="note">
+          {activeSection === "issues" && !isEmailConfigured ? (
+            <div className="newsletter-delivery-note newsletter-delivery-note-inline" role="note">
               <MailPlus aria-hidden="true" />
-              <span>Email delivery is not configured in this environment. Reviews still update subscriber status, but notification emails will be skipped.</span>
+              <span>Email delivery is not configured in this environment. You can still write, test the layout, and save issues; live sending will be skipped.</span>
             </div>
           ) : null}
 
@@ -3405,14 +4608,17 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <div className="newsletter-admin-grid frg-content-admin-grid">
               <section className="platform-table-card newsletter-issue-list-card">
                 <div className="platform-table-toolbar">
-                  <label className="platform-search">
+                  <div className="platform-search" role="search">
                     <Search aria-hidden="true" />
                     <input
+                      type="search"
+                      aria-label="Search public content"
                       value={contentQuery}
                       placeholder="Search public content..."
                       onChange={event => setContentQuery(event.target.value)}
                     />
-                  </label>
+                    {contentQuery ? <button type="button" aria-label="Clear search" onClick={() => setContentQuery("")}><X aria-hidden="true" /></button> : null}
+                  </div>
                   <select
                     className="select newsletter-status-filter"
                     value={contentTypeFilter}
@@ -3600,14 +4806,17 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
           <div className="newsletter-admin-grid">
             <section className="platform-table-card newsletter-issue-list-card">
               <div className="platform-table-toolbar">
-                <label className="platform-search">
+                <div className="platform-search" role="search">
                   <Search aria-hidden="true" />
                   <input
+                    type="search"
+                    aria-label="Search newsletter issues"
                     value={query}
                     placeholder="Search issues..."
                     onChange={event => setQuery(event.target.value)}
                   />
-                </label>
+                  {query ? <button type="button" aria-label="Clear search" onClick={() => setQuery("")}><X aria-hidden="true" /></button> : null}
+                </div>
               </div>
 
               <div className="newsletter-issue-list">
@@ -3694,6 +4903,25 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <span>{isPublishing ? "Publishing..." : "Publish"}</span>
                     </button>
                   </div>
+
+                  <div className="newsletter-test-send">
+                    <label className="field-label" htmlFor="newsletterTestEmail">Send test</label>
+                    <div className="newsletter-test-send-row">
+                      <input
+                        id="newsletterTestEmail"
+                        className="input"
+                        type="email"
+                        value={testEmail}
+                        placeholder="name@example.com"
+                        onChange={event => setTestEmail(event.target.value)}
+                      />
+                      <button className="btn btn-secondary" type="button" onClick={sendTestIssue} disabled={!selectedIssueId || isSendingTest}>
+                        <MailPlus aria-hidden="true" />
+                        <span>{isSendingTest ? "Sending..." : "Send test"}</span>
+                      </button>
+                    </div>
+                    <small>Send one proof email before publishing. This does not publish the issue or add delivery records.</small>
+                  </div>
                 </form>
 
                 <aside className="newsletter-preview" aria-label="Newsletter preview">
@@ -3709,6 +4937,42 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <p className="muted-copy">The issue preview appears as you write.</p>
                     )}
                   </div>
+                  <div className="newsletter-delivery-log">
+                    <div className="newsletter-delivery-log-heading">
+                      <div>
+                        <strong>Delivery records</strong>
+                        <span>{selectedIssueDeliveries.length ? countLabel(selectedIssueDeliveries.length, "recipient") : "No delivery records yet"}</span>
+                      </div>
+                      <button
+                        className="btn btn-secondary btn-small"
+                        type="button"
+                        onClick={exportSelectedIssueDeliveries}
+                        disabled={!selectedIssueDeliveries.length}
+                      >
+                        <Download aria-hidden="true" />
+                        <span>Export</span>
+                      </button>
+                    </div>
+                    {selectedIssueDeliveries.length ? (
+                      <div className="newsletter-delivery-list">
+                        {selectedIssueDeliveries.map(delivery => (
+                          <div className="newsletter-delivery-row" key={delivery.id}>
+                            <div>
+                              <strong>{delivery.subscriberName || delivery.email}</strong>
+                              <span>{delivery.email}</span>
+                              {delivery.error ? <small>{delivery.error}</small> : null}
+                            </div>
+                            <div className="newsletter-delivery-row-meta">
+                              <span className={`status-pill ${delivery.status}`}>{deliveryStatusLabel(delivery.status)}</span>
+                              <small>{delivery.sentAt ? formatDate(delivery.sentAt) : formatDate(delivery.createdAt)}</small>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted-copy">Publish the issue to create delivery records for approved subscribers.</p>
+                    )}
+                  </div>
                 </aside>
               </div>
             </section>
@@ -3720,9 +4984,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <div className="newsletter-subscriber-heading">
               <div>
                 <h2>Subscribers</h2>
-                <p>
-                  {countLabel(subscriberStats.pending || 0, "pending request")}, {countLabel(subscriberStats.active || 0, "approved subscriber")}, and {countLabel(subscriberStats.rejected || 0, "rejected request")}.
-                </p>
+                <p>{subscriberStatusFilter === "pending" ? "Review new requests first. Approved and rejected subscribers stay available in the filter." : `${countLabel(filteredSubscribers.length, "subscriber")} shown from ${countLabel(subscribers.length, "request")}.`}</p>
               </div>
               <button className="btn btn-secondary btn-small" type="button" onClick={exportSubscribers} disabled={!subscribers.length}>
                 <Download aria-hidden="true" />
@@ -3731,14 +4993,17 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             </div>
 
             <div className="newsletter-subscriber-toolbar">
-              <label className="platform-search">
+              <div className="platform-search" role="search">
                 <Search aria-hidden="true" />
                 <input
+                  type="search"
+                  aria-label="Search subscribers"
                   value={subscriberQuery}
                   placeholder="Search subscribers..."
                   onChange={event => setSubscriberQuery(event.target.value)}
                 />
-              </label>
+                {subscriberQuery ? <button type="button" aria-label="Clear search" onClick={() => setSubscriberQuery("")}><X aria-hidden="true" /></button> : null}
+              </div>
               <select
                 className="select newsletter-status-filter"
                 value={subscriberStatusFilter}
@@ -3760,16 +5025,36 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                   const canReject = subscriber.status === "pending";
                   const isReviewing = reviewingSubscriberId === subscriber.id;
                   const noteValue = reviewNotes[subscriber.id] ?? "";
+                  const details = [
+                    subscriber.reviewNote ? ["Review note", subscriber.reviewNote] : null,
+                    subscriber.reviewedAt ? ["Reviewed", formatDate(subscriber.reviewedAt)] : null,
+                    subscriber.lastDeliveryAt ? [
+                      "Last delivery",
+                      `${deliveryStatusLabel(subscriber.lastDeliveryStatus)}${subscriber.lastDeliveryIssueTitle ? ` for ${subscriber.lastDeliveryIssueTitle}` : ""} on ${formatDate(subscriber.lastDeliveryAt)}`
+                    ] : null,
+                    subscriber.lastDeliveryError ? ["Delivery note", subscriber.lastDeliveryError] : null
+                  ].filter(Boolean);
 
                   return (
                   <article className="admin-list-row" key={subscriber.id}>
                     <div className="newsletter-subscriber-main">
                       <strong>{subscriber.displayName || subscriber.email}</strong>
                       <span>{subscriber.email}</span>
-                      <span>{subscriber.platoon || "No platoon provided"}</span>
-                      <span>Supervisor: {subscriber.supervisorName || "Not provided"}</span>
-                      {subscriber.reviewNote ? <span>Review note: {subscriber.reviewNote}</span> : null}
-                      {subscriber.reviewedAt ? <span>Reviewed {formatDate(subscriber.reviewedAt)}</span> : null}
+                      <span>{subscriber.platoon || "No connection provided"}</span>
+                      <span>Unit contact: {subscriber.supervisorName || "Not provided"}</span>
+                      {details.length ? (
+                        <details className="newsletter-subscriber-details">
+                          <summary>Details</summary>
+                          <dl>
+                            {details.map(([label, value]) => (
+                              <div key={label}>
+                                <dt>{label}</dt>
+                                <dd>{value}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </details>
+                      ) : null}
                       {canApprove || canReject ? (
                         <label className="newsletter-review-note">
                           <span>Optional review note</span>
@@ -3815,8 +5100,8 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               </div>
             ) : (
               <EmptyPanel
-                title={subscribers.length ? "No matching subscribers" : "No subscribers yet"}
-                body={subscribers.length ? "Adjust the search or status filter." : "Public newsletter signups will appear here."}
+                title={subscriberEmptyTitle}
+                body={subscriberEmptyBody}
               />
             )}
           </section>
@@ -3828,6 +5113,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 }
 
 function PlatformPanel({ token, me, onRefresh, onLogout }) {
+  const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [tenants, setTenants] = useState([]);
   const [form, setForm] = useState({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
   const [query, setQuery] = useState("");
@@ -3835,9 +5121,12 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [activeView, setActiveView] = useState("dashboard");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [status, setStatus] = useState({ text: "Loading platoons...", isError: false });
   const [isSaving, setIsSaving] = useState(false);
   const userMenuRef = useRef(null);
+  const mobileNavToggleRef = useRef(null);
+  const mobileNavCloseRef = useRef(null);
   const platformUserName = me?.user?.display_name || me?.user?.email || "Admin user";
   const platformUserEmail = me?.user?.email || me?.identity?.email || "";
   const platformUserInitial = String(platformUserName || "A").slice(0, 1).toUpperCase();
@@ -3846,14 +5135,15 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const activeTenants = tenants.filter(tenant => tenant.status === "active");
   const recentlyCreatedTenants = [...tenants]
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-    .slice(0, 4);
-  const normalizedQuery = query.trim().toLowerCase();
+    .slice(0, isMobileViewport ? 2 : 4);
   const searchMatchedTenants = tenants.filter(tenant => {
-    const matchesQuery = !normalizedQuery || [
+    const matchesQuery = matchesSearch([
       tenant.name,
       tenant.slug,
-      tenant.status
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
+      tenant.status,
+      tenantHost(tenant),
+      "876en-platoon-admin"
+    ], query);
     return matchesQuery;
   });
   const visibleTenants = searchMatchedTenants.filter(tenant => {
@@ -3878,6 +5168,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     ["QA auth", appConfig.enableQaAuth ? "enabled" : "disabled"],
     ["Auth diagnostics", appConfig.enableAuthDiagnostics ? "enabled" : "disabled"],
     ["Demo fallback", appConfig.enableDemoFallback ? "enabled" : "disabled"],
+    ["Last request ID", readLastApiRequestId() || "none recorded"],
     ["Signed in as", me?.user?.email || me?.identity?.email || "unknown"]
   ];
   const pageMeta = {
@@ -3950,10 +5241,6 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     return `https://${host}/`;
   }
 
-  function tenantAdminHref(tenant) {
-    return `${tenantWorkspaceHref(tenant)}#/admin`;
-  }
-
   async function copyTenantLink(tenant) {
     const host = tenantHost(tenant);
     const copied = await copyText(tenantWorkspaceHref(tenant));
@@ -3979,10 +5266,8 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   }, [token]);
 
   useEffect(() => {
-    if (!isUserMenuOpen) return undefined;
-
     function handlePointerDown(event) {
-      if (!userMenuRef.current?.contains(event.target)) {
+      if (isUserMenuOpen && !userMenuRef.current?.contains(event.target)) {
         setIsUserMenuOpen(false);
       }
     }
@@ -3990,21 +5275,39 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     function handleKeyDown(event) {
       if (event.key === "Escape") {
         setIsUserMenuOpen(false);
+        if (isMobileNavOpen) closePlatformNav();
       }
     }
 
-    document.addEventListener("pointerdown", handlePointerDown);
+    if (isUserMenuOpen) document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
 
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isUserMenuOpen]);
+  }, [isUserMenuOpen, isMobileNavOpen, isMobileViewport]);
 
   async function refreshPlatform() {
     await loadTenants();
     onRefresh?.();
+  }
+
+  function selectPlatformView(view) {
+    setActiveView(view);
+    closePlatformNav(false);
+  }
+
+  function openPlatformNav() {
+    setIsMobileNavOpen(true);
+    window.requestAnimationFrame(() => mobileNavCloseRef.current?.focus());
+  }
+
+  function closePlatformNav(restoreFocus = true) {
+    setIsMobileNavOpen(false);
+    if (restoreFocus && isMobileViewport) {
+      window.requestAnimationFrame(() => mobileNavToggleRef.current?.focus());
+    }
   }
 
   function updateForm(key, value) {
@@ -4137,22 +5440,26 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   <span>{host}</span>
                 </div>
               </div>
-              <span className="platform-domain">{host}</span>
-              <span className="platform-table-number">{tenant.adminCount || 0}</span>
-              <span className="platform-table-number">{tenant.memberCount || 0}</span>
-              <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
-              <span className="platform-table-date">{formatShortDate(tenant.createdAt)}</span>
-              <div className="platform-actions">
+              <span className="platform-domain" data-label="Subdomain"><span className="mobile-field-label">Subdomain</span><span>{host}</span></span>
+              <span className="platform-table-number" data-label="Admins"><span className="mobile-field-label">Admins</span><span>{tenant.adminCount || 0}</span></span>
+              <span className="platform-table-number" data-label="Members"><span className="mobile-field-label">Members</span><span>{tenant.memberCount || 0}</span></span>
+              <span className="platform-status-field" data-label="Status"><span className="mobile-field-label">Status</span><span className={`status-pill ${tenant.status}`}>{tenant.status}</span></span>
+              <span className="platform-table-date" data-label="Created"><span className="mobile-field-label">Created</span><span>{formatShortDate(tenant.createdAt)}</span></span>
+              <div className="platform-actions" data-label="Actions">
+                <span className="mobile-field-label">Actions</span>
                 <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${host} workspace`}>
                   <span>Open workspace</span>
                 </a>
-                <a className="btn btn-secondary btn-small platform-admin-link" href={tenantAdminHref(tenant)} aria-label={`Open ${host} admin view`}>
-                  <span>Admin view</span>
-                </a>
-                <button className="btn btn-secondary btn-small platform-copy-link" type="button" onClick={() => copyTenantLink(tenant)}>
+                <button className="btn btn-secondary btn-small platform-copy-link desktop-secondary-action" type="button" onClick={() => copyTenantLink(tenant)}>
                   <Copy aria-hidden="true" />
                   <span>Copy link</span>
                 </button>
+                <ResponsiveActionMenu label="More" ariaLabel={`More actions for ${tenantDisplayName(tenant)}`} className="mobile-secondary-actions platform-row-action-menu">
+                  <button type="button" onClick={() => copyTenantLink(tenant)}>
+                    <Copy aria-hidden="true" />
+                    <span>Copy link</span>
+                  </button>
+                </ResponsiveActionMenu>
               </div>
             </article>
           );
@@ -4162,11 +5469,15 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   }
 
   return (
-    <div className="platform-shell">
-      <aside className="platform-sidebar">
+    <div className={`platform-shell ${isMobileNavOpen ? "platform-nav-open" : ""}`}>
+      <button className="platform-sidebar-backdrop" type="button" aria-label="Close platform menu" onClick={() => closePlatformNav()} />
+      <aside className="platform-sidebar" aria-hidden={isMobileViewport && !isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && !isMobileNavOpen ? true : undefined}>
         <div className="platform-brand">
           <ShieldCheck aria-hidden="true" />
-          <strong>876 Inventory</strong>
+          <strong>{APP_NAME}</strong>
+          <button ref={mobileNavCloseRef} className="platform-mobile-nav-close" type="button" aria-label="Close platform menu" onClick={() => closePlatformNav()}>
+            <X aria-hidden="true" />
+          </button>
         </div>
 
         <nav className="platform-nav" aria-label="Platform admin">
@@ -4177,7 +5488,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 className={activeView === item.id ? "active" : ""}
                 type="button"
                 key={item.id}
-                onClick={() => setActiveView(item.id)}
+                onClick={() => selectPlatformView(item.id)}
               >
                 <Icon aria-hidden="true" />
                 <span>{item.label}</span>
@@ -4200,9 +5511,19 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
 
       <main className="platform-main">
         <header className="platform-topbar">
-          <div />
+          <button
+            ref={mobileNavToggleRef}
+            className="platform-mobile-nav-toggle"
+            type="button"
+            aria-label="Open platform menu"
+            aria-expanded={isMobileNavOpen}
+            onClick={openPlatformNav}
+          >
+            <Menu aria-hidden="true" />
+          </button>
+          <strong className="platform-mobile-title">{APP_NAME}</strong>
           <div className="leader-user-actions">
-            <button className="icon-button" type="button" onClick={refreshPlatform} aria-label="Refresh">
+            <button className="icon-button platform-topbar-refresh" type="button" onClick={refreshPlatform} aria-label="Refresh">
               <RefreshCw aria-hidden="true" />
             </button>
             <div className="leader-popover-anchor platform-user-menu" ref={userMenuRef}>
@@ -4231,6 +5552,13 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                     </div>
                   </div>
                   <div className="leader-menu-actions">
+                    <button type="button" onClick={() => {
+                      refreshPlatform();
+                      setIsUserMenuOpen(false);
+                    }}>
+                      <RefreshCw aria-hidden="true" />
+                      <span>Refresh platform</span>
+                    </button>
                     <button type="button" onClick={openAppLauncher}>
                       <LogIn aria-hidden="true" />
                       <span>App portal</span>
@@ -4251,7 +5579,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 </section>
               ) : null}
             </div>
-            <button className="btn btn-secondary btn-small" type="button" onClick={onLogout}>
+            <button className="btn btn-secondary btn-small platform-topbar-signout" type="button" onClick={onLogout}>
               <LogOut aria-hidden="true" />
               <span>Sign out</span>
             </button>
@@ -4266,7 +5594,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
             </div>
             <div className="platform-heading-actions">
               {activeView === "dashboard" ? (
-                <button className="btn btn-secondary" type="button" onClick={openNewsletter}>
+                <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={openNewsletter}>
                   <MailPlus aria-hidden="true" />
                   <span>Newsletter</span>
                 </button>
@@ -4276,6 +5604,14 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   <Plus aria-hidden="true" />
                   <span>Create platoon</span>
                 </button>
+              ) : null}
+              {activeView === "dashboard" ? (
+                <ResponsiveActionMenu className="mobile-secondary-actions">
+                  <button type="button" onClick={openNewsletter}>
+                    <MailPlus aria-hidden="true" />
+                    <span>Newsletter</span>
+                  </button>
+                </ResponsiveActionMenu>
               ) : null}
             </div>
           </div>
@@ -4334,14 +5670,19 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               {renderStats()}
               <section className="platform-table-card">
                 <div className="platform-table-toolbar">
-                  <label className="platform-search">
+                  <div className="platform-search" role="search">
                     <Search aria-hidden="true" />
                     <input
+                      type="search"
+                      aria-label="Search platoons"
                       value={query}
                       placeholder="Search platoons by name or subdomain..."
                       onChange={event => setQuery(event.target.value)}
                     />
-                  </label>
+                    {query ? (
+                      <button type="button" aria-label="Clear search" onClick={() => setQuery("")}><X aria-hidden="true" /></button>
+                    ) : null}
+                  </div>
                   <select className="select platform-filter" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}>
                     <option value="all">All statuses</option>
                     <option value="active">Active</option>
@@ -4356,14 +5697,19 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           {activeView === "users" ? (
             <section className="platform-table-card">
               <div className="platform-table-toolbar">
-                <label className="platform-search">
+                <div className="platform-search" role="search">
                   <Search aria-hidden="true" />
                   <input
+                    type="search"
+                    aria-label="Search workspace access"
                     value={query}
                     placeholder="Search access by platoon or subdomain..."
                     onChange={event => setQuery(event.target.value)}
                   />
-                </label>
+                  {query ? (
+                    <button type="button" aria-label="Clear search" onClick={() => setQuery("")}><X aria-hidden="true" /></button>
+                  ) : null}
+                </div>
               </div>
               <div className="platform-table platform-user-table" role="table" aria-label="Workspace access">
                 <div className="platform-table-head" role="row">
@@ -4383,21 +5729,25 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                         <span>{tenantHost(tenant)}</span>
                       </div>
                     </div>
-                    <span className="platform-domain">876en-platoon-admin</span>
-                    <span className="platform-table-number">{tenant.memberCount || 0}</span>
-                    <span className="platform-table-number">{tenant.adminCount || 0}</span>
-                    <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
-                    <div className="platform-actions">
+                    <span className="platform-domain" data-label="Admin group"><span className="mobile-field-label">Admin group</span><span>876en-platoon-admin</span></span>
+                    <span className="platform-table-number" data-label="Members"><span className="mobile-field-label">Members</span><span>{tenant.memberCount || 0}</span></span>
+                    <span className="platform-table-number" data-label="Admins"><span className="mobile-field-label">Admins</span><span>{tenant.adminCount || 0}</span></span>
+                    <span className="platform-status-field" data-label="Status"><span className="mobile-field-label">Status</span><span className={`status-pill ${tenant.status}`}>{tenant.status}</span></span>
+                    <div className="platform-actions" data-label="Actions">
+                      <span className="mobile-field-label">Actions</span>
                       <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${tenantHost(tenant)} workspace`}>
                         <span>Open workspace</span>
                       </a>
-                      <a className="btn btn-secondary btn-small platform-admin-link" href={tenantAdminHref(tenant)} aria-label={`Open ${tenantHost(tenant)} admin view`}>
-                        <span>Admin view</span>
-                      </a>
-                      <button className="btn btn-secondary btn-small platform-copy-link" type="button" onClick={() => copyTenantLink(tenant)}>
+                      <button className="btn btn-secondary btn-small platform-copy-link desktop-secondary-action" type="button" onClick={() => copyTenantLink(tenant)}>
                         <Copy aria-hidden="true" />
                         <span>Copy link</span>
                       </button>
+                      <ResponsiveActionMenu label="More" ariaLabel={`More actions for ${tenantDisplayName(tenant)}`} className="mobile-secondary-actions platform-row-action-menu">
+                        <button type="button" onClick={() => copyTenantLink(tenant)}>
+                          <Copy aria-hidden="true" />
+                          <span>Copy link</span>
+                        </button>
+                      </ResponsiveActionMenu>
                     </div>
                   </article>
                 ))}
@@ -4545,41 +5895,37 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   );
 }
 
-function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessions, onOpenUpload, onOpenReview }) {
+function LeaderOverviewPanel({
+  token,
+  tenantSlug,
+  me,
+  query,
+  canManage,
+  preferredSessionId,
+  onSessionChange,
+  onCreateSession,
+  onOpenSessions,
+  onOpenSession,
+  onOpenUpload,
+  onOpenReview
+}) {
   const [sessions, setSessions] = useState([]);
   const [pendingItems, setPendingItems] = useState([]);
+  const [assignmentList, setAssignmentList] = useState("available");
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading dashboard...", isError: false });
+  const detailRequestRef = useRef(0);
 
   async function loadDashboard() {
     try {
       setStatus({ text: "Loading dashboard...", isError: false });
-      const sessionData = await apiRequest("/inventory/sessions", { token, tenantSlug });
+      const [sessionData, reviewData] = await Promise.all([
+        apiRequest("/inventory/sessions", { token, tenantSlug }),
+        canManage ? apiRequest("/inventory/review-queue", { token, tenantSlug }) : Promise.resolve({ submissions: [] })
+      ]);
       const loadedSessions = sortSessionsByAttention(sessionData.sessions || []);
-      const openSessions = loadedSessions.filter(session => session.status !== "closed");
-      const detailTargets = openSessions.slice(0, 3);
-      const detailResults = await Promise.all(
-        detailTargets.map(async session => ({
-          session,
-          detail: await apiRequest(`/inventory/sessions/${session.id}`, { token, tenantSlug })
-        }))
-      );
-      const rows = detailResults.flatMap(({ session, detail }) => {
-        const rowSession = detail.session || session;
-        return (detail.items || [])
-          .filter(item => !sessionItemIsComplete(item))
-          .sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b))
-          .slice(0, 4)
-          .map(item => ({ ...item, session: rowSession }));
-      });
-      let reviewRows = [];
-      if (canManage) {
-        const reviewData = await apiRequest("/inventory/review-queue", { token, tenantSlug });
-        reviewRows = reviewData.submissions || [];
-      }
       setSessions(loadedSessions);
-      setPendingItems(rows.slice(0, 5));
-      setSubmissions(reviewRows);
+      setSubmissions(reviewData.submissions || []);
       setStatus({ text: "", isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -4590,21 +5936,50 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
     loadDashboard();
   }, [tenantSlug, token, canManage]);
 
-  const normalizedQuery = query.trim().toLowerCase();
+  const hasSearchQuery = searchTerms(query).length > 0;
   const openSessions = sessions.filter(session => session.status !== "closed");
+  const activeSessions = sessions.filter(session => session.status === "active");
+  const selectedSession = activeSessions.find(session => session.id === preferredSessionId) || activeSessions[0] || null;
   const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
   const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
   const foundRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
   const overallProgress = totalRows ? Math.round((foundRows / totalRows) * 100) : 0;
 
-  function rowMatches(values) {
-    if (!normalizedQuery) return true;
-    return values
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedQuery);
-  }
+  useEffect(() => {
+    const sessionId = selectedSession?.id || "";
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    setPendingItems([]);
+    setAssignmentList("available");
+
+    if (!sessionId) return undefined;
+    if (preferredSessionId !== sessionId) onSessionChange?.(sessionId);
+
+    let ignore = false;
+    async function loadSelectedSession() {
+      try {
+        setStatus({ text: "Loading active inventory...", isError: false });
+        const detail = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
+        if (ignore || requestId !== detailRequestRef.current) return;
+        const rowSession = detail.session || selectedSession;
+        const rows = (detail.items || [])
+          .filter(item => !sessionItemIsComplete(item))
+          .sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b))
+          .map(item => ({ ...item, session: rowSession }));
+        setPendingItems(rows);
+        setStatus({ text: "", isError: false });
+      } catch (error) {
+        if (!ignore && requestId === detailRequestRef.current) {
+          setStatus({ text: getApiErrorMessage(error), isError: true });
+        }
+      }
+    }
+
+    loadSelectedSession();
+    return () => {
+      ignore = true;
+    };
+  }, [selectedSession?.id, tenantSlug, token, onSessionChange]);
 
   function itemTitle(item) {
     return item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Packet row";
@@ -4614,15 +5989,32 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
     return item.locationHint || item.inventoryItem?.currentLocation || "No location yet";
   }
 
-  const visiblePendingItems = pendingItems.filter(item => rowMatches([
-    itemTitle(item),
-    item.packetLine,
-    itemLocation(item),
-    item.status,
-    item.session?.name,
-    assignedPerson(item)
-  ]));
-  const visibleSubmissions = submissions.filter(submission => rowMatches([
+  const assignmentListOptions = [
+    ["available", "Available"],
+    ["mine", "My work"],
+    ["team", "Team"]
+  ];
+  const assignmentCounts = {
+    available: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "available").length,
+    mine: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "mine").length,
+    team: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "team").length
+  };
+  const visiblePendingItems = pendingItems
+    .filter(item => sessionItemAssignmentBucket(item, me) === assignmentList)
+    .filter(item => matchesSearch([
+      itemTitle(item),
+      item.packetLine,
+      itemLocation(item),
+      item.inventoryItem?.armyName,
+      item.inventoryItem?.lin,
+      item.inventoryItem?.nsn,
+      item.inventoryItem?.description,
+      item.status,
+      item.session?.name,
+      assignedPerson(item)
+    ], query))
+    .slice(0, 5);
+  const visibleSubmissions = submissions.filter(submission => matchesSearch([
     submission.sessionItem?.packetLine,
     submission.session?.name,
     submission.submittedByName,
@@ -4630,27 +6022,41 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
     submission.locationText,
     submission.serialNumber,
     submission.note,
-    submission.reviewNote
-  ])).slice(0, 5);
+    submission.reviewNote,
+    (submission.history || []).flatMap(historyItem => [
+      historyItem.locationText,
+      historyItem.serialNumber,
+      historyItem.note,
+      historyItem.reviewNote,
+      historyItem.submittedByName,
+      historyItem.submittedByEmail
+    ])
+  ], query)).slice(0, 5);
 
   return (
     <div className="leader-dashboard">
       <div className="leader-page-heading">
         <div>
           <h1>Leader Dashboard</h1>
-          <p>Manage inventories, review submissions, and guide your platoon.</p>
+          <p>Manage active inventories and review submitted proof.</p>
         </div>
         <div className="leader-page-actions">
           {canManage ? (
             <>
-              <button className="btn btn-primary" type="button" onClick={onOpenSessions}>
+              <button className="btn btn-primary" type="button" onClick={onCreateSession}>
                 <Plus aria-hidden="true" />
                 <span>Start new inventory</span>
               </button>
-              <button className="btn btn-secondary" type="button" onClick={onOpenUpload}>
+              <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={onOpenUpload}>
                 <FileUp aria-hidden="true" />
                 <span>Upload packet</span>
               </button>
+              <ResponsiveActionMenu className="mobile-secondary-actions">
+                <button type="button" onClick={onOpenUpload}>
+                  <FileUp aria-hidden="true" />
+                  <span>Upload packet</span>
+                </button>
+              </ResponsiveActionMenu>
             </>
           ) : (
             <button className="btn btn-primary" type="button" onClick={onOpenSessions}>
@@ -4668,7 +6074,7 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
         </div>
         <div>
           <strong>{pendingItems.length}</strong>
-          <span>Pending rows</span>
+          <span>Open items</span>
         </div>
         <div>
           <strong>{reviewRowCount}</strong>
@@ -4680,20 +6086,69 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
         </div>
       </div>
 
+      <section className="leader-card leader-active-inventory" aria-label="Active inventory">
+        <div className="leader-card-header">
+          <span className="leader-card-icon">
+            <ListChecks aria-hidden="true" />
+          </span>
+          <div>
+            <p className="eyebrow">Active inventory</p>
+            {activeSessions.length > 1 ? (
+              <select
+                className="select leader-active-inventory-select"
+                value={selectedSession?.id || ""}
+                aria-label="Active inventory"
+                onChange={event => onSessionChange?.(event.target.value)}
+              >
+                {activeSessions.map(session => (
+                  <option value={session.id} key={session.id}>{session.name}</option>
+                ))}
+              </select>
+            ) : (
+              <h2>{selectedSession?.name || "No active inventory"}</h2>
+            )}
+            <p>{selectedSession
+              ? `${countLabel(selectedSession.itemCount || 0, "item")} - ${sessionProgress(selectedSession)}% complete`
+              : "Start an inventory session to put current work on the home page."}</p>
+          </div>
+          {selectedSession ? (
+            <button className="btn btn-primary" type="button" onClick={() => onOpenSession(selectedSession.id)}>
+              <span>Continue inventory</span>
+            </button>
+          ) : canManage ? (
+            <button className="btn btn-primary" type="button" onClick={onCreateSession}>
+              <Plus aria-hidden="true" />
+              <span>Start inventory</span>
+            </button>
+          ) : null}
+        </div>
+      </section>
+
       <div className="leader-dashboard-grid">
-        <section className="leader-card">
+        <section className="leader-card" aria-label="Pending inventory results">
           <div className="leader-card-header">
             <span className="leader-card-icon">
               <Search aria-hidden="true" />
             </span>
             <div>
-              <h2>Pending</h2>
-              <p>Items that still need to be found.</p>
+              <h2>Work queue</h2>
+              <p>{selectedSession ? selectedSession.name : "No active inventory selected."}</p>
             </div>
-            <button className="btn btn-secondary btn-small" type="button" onClick={onOpenSessions}>
-              <span>View all</span>
+            <button className="btn btn-secondary btn-small" type="button" onClick={() => selectedSession ? onOpenSession(selectedSession.id) : onOpenSessions()}>
+              <span>View session</span>
             </button>
           </div>
+
+          {selectedSession ? (
+            <div className="session-filter-strip leader-work-tabs" role="group" aria-label="Dashboard work assignment lists">
+              {assignmentListOptions.map(([value, label]) => (
+                <button className={assignmentList === value ? "active" : ""} type="button" key={value} onClick={() => setAssignmentList(value)}>
+                  <span>{label}</span>
+                  <strong>{assignmentCounts[value]}</strong>
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           <div className="leader-table">
             {visiblePendingItems.length ? visiblePendingItems.map(item => {
@@ -4713,18 +6168,31 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
                   </div>
                   <span>{itemLocation(item)}</span>
                   <span className={`status-pill ${item.status}`}>{item.status}</span>
-                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenSessions}>
-                    <span>Open</span>
+                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(item.session?.id, item.id)}>
+                    <span>Open item</span>
                   </button>
                 </article>
               );
             }) : (
-              <EmptyPanel title="Nothing pending" body="Open a session to add packet rows or review completed work." />
+              <EmptyPanel
+                title={hasSearchQuery
+                  ? "No matching work"
+                  : assignmentList === "available"
+                    ? "Nothing available to claim"
+                    : assignmentList === "mine"
+                      ? "Nothing assigned to you"
+                      : "No team assignments"}
+                body={hasSearchQuery
+                  ? "Clear the dashboard search or try a different item or location."
+                  : selectedSession
+                    ? "Choose another assignment list or open the session to see completed items."
+                    : "Start or reopen an inventory session to see current work."}
+              />
             )}
           </div>
         </section>
 
-        <section className="leader-card">
+        <section className="leader-card" aria-label="Dashboard review results">
           <div className="leader-card-header">
             <span className="leader-card-icon">
               <ClipboardList aria-hidden="true" />
@@ -4763,8 +6231,8 @@ function LeaderOverviewPanel({ token, tenantSlug, query, canManage, onOpenSessio
               );
             }) : (
               <EmptyPanel
-                title={canManage ? "No proof waiting" : "Review is leader-only"}
-                body={canManage ? "New submissions will appear here." : "Open inventory sessions to see assigned work."}
+                title={canManage && hasSearchQuery ? "No matching review work" : canManage ? "No proof waiting" : "Review is leader-only"}
+                body={canManage && hasSearchQuery ? "Clear the dashboard search or try a packet line, submitter, serial, or proof note." : canManage ? "New submissions will appear here." : "Open inventory sessions to see assigned work."}
               />
             )}
           </div>
@@ -5019,12 +6487,773 @@ function TenantGuidancePanel({ token, tenantSlug, canManage, onOpenSessions, onO
   );
 }
 
+const tenantNotificationOptions = [
+  { key: "proof_submitted", group: "inApp", label: "Proof submitted", copy: "Alert platoon admins when proof is waiting for review." },
+  { key: "proof_requests", group: "inApp", label: "More proof requested", copy: "Alert the submitter when a platoon admin asks for more detail." },
+  { key: "open_rows", group: "inApp", label: "Open rows", copy: "Show active sessions that still have unchecked work." },
+  { key: "packet_imports", group: "inApp", label: "Packet imports", copy: "Show recent packet imports in the notification panel." },
+  { key: "session_closed", group: "inApp", label: "Session closed", copy: "Show recently closed sessions that are ready for records." },
+  { key: "email_proof_submitted", group: "email", label: "Email platoon admins", copy: "Email active platoon admins when new proof is submitted." },
+  { key: "email_proof_requests", group: "email", label: "Email proof requests", copy: "Email the submitter when more proof is requested." }
+];
+
+function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
+  const [settingsData, setSettingsData] = useState(null);
+  const [draft, setDraft] = useState({ displayName: "", notificationPreferences: {} });
+  const [isSaving, setIsSaving] = useState(false);
+  const [status, setStatus] = useState({ text: "Loading settings...", isError: false });
+  const settingsLoadSequence = useRef(0);
+
+  function applySettings(settings) {
+    const loaded = settings || {};
+    setSettingsData(loaded);
+    setDraft({
+      displayName: loaded.displayName || "",
+      notificationPreferences: { ...(loaded.notificationPreferences || {}) }
+    });
+  }
+
+  async function loadSettings() {
+    const loadSequence = ++settingsLoadSequence.current;
+    try {
+      setStatus({ text: "Loading settings...", isError: false });
+      const data = await apiRequest("/tenant/settings", { token, tenantSlug });
+      if (loadSequence !== settingsLoadSequence.current) return;
+      applySettings(data.settings);
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      if (loadSequence !== settingsLoadSequence.current) return;
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  useEffect(() => {
+    loadSettings();
+  }, [tenantSlug, token]);
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    try {
+      settingsLoadSequence.current += 1;
+      setIsSaving(true);
+      setStatus({ text: "Saving workspace settings...", isError: false });
+      const data = await apiRequest("/tenant/settings", {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: {
+          displayName: draft.displayName.trim(),
+          notificationPreferences: draft.notificationPreferences
+        }
+      });
+      applySettings(data.settings);
+      setStatus({ text: "Workspace settings saved.", isError: false });
+      onSaved?.(data.settings);
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function copyWorkspaceUrl() {
+    const copied = await copyText(settingsData?.workspace?.url || "");
+    setStatus({ text: copied ? "Workspace URL copied." : "Could not copy the workspace URL.", isError: !copied });
+  }
+
+  function renderPreferenceGroup(group, legend, copy) {
+    return (
+      <fieldset className="settings-preference-group">
+        <legend>{legend}</legend>
+        <p>{copy}</p>
+        <div className="settings-toggle-list">
+          {tenantNotificationOptions.filter(option => option.group === group).map(option => (
+            <label className="settings-toggle" key={option.key}>
+              <input
+                type="checkbox"
+                checked={draft.notificationPreferences[option.key] !== false}
+                onChange={event => setDraft(current => ({
+                  ...current,
+                  notificationPreferences: {
+                    ...current.notificationPreferences,
+                    [option.key]: event.target.checked
+                  }
+                }))}
+              />
+              <span>
+                <strong>{option.label}</strong>
+                <small>{option.copy}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    );
+  }
+
+  return (
+    <div className="leader-dashboard tenant-settings-page">
+      <div className="leader-page-heading">
+        <div>
+          <h1>Workspace Settings</h1>
+          <p>Manage the workspace name and workflow notifications.</p>
+        </div>
+        <button className="btn btn-secondary" type="button" onClick={loadSettings} disabled={isSaving}>
+          <RefreshCw aria-hidden="true" />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <form className="settings-form" onSubmit={saveSettings}>
+        <section className="leader-card settings-section">
+          <div className="leader-card-header">
+            <span className="leader-card-icon"><Settings aria-hidden="true" /></span>
+            <div>
+              <h2>Workspace profile</h2>
+              <p>The name shown in navigation, invitations, and workflow email.</p>
+            </div>
+          </div>
+          <label className="field-label" htmlFor="tenantDisplayName">Display name</label>
+          <input
+            id="tenantDisplayName"
+            className="input"
+            required
+            minLength={2}
+            maxLength={120}
+            value={draft.displayName}
+            onChange={event => setDraft(current => ({ ...current, displayName: event.target.value }))}
+          />
+          <div className="settings-workspace-link">
+            <div>
+              <span>Workspace link</span>
+              <a href={settingsData?.workspace?.url || "#"}>{settingsData?.workspace?.url || "Loading..."}</a>
+            </div>
+            <button className="btn btn-secondary" type="button" onClick={copyWorkspaceUrl} disabled={!settingsData?.workspace?.url}>
+              <Copy aria-hidden="true" />
+              <span>Copy workspace URL</span>
+            </button>
+          </div>
+        </section>
+
+        <section className="leader-card settings-section">
+          <div className="leader-card-header">
+            <span className="leader-card-icon"><Bell aria-hidden="true" /></span>
+            <div>
+              <h2>Notification preferences</h2>
+              <p>These tenant-wide defaults apply to every member in this workspace.</p>
+            </div>
+          </div>
+          <div className="settings-preference-grid">
+            {renderPreferenceGroup("inApp", "In-app alerts", "Choose which workflow events appear under the bell.")}
+            {renderPreferenceGroup("email", "Email alerts", "Choose which proof events send workflow email when SMTP is configured.")}
+          </div>
+        </section>
+
+        <div className="settings-save-bar">
+          <StatusLine status={status} />
+          <button className="btn btn-primary" type="submit" disabled={isSaving || !draft.displayName.trim()}>
+            <CheckCircle2 aria-hidden="true" />
+            <span>{isSaving ? "Saving..." : "Save settings"}</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ReportsPanel({ token, tenantSlug, query }) {
+  const [sessions, setSessions] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [sessionFilter, setSessionFilter] = useState("all");
+  const [lifecycleFilter, setLifecycleFilter] = useState("all");
+  const [resultFilter, setResultFilter] = useState("all");
+  const [isPrintTarget, setIsPrintTarget] = useState(false);
+  const [status, setStatus] = useState({ text: "Loading reports...", isError: false });
+
+  async function loadReports() {
+    try {
+      setStatus({ text: "Loading reports...", isError: false });
+      const data = await apiRequest("/inventory/reports", { token, tenantSlug });
+      setSessions(data.sessions || []);
+      setRows(data.rows || []);
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setSessions([]);
+      setRows([]);
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    }
+  }
+
+  useEffect(() => {
+    loadReports();
+  }, [tenantSlug, token]);
+
+  const scopedRows = useMemo(() => rows.filter(item => {
+    if (sessionFilter !== "all" && item.sessionId !== sessionFilter) return false;
+    if (lifecycleFilter === "open" && item.sessionStatus === "closed") return false;
+    if (lifecycleFilter === "closed" && item.sessionStatus !== "closed") return false;
+    const latest = latestSubmission(item);
+    return matchesSearch([
+      item.sessionName,
+      itemDisplayName(item),
+      item.packetLine,
+      item.status,
+      item.sessionStatus,
+      item.inventoryItem?.armyName,
+      item.inventoryItem?.lin,
+      item.inventoryItem?.nsn,
+      item.inventoryItem?.description,
+      item.locationHint,
+      item.inventoryItem?.currentLocation,
+      item.assignedToName,
+      item.assignedToEmail,
+      latest?.status,
+      latest?.reviewState,
+      latest?.submittedByName,
+      latest?.submittedByEmail,
+      latest?.locationText,
+      latest?.serialNumber,
+      latest?.note,
+      latest?.reviewNote
+    ], query);
+  }), [rows, sessionFilter, lifecycleFilter, query]);
+
+  const resultCounts = useMemo(() => ({
+    all: scopedRows.length,
+    found: scopedRows.filter(item => reportItemOutcome(item) === "found").length,
+    missing: scopedRows.filter(item => reportItemOutcome(item) === "not_found").length,
+    proof: scopedRows.filter(item => ["pending", "request_more_info", "rejected"].includes(latestSubmission(item)?.reviewState)).length
+  }), [scopedRows]);
+
+  const visibleRows = useMemo(() => scopedRows.filter(item => {
+    if (resultFilter === "found") return reportItemOutcome(item) === "found";
+    if (resultFilter === "missing") return reportItemOutcome(item) === "not_found";
+    if (resultFilter === "proof") return ["pending", "request_more_info", "rejected"].includes(latestSubmission(item)?.reviewState);
+    return true;
+  }), [scopedRows, resultFilter]);
+  const summary = useMemo(() => reportSummary(visibleRows), [visibleRows]);
+  const renderedRows = isPrintTarget ? visibleRows : visibleRows.slice(0, 250);
+
+  function exportReportsCsv() {
+    try {
+      const selected = sessions.find(session => session.id === sessionFilter);
+      const name = selected ? `${safeFileNamePart(selected.name)}-report.csv` : "shadow-tracer-reports.csv";
+      downloadTextFile(name, buildReportsCsv(visibleRows), "text/csv;charset=utf-8");
+      setStatus({ text: "Report CSV exported.", isError: false });
+    } catch {
+      setStatus({ text: "Could not export the report from this browser.", isError: true });
+    }
+  }
+
+  function printSummary() {
+    setIsPrintTarget(true);
+    setStatus({ text: "Preparing report for print...", isError: false });
+    window.setTimeout(() => {
+      window.print();
+      window.setTimeout(() => {
+        setIsPrintTarget(false);
+        setStatus(current => current.text === "Preparing report for print..." ? { text: "", isError: false } : current);
+      }, 500);
+    }, 0);
+  }
+
+  return (
+    <div className={`leader-dashboard reports-page ${isPrintTarget ? "reports-print-target" : ""}`}>
+      <div className="leader-page-heading reports-screen-only">
+        <div>
+          <h1>Reports</h1>
+          <p>Review outcomes and proof status across inventory sessions.</p>
+        </div>
+        <div className="leader-page-actions">
+          <button className="btn btn-primary" type="button" onClick={exportReportsCsv} disabled={!visibleRows.length}>
+            <Download aria-hidden="true" /><span>Export CSV</span>
+          </button>
+          <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={loadReports}>
+            <RefreshCw aria-hidden="true" /><span>Refresh</span>
+          </button>
+          <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={printSummary} disabled={!visibleRows.length}>
+            <Printer aria-hidden="true" /><span>Print summary</span>
+          </button>
+          <ResponsiveActionMenu className="mobile-secondary-actions">
+            <button type="button" onClick={loadReports}>
+              <RefreshCw aria-hidden="true" /><span>Refresh report</span>
+            </button>
+            <button type="button" onClick={printSummary} disabled={!visibleRows.length}>
+              <Printer aria-hidden="true" /><span>Print summary</span>
+            </button>
+          </ResponsiveActionMenu>
+        </div>
+      </div>
+
+      <section className="leader-card reports-filter-card reports-screen-only" aria-label="Report filters">
+        <div className="reports-filter-grid">
+          <label>
+            <span>Session</span>
+            <select className="select" value={sessionFilter} onChange={event => setSessionFilter(event.target.value)}>
+              <option value="all">All sessions</option>
+              {sessions.map(session => <option value={session.id} key={session.id}>{session.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select className="select" value={lifecycleFilter} onChange={event => setLifecycleFilter(event.target.value)}>
+              <option value="all">Any lifecycle</option>
+              <option value="open">Open sessions</option>
+              <option value="closed">Closed sessions</option>
+            </select>
+          </label>
+        </div>
+        <div className="reports-result-filters" role="group" aria-label="Proof status and outcome filters">
+          {[
+            ["all", "All"],
+            ["found", "Found"],
+            ["missing", "Missing"],
+            ["proof", "Proof work"]
+          ].map(([value, label]) => (
+            <button className={resultFilter === value ? "active" : ""} type="button" key={value} onClick={() => setResultFilter(value)}>
+              <span>{label}</span><strong>{resultCounts[value]}</strong>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="reports-print-header">
+        <strong>Shadow Tracer inventory report</strong>
+        <span>{sessions.find(session => session.id === sessionFilter)?.name || "All sessions"}</span>
+        <span>Generated {formatDate(new Date())}</span>
+      </section>
+
+      <div className="reports-summary-grid" role="region" aria-label="Report summary">
+        <div><strong>{summary.total}</strong><span>Rows</span></div>
+        <div><strong>{summary.resolved}</strong><span>Resolved</span><small>{summary.completion}%</small></div>
+        <div><strong>{summary.found}</strong><span>Found</span></div>
+        <div><strong>{summary.missing}</strong><span>Missing</span></div>
+        <div><strong>{summary.proofWork}</strong><span>Proof work</span></div>
+      </div>
+      <div className="reports-breakdown">
+        <span>{summary.mismatch} mismatch</span>
+        <span>{summary.unchecked} unchecked/in review</span>
+      </div>
+
+      <section className="leader-card reports-results" aria-label="Report results">
+        <div className="reports-table reports-table-header">
+          <span>Session</span><span>Item</span><span>Outcome</span><span>Proof status</span><span>Location / serial</span>
+        </div>
+        {visibleRows.length ? renderedRows.map(item => {
+          const latest = latestSubmission(item);
+          const location = latest?.locationText || item.inventoryItem?.currentLocation || item.locationHint || "No location";
+          const displayName = itemDisplayName(item);
+          return (
+            <article className="reports-table reports-table-row" key={item.id}>
+              <div data-label="Session"><span className="mobile-field-label">Session</span><span className="reports-field-value"><strong>{item.sessionName}</strong><small>{formatItemStatus(item.sessionStatus)}</small></span></div>
+              <div data-label="Item">
+                <span className="mobile-field-label">Item</span>
+                <span className="reports-field-value"><strong>{displayName}</strong>{item.packetLine && item.packetLine !== displayName ? <small>{item.packetLine}</small> : null}</span>
+              </div>
+              <div data-label="Outcome"><span className="mobile-field-label">Outcome</span><span className={`status-pill ${reportItemOutcome(item)}`}>{formatItemStatus(reportItemOutcome(item))}</span></div>
+              <div data-label="Proof status"><span className="mobile-field-label">Proof status</span><span className={`status-pill ${latest?.reviewState || "unchecked"}`}>{latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof"}</span></div>
+              <div data-label="Location / serial"><span className="mobile-field-label">Location / serial</span><span className="reports-field-value"><span>{location}</span>{latest?.serialNumber ? <small>Serial: {latest.serialNumber}</small> : null}</span></div>
+            </article>
+          );
+        }) : (
+          <EmptyPanel title="No report rows" body="Adjust the session, status, proof, or workspace search filters." />
+        )}
+        {!isPrintTarget && visibleRows.length > renderedRows.length ? (
+          <div className="reports-row-limit">Showing the first {renderedRows.length.toLocaleString()} rows. Export CSV or narrow the filters for the full result.</div>
+        ) : null}
+      </section>
+
+      <StatusLine status={status} />
+    </div>
+  );
+}
+
+const ACTIVITY_DETAIL_LABELS = {
+  count: "Rows",
+  matchedCount: "Matched rows",
+  sessionName: "Session",
+  packetLine: "Packet row",
+  expectedQty: "Expected quantity",
+  locationHint: "Location hint",
+  sourceName: "Source",
+  status: "Status",
+  decision: "Decision",
+  role: "Role",
+  email: "Email",
+  displayName: "Name",
+  assigneeName: "Assigned to",
+  assigneeEmail: "Assignee email",
+  locationText: "Location",
+  serialNumber: "Serial number",
+  requestedFields: "Requested fields",
+  changedFields: "Changed fields",
+  previousRole: "Previous role",
+  previousStatus: "Previous status",
+  assignedToEmail: "Assigned to",
+  assignedToRole: "Assigned role",
+  note: "Note",
+  message: "Request",
+  photoCount: "Photos",
+  mediaUploadCount: "Attachments",
+  length: "Characters",
+  expiresAt: "Expires",
+  purpose: "Purpose",
+  mimeType: "File type",
+  sizeBytes: "File size (bytes)",
+  attachedToType: "Attached to",
+  ownerOverride: "Admin override",
+  adminEmail: "Initial admin",
+  hostname: "Hostname",
+  slug: "Slug"
+};
+
+function activityCategoryFor(event) {
+  if (event?.category) return String(event.category).toLowerCase();
+  const action = String(event?.action || "");
+  if (action.startsWith("member.") || action.startsWith("invitation.")) return "access";
+  if (action.startsWith("tenant.") || action.startsWith("tenant_")) return "workspace";
+  if (action.startsWith("media_upload.")) return "files";
+  return "workflow";
+}
+
+function activityCategoryLabel(value) {
+  return {
+    workflow: "Workflow",
+    access: "Access",
+    workspace: "Workspace",
+    files: "Files / system",
+    other: "Other"
+  }[String(value || "").toLowerCase()] || formatRole(value || "Activity");
+}
+
+function activityActionLabel(action) {
+  return String(action || "Activity")
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function activityActorName(event) {
+  return event?.actor?.displayName || event?.actor?.email || "System";
+}
+
+function activityContextName(event) {
+  return event?.context?.sessionName || event?.details?.sessionName || event?.details?.name || "the inventory session";
+}
+
+function activityPacketRow(event) {
+  return event?.context?.packetLine || event?.details?.packetLine || "a packet row";
+}
+
+function activitySentence(event) {
+  const actor = activityActorName(event);
+  const details = event?.details || {};
+  const sessionName = activityContextName(event);
+  const packetRow = activityPacketRow(event);
+  const action = event?.action;
+
+  switch (action) {
+    case "inventory_session.created":
+      return `${actor} created ${sessionName}.`;
+    case "inventory_session.updated":
+      return `${actor} updated ${sessionName}${details.status ? ` to ${formatItemStatus(details.status)}` : ""}.`;
+    case "inventory_session.deleted":
+      return `${actor} deleted ${sessionName}.`;
+    case "session_items.bulk_created":
+      return `${actor} imported ${Number(details.count || 0).toLocaleString()} rows${details.sourceName ? ` from ${details.sourceName}` : ""} into ${sessionName}.`;
+    case "session_item.created":
+      return `${actor} added ${packetRow} to ${sessionName}.`;
+    case "session_item.assigned":
+      return `${actor} assigned ${packetRow}${details.assignedToEmail ? ` to ${details.assignedToEmail}` : ""}.`;
+    case "session_item.assignment_cleared":
+      return `${actor} cleared the assignment for ${packetRow}.`;
+    case "session_item.direct_check":
+      return `${actor} marked ${packetRow}${details.status ? ` ${formatItemStatus(details.status)}` : ""}.`;
+    case "submission.created":
+      return `${actor} submitted proof for ${packetRow}.`;
+    case "submission.reviewed":
+      if (details.decision === "approved") return `${actor} approved proof for ${packetRow}.`;
+      if (details.decision === "rejected") return `${actor} rejected proof for ${packetRow}.`;
+      if (details.decision === "request_more_info") return `${actor} requested more proof for ${packetRow}.`;
+      return `${actor} reviewed proof for ${packetRow}.`;
+    case "evidence_request.created":
+      return `${actor} requested more proof for ${packetRow}.`;
+    case "member.added":
+      return `${actor} added ${details.displayName || details.email || "a member"}${details.role ? ` as ${formatRole(details.role)}` : ""}.`;
+    case "member.updated":
+      return `${actor} updated access for ${details.displayName || details.email || "a member"}.`;
+    case "member.disabled":
+      return `${actor} disabled access for ${details.displayName || details.email || "a member"}.`;
+    case "invitation.created":
+      return `${actor} invited ${details.email || "a helper"}${details.role ? ` as ${formatRole(details.role)}` : ""}.`;
+    case "invitation.resent":
+      return `${actor} resent the invitation to ${details.email || "a helper"}.`;
+    case "invitation.link_refreshed":
+      return `${actor} refreshed the invitation link for ${details.email || "a helper"}.`;
+    case "invitation.revoked":
+      return `${actor} revoked the invitation for ${details.email || "a helper"}.`;
+    case "invitation.accepted":
+      return `${details.displayName || details.email || actor} accepted a workspace invitation.`;
+    case "tenant.settings_updated":
+      return `${actor} updated workspace settings.`;
+    case "tenant_guidance.updated":
+      return `${actor} updated inventory guidance.`;
+    case "inventory_item.created":
+      return `${actor} added an inventory item.`;
+    default:
+      return `${actor} recorded ${activityActionLabel(action).toLowerCase()}.`;
+  }
+}
+
+function activityFilterValue(option) {
+  if (typeof option === "string") return option;
+  return option?.value || option?.id || option?.action || option?.entityType || "";
+}
+
+function activityFilterLabel(option) {
+  if (typeof option === "string") return activityActionLabel(option);
+  return option?.label || option?.displayName || option?.email || activityActionLabel(activityFilterValue(option));
+}
+
+function activityDateBoundary(value, endOfDay = false) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+  if (!match) return value;
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0
+  );
+  return date.toISOString();
+}
+
+function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenPeople, onOpenSettings }) {
+  const emptyFilters = { category: "", actor: "", action: "", entityType: "", from: "", to: "" };
+  const [events, setEvents] = useState([]);
+  const [nextCursor, setNextCursor] = useState("");
+  const [filterOptions, setFilterOptions] = useState({ actors: [], actions: [], entityTypes: [] });
+  const [filters, setFilters] = useState(emptyFilters);
+  const [appliedFilters, setAppliedFilters] = useState(emptyFilters);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedSuccessfully, setHasLoadedSuccessfully] = useState(false);
+  const [status, setStatus] = useState({ text: "Loading activity...", isError: false });
+  const requestRef = useRef(0);
+  const hasFilters = Object.values(appliedFilters).some(Boolean);
+  const categoryOptions = filterOptions.categories?.length ? filterOptions.categories : [
+    { value: "workflow", label: "Workflow" },
+    { value: "access", label: "Access" },
+    { value: "workspace", label: "Workspace" },
+    { value: "files", label: "Files / system" },
+    { value: "other", label: "Other" }
+  ];
+
+  async function loadEvents({ append = false, cursor = "", filterValues = appliedFilters } = {}) {
+    const requestId = ++requestRef.current;
+    const params = new URLSearchParams({ limit: "40" });
+    Object.entries(filterValues).forEach(([key, value]) => {
+      if (!value) return;
+      if (key === "from") {
+        params.set(key, activityDateBoundary(value));
+        return;
+      }
+      if (key === "to") {
+        params.set(key, activityDateBoundary(value, true));
+        return;
+      }
+      params.set(key, value);
+    });
+    if (cursor) params.set("cursor", cursor);
+
+    try {
+      setIsLoading(true);
+      if (!append) {
+        setEvents([]);
+        setNextCursor("");
+        setHasLoadedSuccessfully(false);
+      }
+      setStatus({ text: append ? "Loading older activity..." : "Loading activity...", isError: false });
+      const data = await apiRequest(`/tenant/audit-events?${params.toString()}`, { token, tenantSlug });
+      if (requestId !== requestRef.current) return;
+      const loadedEvents = data.events || [];
+      setEvents(current => append
+        ? [...current, ...loadedEvents.filter(event => !current.some(existing => existing.id === event.id))]
+        : loadedEvents);
+      setNextCursor(data.nextCursor || "");
+      setFilterOptions(data.filterOptions || { actors: [], actions: [], entityTypes: [] });
+      setHasLoadedSuccessfully(true);
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      if (requestId !== requestRef.current) return;
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      if (requestId === requestRef.current) setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const initial = { ...emptyFilters };
+    setFilters(initial);
+    setAppliedFilters(initial);
+    loadEvents({ filterValues: initial });
+  }, [tenantSlug, token]);
+
+  function applyFilters(event) {
+    event.preventDefault();
+    const next = { ...filters };
+    setAppliedFilters(next);
+    loadEvents({ filterValues: next });
+  }
+
+  function clearFilters() {
+    const next = { ...emptyFilters };
+    setFilters(next);
+    setAppliedFilters(next);
+    loadEvents({ filterValues: next });
+  }
+
+  function updateFilter(key, value) {
+    setFilters(current => ({ ...current, [key]: value }));
+  }
+
+  return (
+    <div className="activity-page">
+      <div className="leader-page-heading activity-page-heading">
+        <div>
+          <h1>Activity Log</h1>
+          <p>Review accountable workspace changes. Actor and related-record labels reflect their current workspace values.</p>
+        </div>
+        <button className="btn btn-secondary" type="button" disabled={isLoading} onClick={() => loadEvents({ filterValues: appliedFilters })}>
+          <RefreshCw aria-hidden="true" />
+          <span>{isLoading ? "Refreshing..." : "Refresh"}</span>
+        </button>
+      </div>
+
+      <form className="leader-card activity-filters" aria-label="Activity filters" onSubmit={applyFilters}>
+        <label>
+          <span>Category</span>
+          <select className="select" value={filters.category} onChange={event => updateFilter("category", event.target.value)}>
+            <option value="">All categories</option>
+            {categoryOptions.map(option => (
+              <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Actor</span>
+          <select className="select" value={filters.actor} onChange={event => updateFilter("actor", event.target.value)}>
+            <option value="">All actors</option>
+            {(filterOptions.actors || []).map(option => (
+              <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Action</span>
+          <select className="select" value={filters.action} onChange={event => updateFilter("action", event.target.value)}>
+            <option value="">All actions</option>
+            {(filterOptions.actions || []).map(option => (
+              <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Entity</span>
+          <select className="select" value={filters.entityType} onChange={event => updateFilter("entityType", event.target.value)}>
+            <option value="">All entities</option>
+            {(filterOptions.entityTypes || []).map(option => (
+              <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>From</span>
+          <input className="input" type="date" value={filters.from} onChange={event => updateFilter("from", event.target.value)} />
+        </label>
+        <label>
+          <span>Through</span>
+          <input className="input" type="date" value={filters.to} onChange={event => updateFilter("to", event.target.value)} />
+        </label>
+        <div className="activity-filter-actions">
+          <button className="btn btn-primary" type="submit" disabled={isLoading}>Apply filters</button>
+          <button className="btn btn-secondary" type="button" disabled={isLoading || (!hasFilters && !Object.values(filters).some(Boolean))} onClick={clearFilters}>Clear filters</button>
+        </div>
+      </form>
+
+      <StatusLine status={status} />
+
+      <section className="activity-timeline" aria-label="Workspace activity">
+        {events.length ? events.map(event => {
+          const category = activityCategoryFor(event);
+          const safeDetails = Object.entries(event.details || {}).filter(([key, value]) => (
+            ACTIVITY_DETAIL_LABELS[key] && value !== "" && value !== null && value !== undefined
+          ));
+          return (
+            <article className="leader-card activity-event" aria-labelledby={`activityEvent${event.id}`} key={event.id}>
+              <span className={`activity-event-icon ${category}`}><History aria-hidden="true" /></span>
+              <div className="activity-event-copy">
+                <h2 className="activity-event-title" id={`activityEvent${event.id}`}>{activitySentence(event)}</h2>
+                <div className="activity-event-meta">
+                  <span>{activityActorName(event)}</span>
+                  <time dateTime={event.createdAt}>{formatDate(event.createdAt)} - {formatRelativeTime(event.createdAt)}</time>
+                </div>
+                <div className="activity-event-tags">
+                  <span>{activityCategoryLabel(category)}</span>
+                  <span>{activityActionLabel(event.action)}</span>
+                </div>
+                {safeDetails.length ? (
+                  <details className="activity-event-details">
+                    <summary>Details</summary>
+                    <dl>
+                      {safeDetails.map(([key, value]) => (
+                        <div key={key}>
+                          <dt>{ACTIVITY_DETAIL_LABELS[key]}</dt>
+                          <dd>{Array.isArray(value) ? value.join(", ") : String(value)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </details>
+                ) : null}
+              </div>
+              <div className="activity-event-actions">
+                {event.context?.sessionId ? (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(event.context.sessionId)}>Open session</button>
+                ) : null}
+                {category === "access" ? (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenPeople}>Open people</button>
+                ) : null}
+                {category === "workspace" ? (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenSettings}>Open settings</button>
+                ) : null}
+              </div>
+            </article>
+          );
+        }) : !isLoading && hasLoadedSuccessfully && !status.isError ? (
+          <EmptyPanel
+            title={hasFilters ? "No matching activity" : "No activity yet"}
+            body={hasFilters ? "Clear or change the filters to review other workspace changes." : "Imports, reviews, assignments, invitations, and settings changes will appear here."}
+            action={hasFilters ? <button className="btn btn-secondary btn-small" type="button" onClick={clearFilters}>Clear filters</button> : null}
+          />
+        ) : null}
+      </section>
+
+      {nextCursor ? (
+        <button className="btn btn-secondary activity-load-more" type="button" disabled={isLoading} onClick={() => loadEvents({ append: true, cursor: nextCursor, filterValues: appliedFilters })}>
+          <History aria-hidden="true" />
+          <span>{isLoading ? "Loading..." : "Load older activity"}</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function TenantPeoplePanel({
   tenant,
   tenantSlug,
-  access,
   members,
   invitations,
+  query = "",
   inviteForm,
   onInviteFormChange,
   onCreateInvite,
@@ -5040,6 +7269,23 @@ function TenantPeoplePanel({
   isSaving
 }) {
   const activeAdminCount = members.filter(member => member.role === "tenant_admin" && member.status === "active").length;
+  const hasSearchQuery = searchTerms(query).length > 0;
+  const visibleMembers = members.filter(member => matchesSearch([
+    member.displayName,
+    member.email,
+    member.role,
+    formatRole(member.role),
+    member.status,
+    formatMemberStatus(member.status)
+  ], query));
+  const visibleInvitations = invitations.filter(invite => matchesSearch([
+    invite.displayName,
+    invite.email,
+    invite.role,
+    formatRole(invite.role),
+    invite.status,
+    formatInviteStatus(invite.status)
+  ], query));
 
   return (
     <div className="people-panel">
@@ -5055,8 +7301,6 @@ function TenantPeoplePanel({
           </div>
         </div>
       </section>
-
-      <AccessSourcePanel access={access} />
 
       <div className="admin-grid people-grid">
         <section className="admin-card">
@@ -5117,7 +7361,7 @@ function TenantPeoplePanel({
           ) : null}
         </section>
 
-        <section className="admin-card admin-card-wide">
+        <section className="admin-card admin-card-wide" aria-label="People results">
           <div className="admin-card-heading">
             <span className="admin-icon">
               <UserPlus aria-hidden="true" />
@@ -5128,9 +7372,9 @@ function TenantPeoplePanel({
             </div>
           </div>
 
-          {members.length ? (
+          {visibleMembers.length ? (
             <div className="admin-list people-member-list">
-              {members.map(member => {
+              {visibleMembers.map(member => {
                 const isWorking = memberActionId === member.id;
                 const isLastActiveAdmin = member.role === "tenant_admin" && member.status === "active" && activeAdminCount <= 1;
                 const statusLabel = formatMemberStatus(member.status);
@@ -5176,18 +7420,21 @@ function TenantPeoplePanel({
               })}
             </div>
           ) : (
-            <EmptyPanel title="No members loaded" body="Create an invite to give someone access." />
+            <EmptyPanel
+              title={hasSearchQuery ? "No matching members" : "No members loaded"}
+              body={hasSearchQuery ? "Clear the workspace search or try a name, email, role, or status." : "Create an invite to give someone access."}
+            />
           )}
 
           <div className="admin-subsection">
             <div className="subsection-heading-row">
               <h3>Invitations</h3>
-              <span>{invitations.length} total</span>
+              <span>{hasSearchQuery ? `${visibleInvitations.length} of ${invitations.length}` : `${invitations.length} total`}</span>
             </div>
 
-            {invitations.length ? (
+            {visibleInvitations.length ? (
               <div className="admin-list compact">
-                {invitations.map(invite => {
+                {visibleInvitations.map(invite => {
                   const isWorking = inviteActionId === invite.id;
                   const inviteLink = inviteLinksById[invite.id];
 
@@ -5239,7 +7486,10 @@ function TenantPeoplePanel({
                 })}
               </div>
             ) : (
-              <EmptyPanel title="No invites yet" body="Created invitations will appear here with copy, resend, and revoke actions." />
+              <EmptyPanel
+                title={hasSearchQuery ? "No matching invitations" : "No invites yet"}
+                body={hasSearchQuery ? "Clear the workspace search or try an invite email, role, or status." : "Created invitations will appear here with copy, resend, and revoke actions."}
+              />
             )}
           </div>
         </section>
@@ -5249,18 +7499,22 @@ function TenantPeoplePanel({
 }
 
 function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
+  const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const isTenantAdmin = Boolean(me?.isPlatformAdmin || me?.membership?.role === "tenant_admin");
   const canSubmitProof = Boolean(isTenantAdmin || me?.membership?.role === "contributor");
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: Home },
     { id: "tasks", label: "Inventory Sessions", icon: CalendarDays },
-    { id: "guidance", label: "Inventory Guidance", icon: BookOpen },
+    ...(isTenantAdmin ? [{ id: "reports", label: "Reports", icon: BarChart3 }] : []),
     ...(isTenantAdmin ? [{ id: "review", label: "Review Queue", icon: ClipboardList }] : []),
-    ...(isTenantAdmin ? [{ id: "people", label: "People & Invites", icon: Users }] : [])
+    ...(isTenantAdmin ? [{ id: "people", label: "People & Invites", icon: Users }] : []),
+    ...(isTenantAdmin ? [{ id: "activity", label: "Activity Log", icon: History }] : []),
+    ...(isTenantAdmin ? [{ id: "settings", label: "Workspace Settings", icon: Settings }] : [])
   ];
   const [activeTab, setActiveTab] = useState("dashboard");
   const [sessionIntent, setSessionIntent] = useState("");
   const [preferredSessionId, setPreferredSessionId] = useState("");
+  const [preferredSessionItemId, setPreferredSessionItemId] = useState("");
   const [isStartInventoryOpen, setIsStartInventoryOpen] = useState(false);
   const [startInventoryForm, setStartInventoryForm] = useState(() => ({
     name: defaultInventorySessionName(),
@@ -5269,7 +7523,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [startInventoryStatus, setStartInventoryStatus] = useState({ text: "", isError: false });
   const [leaderQuery, setLeaderQuery] = useState("");
   const [tenant, setTenant] = useState(null);
-  const [access, setAccess] = useState(me?.access || null);
   const [members, setMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [inviteForm, setInviteForm] = useState({ email: "", displayName: "", role: "contributor" });
@@ -5290,14 +7543,40 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const notificationsRef = useRef(null);
   const userMenuRef = useRef(null);
+  const leaderSearchInputRef = useRef(null);
+  const tenantSidebarRef = useRef(null);
+  const tenantMobileNavToggleRef = useRef(null);
   const userName = me?.user?.display_name || me?.user?.email || "Signed in";
   const userRole = me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
+  const tenantSearch = {
+    dashboard: {
+      label: "Search dashboard",
+      placeholder: "Search dashboard items, sessions, locations..."
+    },
+    tasks: {
+      label: "Search current session rows",
+      placeholder: "Search rows, serials, locations, packet text..."
+    },
+    reports: {
+      label: "Search reports",
+      placeholder: "Search reports by item, serial, location..."
+    },
+    review: {
+      label: "Search review queue",
+      placeholder: "Search proof, serials, submitters, notes..."
+    },
+    people: {
+      label: "Search people and invitations",
+      placeholder: "Search members, invites, roles, status..."
+    }
+  }[activeTab] || null;
+  const activeNavLabel = navItems.find(item => item.id === activeTab)?.label || "Workspace";
 
   useEffect(() => {
     function handleKeyDown(event) {
       if (event.key !== "Escape") return;
-      setIsSidebarOpen(false);
+      if (isSidebarOpen) closeTenantSidebar();
       setIsNotificationsOpen(false);
       setIsUserMenuOpen(false);
     }
@@ -5318,7 +7597,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, []);
+  }, [isSidebarOpen, isMobileViewport]);
 
   function openPlatformAdmin() {
     const port = window.location.port ? `:${window.location.port}` : "";
@@ -5329,10 +7608,32 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   function selectTenantTab(tabId) {
+    if (tabId !== activeTab) setLeaderQuery("");
     setActiveTab(tabId);
-    setIsSidebarOpen(false);
+    closeTenantSidebar(false);
     setIsNotificationsOpen(false);
     setIsUserMenuOpen(false);
+  }
+
+  function clearLeaderSearch() {
+    setLeaderQuery("");
+    window.requestAnimationFrame(() => leaderSearchInputRef.current?.focus());
+  }
+
+  function openTenantSidebar() {
+    setIsSidebarOpen(true);
+    window.requestAnimationFrame(() => {
+      const target = tenantSidebarRef.current?.querySelector(".leader-nav button.active")
+        || tenantSidebarRef.current?.querySelector(".leader-nav button");
+      target?.focus?.();
+    });
+  }
+
+  function closeTenantSidebar(restoreFocus = true) {
+    setIsSidebarOpen(false);
+    if (restoreFocus && isMobileViewport) {
+      window.requestAnimationFrame(() => tenantMobileNavToggleRef.current?.focus());
+    }
   }
 
   async function loadTenant() {
@@ -5340,7 +7641,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setStatus({ text: "Loading tenant...", isError: false });
       const tenantData = await apiRequest("/tenant", { token, tenantSlug });
       setTenant(tenantData.tenant);
-      setAccess(tenantData.access || me?.access || null);
 
       if (isTenantAdmin) {
         const [memberData, inviteData] = await Promise.all([
@@ -5357,7 +7657,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setStatus({ text: "", isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
-      setAccess(me?.access || null);
     }
   }
 
@@ -5555,7 +7854,15 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   function openSessions(intent = "") {
+    setPreferredSessionItemId("");
     setSessionIntent(intent);
+    selectTenantTab("tasks");
+  }
+
+  function openActivitySession(sessionId, sessionItemId = "") {
+    setPreferredSessionId(sessionId || "");
+    setPreferredSessionItemId(sessionItemId || "");
+    setSessionIntent("");
     selectTenantTab("tasks");
   }
 
@@ -5596,6 +7903,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       });
       const sessionId = data.session?.id || "";
       setPreferredSessionId(sessionId);
+      setPreferredSessionItemId("");
       setSessionIntent(startInventoryForm.source === "packet" ? "packet" : "");
       setStartInventoryForm({ name: defaultInventorySessionName(), source: startInventoryForm.source });
       setIsStartInventoryOpen(false);
@@ -5618,6 +7926,12 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     selectTenantTab("tasks");
   }
 
+  function refreshTenantWorkspace() {
+    loadTenant();
+    loadNotifications();
+    onRefresh?.();
+  }
+
   if (!tenantSlug) {
     return <EmptyPanel title="No platoon selected" body="Open a platoon subdomain to manage members." />;
   }
@@ -5628,8 +7942,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       isSidebarOpen ? "sidebar-open" : "",
       isSidebarCollapsed ? "sidebar-collapsed" : ""
     ].filter(Boolean).join(" ")}>
-      <button className="leader-sidebar-backdrop" type="button" aria-label="Close menu" onClick={() => setIsSidebarOpen(false)} />
-      <aside className="leader-sidebar">
+      <button className="leader-sidebar-backdrop" type="button" aria-label="Close menu" onClick={() => closeTenantSidebar()} />
+      <aside ref={tenantSidebarRef} className="leader-sidebar" aria-hidden={isMobileViewport && !isSidebarOpen ? "true" : undefined} inert={isMobileViewport && !isSidebarOpen ? true : undefined}>
         <div className="leader-brand">
           <button
             className="leader-menu-button"
@@ -5637,7 +7951,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             aria-label={isSidebarOpen ? "Close menu" : isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             onClick={() => {
               if (isSidebarOpen) {
-                setIsSidebarOpen(false);
+                closeTenantSidebar();
                 return;
               }
               setIsSidebarCollapsed(current => !current);
@@ -5645,7 +7959,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           >
             <Menu aria-hidden="true" />
           </button>
-          <strong>876 Inventory</strong>
+          <strong>{APP_NAME}</strong>
         </div>
 
         <nav className="leader-nav" aria-label="Platoon workspace">
@@ -5677,33 +7991,48 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       </aside>
 
       <main className="leader-main">
-        <header className="leader-topbar">
+        <header className={`leader-topbar ${tenantSearch ? "has-search" : "without-search"}`}>
           <button
+            ref={tenantMobileNavToggleRef}
             className="leader-mobile-nav-toggle"
             type="button"
             aria-label="Open workspace menu"
             aria-expanded={isSidebarOpen}
-            onClick={() => setIsSidebarOpen(true)}
+            onClick={openTenantSidebar}
           >
             <Menu aria-hidden="true" />
           </button>
-          <label className="leader-search">
-            <Search aria-hidden="true" />
-            <input
-              value={leaderQuery}
-              placeholder="Search items, sessions, locations..."
-              onChange={e => setLeaderQuery(e.target.value)}
-            />
-          </label>
+          {tenantSearch ? (
+            <div className="leader-search" role="search">
+              <Search aria-hidden="true" />
+              <input
+                ref={leaderSearchInputRef}
+                type="search"
+                value={leaderQuery}
+                aria-label={tenantSearch.label}
+                placeholder={tenantSearch.placeholder}
+                onChange={e => setLeaderQuery(e.target.value)}
+                onKeyDown={event => {
+                  if (event.key === "Escape" && leaderQuery) {
+                    event.preventDefault();
+                    clearLeaderSearch();
+                  }
+                }}
+              />
+              {leaderQuery ? (
+                <button type="button" aria-label="Clear search" onClick={clearLeaderSearch}>
+                  <X aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <div className="leader-topbar-context" aria-label="Current workspace section">{activeNavLabel}</div>
+          )}
           <div className="leader-user-actions">
             <button
-              className="icon-button"
+              className="icon-button leader-topbar-refresh"
               type="button"
-              onClick={() => {
-                loadTenant();
-                loadNotifications();
-                onRefresh?.();
-              }}
+              onClick={refreshTenantWorkspace}
               aria-label="Refresh"
             >
               <RefreshCw aria-hidden="true" />
@@ -5817,6 +8146,13 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     </div>
                   </div>
                   <div className="leader-menu-actions">
+                    <button type="button" onClick={() => {
+                      refreshTenantWorkspace();
+                      setIsUserMenuOpen(false);
+                    }}>
+                      <RefreshCw aria-hidden="true" />
+                      <span>Refresh workspace</span>
+                    </button>
                     <button type="button" onClick={() => selectTenantTab("dashboard")}>
                       <Home aria-hidden="true" />
                       <span>Workspace home</span>
@@ -5866,9 +8202,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             <LeaderOverviewPanel
               token={token}
               tenantSlug={tenantSlug}
+              me={me}
               query={leaderQuery}
               canManage={isTenantAdmin}
-              onOpenSessions={() => openStartInventoryWizard("packet")}
+              preferredSessionId={preferredSessionId}
+              onSessionChange={setPreferredSessionId}
+              onCreateSession={() => openStartInventoryWizard("packet")}
+              onOpenSessions={() => openSessions()}
+              onOpenSession={openActivitySession}
               onOpenUpload={() => openSessions("packet")}
               onOpenReview={() => selectTenantTab("review")}
             />
@@ -5882,34 +8223,33 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               members={members}
               canManage={isTenantAdmin}
               canSubmit={canSubmitProof}
+              query={leaderQuery}
+              onQueryChange={setLeaderQuery}
               uploadIntent={sessionIntent}
               preferredSessionId={preferredSessionId}
+              preferredSessionItemId={preferredSessionItemId}
               onUploadIntentHandled={() => setSessionIntent("")}
-              onOpenGuidance={() => selectTenantTab("guidance")}
+              onPreferredSessionItemHandled={() => setPreferredSessionItemId("")}
+              onSessionChange={setPreferredSessionId}
+              onOpenReview={() => selectTenantTab("review")}
             />
           ) : null}
 
-          {activeTab === "guidance" ? (
-            <TenantGuidancePanel
-              token={token}
-              tenantSlug={tenantSlug}
-              canManage={isTenantAdmin}
-              onOpenSessions={() => openSessions()}
-              onOpenUpload={() => openSessions("packet")}
-            />
+          {activeTab === "reports" && isTenantAdmin ? (
+            <ReportsPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} />
           ) : null}
 
           {activeTab === "review" && isTenantAdmin ? (
-            <ReviewPanel token={token} tenantSlug={tenantSlug} />
+            <ReviewPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} />
           ) : null}
 
           {activeTab === "people" && isTenantAdmin ? (
             <TenantPeoplePanel
               tenant={tenant}
               tenantSlug={tenantSlug}
-              access={access}
               members={members}
               invitations={invitations}
+              query={leaderQuery}
               inviteForm={inviteForm}
               onInviteFormChange={setInviteForm}
               onCreateInvite={createInvite}
@@ -5923,6 +8263,24 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               memberActionId={memberActionId}
               lastInviteUrl={lastInviteUrl}
               isSaving={isSaving}
+            />
+          ) : null}
+
+          {activeTab === "activity" && isTenantAdmin ? (
+            <TenantActivityPanel
+              token={token}
+              tenantSlug={tenantSlug}
+              onOpenSession={openActivitySession}
+              onOpenPeople={() => selectTenantTab("people")}
+              onOpenSettings={() => selectTenantTab("settings")}
+            />
+          ) : null}
+
+          {activeTab === "settings" && isTenantAdmin ? (
+            <TenantSettingsPanel
+              token={token}
+              tenantSlug={tenantSlug}
+              onSaved={saved => setTenant(current => current ? { ...current, name: saved?.displayName || current.name } : current)}
             />
           ) : null}
         </div>

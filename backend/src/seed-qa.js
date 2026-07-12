@@ -243,6 +243,88 @@ async function seedTenantGuidance(tenantId, updatedBy) {
   );
 }
 
+async function seedTenantSettings(tenantId, updatedBy) {
+  await query(
+    `
+      INSERT INTO tenant_settings (tenant_id, notification_preferences, updated_by)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (tenant_id) DO UPDATE SET
+        notification_preferences = EXCLUDED.notification_preferences,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = now()
+    `,
+    [tenantId, {
+      proof_submitted: true,
+      proof_requests: true,
+      open_rows: true,
+      packet_imports: true,
+      session_closed: true,
+      email_proof_submitted: true,
+      email_proof_requests: true
+    }, updatedBy]
+  );
+}
+
+async function seedSearchTenant({ tenant, root, searchAdmin, searchHelper, legacyLead, legacyNco }) {
+  await query(
+    `DELETE FROM tenant_memberships WHERE tenant_id = $1 AND user_id IN ($2, $3)`,
+    [tenant.id, legacyLead.id, legacyNco.id]
+  );
+  await upsertMembership({ tenantId: tenant.id, userId: searchAdmin.id, role: "tenant_admin" });
+  await upsertMembership({ tenantId: tenant.id, userId: searchHelper.id, role: "contributor" });
+
+  const radio = await upsertInventoryItem(tenant.id, {
+    title: "Search Radio",
+    commonName: "Field Radio",
+    armyName: "RADIO SET SEARCH FIXTURE",
+    lin: "R20684",
+    nsn: "5820015244763",
+    description: "Search fixture tactical radio and handset.",
+    currentLocation: "Cage Alpha, left shelf"
+  });
+  const generator = await upsertInventoryItem(tenant.id, {
+    title: "Search Generator",
+    commonName: "Quiet Generator",
+    armyName: "GENERATOR SET DIESEL SEARCH FIXTURE",
+    lin: "G18358",
+    nsn: "6115015476713",
+    description: "Search fixture generator with power cables.",
+    currentLocation: "Connex Bravo, floor"
+  });
+  const session = await upsertSession({
+    tenantId: tenant.id,
+    createdBy: root.id,
+    name: "Search behavior fixture"
+  });
+  const radioRow = await upsertSessionItem({
+    sessionId: session.id,
+    inventoryItemId: radio.id,
+    packetLine: "000009148 R20684 RADIO SET SEARCH FIXTURE",
+    expectedQty: 1,
+    locationHint: "Cage Alpha, left shelf",
+    status: "needs_review"
+  });
+  await upsertSessionItem({
+    sessionId: session.id,
+    inventoryItemId: generator.id,
+    packetLine: "000018603 G18358 GENERATOR SET SEARCH FIXTURE",
+    expectedQty: 1,
+    locationHint: "Connex Bravo, floor",
+    status: "unchecked"
+  });
+  await upsertSubmission({
+    sessionItemId: radioRow.id,
+    submittedBy: searchHelper.id,
+    status: "found",
+    locationText: "Cage Alpha, left shelf",
+    note: "Search proof note: handset and battery counted.",
+    serialNumber: "SEARCH-SERIAL-20684"
+  });
+
+  await seedTenantGuidance(tenant.id, root.id);
+  await seedTenantSettings(tenant.id, root.id);
+}
+
 async function seedNewsletter(rootUserId) {
   await query(
     `
@@ -271,14 +353,14 @@ async function seedNewsletter(rootUserId) {
       blockType: "announcement",
       title: "Family readiness updates",
       summary: "General updates for Black Shadow Company families will be posted here.",
-      body: "This seeded block is safe for public QA testing and can be edited by newsletter admins.",
+      body: "Newsletter admins can replace this with current public-facing updates.",
       sortOrder: 10
     },
     {
       blockType: "event",
       title: "Community check-in",
-      summary: "A placeholder family readiness reminder for QA.",
-      body: "Use this event block to verify the public homepage and FRG content editor.",
+      summary: "A simple reminder for upcoming family readiness touchpoints.",
+      body: "Family readiness reminders and community check-ins can be posted here.",
       sortOrder: 20
     },
     {
@@ -293,6 +375,34 @@ async function seedNewsletter(rootUserId) {
   ];
 
   for (const block of contentBlocks) {
+    const updated = await query(
+      `
+        UPDATE frg_content_blocks
+        SET summary = $3,
+          body = $4,
+          href = $5,
+          link_label = $6,
+          sort_order = $7,
+          status = 'published',
+          updated_by = $8,
+          published_at = COALESCE(published_at, now()),
+          updated_at = now()
+        WHERE block_type = $1 AND title = $2
+      `,
+      [
+        block.blockType,
+        block.title,
+        block.summary,
+        block.body,
+        block.href || null,
+        block.linkLabel || null,
+        block.sortOrder,
+        rootUserId
+      ]
+    );
+
+    if (updated.rowCount) continue;
+
     await query(
       `
         INSERT INTO frg_content_blocks (
@@ -320,10 +430,27 @@ async function seedNewsletter(rootUserId) {
   }
 
   const existingIssue = await query(
-    "SELECT id FROM newsletter_issues WHERE title = $1 LIMIT 1",
-    ["Black Shadow QA Update"]
+    "SELECT id FROM newsletter_issues WHERE title = ANY($1::text[]) LIMIT 1",
+    [["Black Shadow QA Update", "Black Shadow Family Update"]]
   );
-  if (existingIssue.rows[0]) return;
+  if (existingIssue.rows[0]) {
+    await query(
+      `
+        UPDATE newsletter_issues
+        SET title = 'Black Shadow Family Update',
+          edition_label = 'Family update',
+          summary = 'A short public update for Black Shadow families.',
+          body = 'Thanks for checking in with Black Shadow Company. Family readiness reminders, upcoming events, and helpful resources will be shared here as they are published.',
+          status = 'published',
+          published_by = $2,
+          published_at = COALESCE(published_at, now()),
+          updated_at = now()
+        WHERE id = $1
+      `,
+      [existingIssue.rows[0].id, rootUserId]
+    );
+    return;
+  }
 
   await query(
     `
@@ -331,10 +458,10 @@ async function seedNewsletter(rootUserId) {
         title, edition_label, summary, body, status, created_by, published_by, published_at
       )
       VALUES (
-        'Black Shadow QA Update',
-        'QA',
-        'A seeded public update for local QA testing.',
-        'This is a local QA newsletter issue. Use it to test the public homepage and newsletter admin screens.',
+        'Black Shadow Family Update',
+        'Family update',
+        'A short public update for Black Shadow families.',
+        'Thanks for checking in with Black Shadow Company. Family readiness reminders, upcoming events, and helpful resources will be shared here as they are published.',
         'published',
         $1,
         $1,
@@ -365,6 +492,16 @@ async function main() {
     email: "qa-nco@876en.test",
     displayName: "QA NCO"
   });
+  const searchAdmin = await upsertUser({
+    subject: "qa-search-admin",
+    email: "qa-search-admin@876en.test",
+    displayName: "QA Search Admin"
+  });
+  const searchHelper = await upsertUser({
+    subject: "qa-search-helper",
+    email: "qa-search-helper@876en.test",
+    displayName: "QA Search Helper"
+  });
   await upsertUser({
     subject: "qa-frg",
     email: "qa-frg@876en.test",
@@ -372,6 +509,11 @@ async function main() {
   });
 
   const tenant = await upsertTenant({ slug: "ms", name: "MS Platoon" });
+  const isolationTenant = await upsertTenant({ slug: "qa-other", name: "QA Isolation Tenant" });
+  const settingsDesktopTenant = await upsertTenant({ slug: "qa-settings-desktop", name: "QA Settings Desktop" });
+  const settingsMobileTenant = await upsertTenant({ slug: "qa-settings-mobile", name: "QA Settings Mobile" });
+  const searchDesktopTenant = await upsertTenant({ slug: "qa-search-desktop", name: "QA Search Desktop" });
+  const searchMobileTenant = await upsertTenant({ slug: "qa-search-mobile", name: "QA Search Mobile" });
   await upsertMembership({ tenantId: tenant.id, userId: lead.id, role: "tenant_admin" });
   await upsertMembership({ tenantId: tenant.id, userId: nco.id, role: "contributor" });
 
@@ -468,9 +610,31 @@ async function main() {
   });
 
   await seedTenantGuidance(tenant.id, lead.id);
+  await seedTenantGuidance(settingsDesktopTenant.id, root.id);
+  await seedTenantGuidance(settingsMobileTenant.id, root.id);
+  await seedTenantSettings(tenant.id, lead.id);
+  await seedTenantSettings(isolationTenant.id, root.id);
+  await seedTenantSettings(settingsDesktopTenant.id, root.id);
+  await seedTenantSettings(settingsMobileTenant.id, root.id);
+  await seedSearchTenant({
+    tenant: searchDesktopTenant,
+    root,
+    searchAdmin,
+    searchHelper,
+    legacyLead: lead,
+    legacyNco: nco
+  });
+  await seedSearchTenant({
+    tenant: searchMobileTenant,
+    root,
+    searchAdmin,
+    searchHelper,
+    legacyLead: lead,
+    legacyNco: nco
+  });
   await seedNewsletter(root.id);
 
-  console.log("QA seed complete: root, MS tenant, session rows, review item, tenant guidance, and newsletter content are ready");
+  console.log("QA seed complete: root, MS workspace, isolation/settings/search tenants, session rows, review item, tenant guidance/settings, and newsletter content are ready");
 }
 
 main()

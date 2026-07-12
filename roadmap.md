@@ -1,5 +1,7 @@
 # Inventory List Roadmap
 
+> Updated 2026-07-11: the product has moved beyond the original static prototype described in the older phases below. React, Express/Postgres, Authentik, tenant workspaces, and Coolify are now the active architecture. Use `docs/forkable-tasks.md` as the authoritative implementation backlog and `docs/ui-task-list.md` for UI audit status.
+
 ## Current Product Shape
 
 This is a lightweight inventory lookup tool for guard squad equipment accountability. Its real job is not generic inventory management; it is translating supply packet language into something a soldier can recognize quickly.
@@ -13,18 +15,14 @@ Primary field workflow:
 
 Current architecture:
 
-- Static public/admin frontend hosted from this repo, currently suitable for GitHub Pages.
-- A separate Vite/React app now lives in `react-app/` for the future Coolify-hosted version.
-- A separate Node/Express API now lives in `backend/` for the future multi-tenant Authentik/Coolify version.
-- Read data comes from public S3 JSON files at `https://ms-inventories.s3.us-east-1.amazonaws.com`.
-- Admin writes go through an AWS Lambda Function URL.
-- Images are uploaded by presigned URL.
-- Viewer password is a morale/convenience gate, not real security.
-- Admin uses an admin key plus platoon password.
-- OCR/PDF parsing is client-side and lazy-loaded:
-  - Tesseract.js for paper/photo OCR.
-  - PDF.js for text extraction from clean PDFs.
-- The data model is flexible field arrays, now including `LIN`, `Army Name`, `Common Name`, `NSN`, `Description`, `Location`, quantity fields, and images.
+- The Vite/React app in `react-app/` is the active product UI and is deployed through Coolify.
+- The Node/Express API in `backend/` and Postgres provide tenant, membership, session, packet, evidence, audit, newsletter, and public-content data.
+- Authentik OIDC supplies identity and group claims; the app maps those claims to platform, FRG, tenant-admin, and tenant-member access.
+- Tenant workspaces use subdomains such as `ms.876en.org`; `876en.org` remains a deliberately vague public/FRG/newsletter surface.
+- The root static GitHub Pages app is a labeled legacy fallback, not the primary workflow.
+- Packet parsing remains client-side for PDFs/text and supports mobile paper/image input, parser review, confidence, and source history.
+- Local QA uses Docker Compose plus Playwright desktop/mobile projects.
+- `Shadow Tracer` is the product name; `876 EN` and `Black Shadow Company` remain organization/public-site context.
 
 ## Packet Variability Assumptions
 
@@ -45,15 +43,11 @@ Design implication: scanning should behave like a review/import wizard. It shoul
 
 ## Recommendation
 
-Do not move on-prem or build full auth yet unless there is a concrete requirement: sensitive data, disconnected local network use, command policy, auditability, or multiple editors who need accountable logins.
+The architecture decision has already been made: continue with the React/Coolify/Postgres/Authentik application and keep the static app only as a fallback. The core packet/session/review workflow is now replayable and diagnosable; the highest-value work now is:
 
-For the current mission, the highest-value work is:
-
-1. Make physical paper scanning and packet row selection more reliable.
-2. Improve admin data quality so search results are good.
-3. Add accountability-focused filters and reports.
-4. Harden backups and admin safety.
-5. Revisit auth/hosting only after the app is relied on by more people or the data becomes sensitive.
+1. Keep the historically exposed credential rotation as an owner-only deferred follow-up until the old value is confirmed rejected.
+2. Continue loading-state depth now that the tenant Activity Log, mobile pass, and search pass are covered on desktop, Pixel 7, and 360px layouts.
+3. Preserve the new tenant settings and cross-session reporting contracts as those later UI passes evolve.
 
 ## Progress
 
@@ -63,6 +57,24 @@ For the current mission, the highest-value work is:
 - 2026-07-01: Added a separate Vite/React app under `react-app/` for the future Coolify deployment while leaving the root static GitHub Pages app intact.
 - 2026-07-01: Added a SaaS architecture doc and backend scaffold for Authentik login, tenant subdomains, platoon inventory sessions, evidence submissions, and platoon admin review.
 - 2026-07-01: Switched the backend scaffold to Express, added a monorepo package, and drafted inactive Coolify GitHub Actions plus the `876en.org` deployment plan.
+- 2026-07-08: Established Docker QA, desktop/mobile Playwright coverage, Authentik role routing, tenant workspaces, packet wizard/parser, guidance, invitations, and newsletter/public-content administration.
+- 2026-07-09: Added platform/tenant navigation, session lifecycle safeguards, packet review summaries, public/newsletter UX work, and the coordinated forkable task board.
+- 2026-07-10: Added session row assignment, OIDC callback recovery, a packet-wizard session-loading fix, and a full desktop/mobile recorded-flow regression with source-history and closeout screenshots.
+- 2026-07-10: Added end-to-end API request IDs, safe error classification, structured server diagnostics, client support references, and regression coverage.
+- 2026-07-10: Verified approve, reject, and request-more-proof decisions across queue, session, dashboard-count, history, and contributor-notification state on desktop/mobile.
+- 2026-07-10: Made packet source history traceable and immutable with original filename, MIME type, byte size, uploader, upload time, stored-source link, unsupported-format handling, and desktop/mobile regression coverage.
+- 2026-07-10: Added a responsive proof viewer with labeled current/history thumbnails, zoom and keyboard navigation, evidence metadata, carried-forward proof-request context, and desktop/mobile regression coverage.
+- 2026-07-10: Added a responsive item detail drawer that centralizes packet source, known-item data, assignment, proof history, evidence viewing, and role-aware actions; closed sessions are now read-only in UI and API mutation paths.
+- 2026-07-10: Replaced anonymous media delivery with short-lived tenant media sessions, record- and role-aware file authorization, host-only HttpOnly cookies, private/no-store responses, media CORS isolation, and desktop/mobile denial and rendering coverage.
+- 2026-07-10: Added an expiring upload registry with opaque one-time attachment IDs, uploader/purpose/file validation, transactional evidence and inventory-reference binding, packet-source registration, audit events, abandoned-file cleanup, and adversarial concurrent-reuse coverage.
+- 2026-07-10: Added tenant settings for workspace identity, shared guidance, and workflow notification preferences, with read-only routing/Authentik mappings, tenant isolation, audit events, and desktop/mobile regression coverage.
+- 2026-07-10: Added an admin-only cross-session Reports page and aggregate API with session/outcome/proof filters, approved-missing semantics, safe current-filter CSV export, printable summaries, tenant isolation, and desktop/mobile regression coverage.
+- 2026-07-11: Completed the mobile toolbar/table pass with off-canvas platform navigation, compact tenant/platform/viewer headers, contextual action disclosures, drawer-backed session actions, real mobile table labels, 44px targets, and Pixel 7/360px layout coverage.
+- 2026-07-11: Standardized page-scoped normalized search across the legacy lookup, platform/newsletter lists, dashboard, sessions and proof history, review, people/invitations, and reports, with deterministic desktop/mobile fixtures and unit/browser regressions.
+- 2026-07-11: Added a tenant-scoped Activity Log with safe event projections, strict admin authorization and tenant isolation, actor/action/category/entity/date filters, stable cursor pagination, related-session links, and responsive desktop/mobile QA.
+- 2026-07-11: Added duplicate guards and visible pending/error/retry states for session direct checks and close/reopen, plus pending locks for legacy viewer login and public unsubscribe.
+- 2026-07-11: Corrected dashboard existing-session destinations and removed duplicate platform workspace destinations while beginning the broader empty-state/action-label cleanup.
+- 2026-07-11: Made active inventory the tenant-home context with a multi-session selector and exact-item routing; replaced ambiguous assignment filters with Available/My work/Team, fixed Authentik-only self-claims with race protection, and retired tenant Guidance plus group/routing diagnostics from user-facing navigation and settings.
 
 ## Phase 1: Make Packet Lookup Excellent
 

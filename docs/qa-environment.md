@@ -16,7 +16,7 @@ Services:
 - API: `http://localhost:5300/api`
 - Postgres: `localhost:55432`
 
-The API runs migrations and seeds QA data on startup.
+The API runs migrations and seeds QA data on startup. Browser API and protected-media traffic uses same-origin `/api` and `/media` Vite proxies on each tenant hostname; the direct API URL above remains available for diagnostics and API-level tests. This preserves the production `SameSite=Strict` media-cookie behavior under local `*.localhost` hostnames.
 
 ## QA Personas
 
@@ -30,6 +30,9 @@ Open an admin/workspace URL and use the `QA users` disclosure on the sign-in car
 Seeded data includes:
 
 - `ms` tenant.
+- `qa-other` isolation tenant for cross-tenant security tests.
+- `qa-settings-desktop` and `qa-settings-mobile` tenants for parallel-safe settings mutation tests.
+- `qa-search-desktop` and `qa-search-mobile` tenants with dedicated members and deterministic rows/proof history for parallel-safe search tests.
 - `July sensitive items` inventory session.
 - Four packet rows.
 - One pending proof submission for review.
@@ -69,6 +72,15 @@ The smoke suite covers:
 - Tenant dashboard with the Platoon admin persona.
 - Tenant dashboard with the NCO contributor persona.
 - Packet upload review entry point.
+- Protected evidence/source access, including anonymous, tampered, unlinked, cross-tenant, and wrong-role denial.
+- Upload attachment integrity, including owner/admin rules, purpose mismatches, copied or unknown IDs, metadata forgery, cross-tenant use, and concurrent one-time consumption.
+- Tenant settings persistence, validation, notification suppression, permission denial, and responsive layout.
+- Cross-session reports, outcome/proof filtering, approved-missing classification, safe CSV export, print filtering, and tenant isolation.
+- Page-scoped normalized search across dashboard, sessions, review, people, reports, and the legacy lookup.
+- Mobile navigation, real table-card labels, contextual action disclosures, drawer focus/overflow, Pixel 7 framing, and a 360px compact-header regression.
+- Tenant Activity Log safety, filtering, stable pagination, actor/session context, cross-tenant isolation, contributor denial, session navigation, and mobile layout.
+- Session direct-check and close/reopen loading states, conflicting-control locks, duplicate-request prevention, failure references, and retry behavior.
+- Dashboard existing-session destinations, single platform workspace destinations, and pending public unsubscribe locking.
 
 Artifacts for failed tests are written under `qa-artifacts/`.
 
