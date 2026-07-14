@@ -953,6 +953,7 @@ function applicableProofRequest(history = [], evidence = null) {
   if (evidence?.reviewState === "request_more_info" && evidence?.reviewNote) return evidence.reviewNote;
   const evidenceCreatedAt = Date.parse(evidence?.createdAt || "") || Number.POSITIVE_INFINITY;
   return history.find(historyItem => (
+    historyItem.id !== evidence?.id &&
     ["request_more_info", "superseded"].includes(historyItem.reviewState) &&
     historyItem.reviewNote &&
     (Date.parse(historyItem.createdAt || "") || 0) <= evidenceCreatedAt

@@ -220,7 +220,9 @@ test.describe("mobile layout audit", () => {
     for (const name of [/^Unclaimed\b/, /^Mine\b/, /^Others\b/]) {
       await expectMinTargetSize(assignmentLists.getByRole("button", { name }), { height: 48 });
     }
-    const sessionRow = page.locator(".session-item").first();
+    const sessionRow = page.locator(".session-item").filter({
+      has: page.getByRole("button", { name: "Claim item" })
+    }).first();
     await expect(sessionRow).toBeVisible();
     await expect(sessionRow.locator(".session-assignment-control")).toBeHidden();
     await expect(sessionRow.getByRole("button", { name: "Found", exact: true })).toBeHidden();

@@ -276,7 +276,7 @@ test.describe("session item details", () => {
     await evidenceButton.click();
     const viewer = page.getByRole("dialog", { name: "Evidence photo" });
     await expect(viewer).toBeVisible();
-    await expect(viewer.getByText(scenario.requestMessage, { exact: true })).toHaveCount(0);
+    await expect(viewer.getByText(scenario.requestMessage, { exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(viewer).toBeHidden();
     await expect(evidenceButton).toBeFocused();
