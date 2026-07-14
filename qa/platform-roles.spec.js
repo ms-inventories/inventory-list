@@ -22,15 +22,8 @@ async function seedQaRootSession(page) {
 }
 
 async function activatePlatformNav(page, name, isMobileProject) {
-  const button = page.getByRole("button", { name, exact: true });
-  if (isMobileProject) {
-    await button.evaluate(element => {
-      element.scrollIntoView({ block: "nearest", inline: "center" });
-      element.click();
-    });
-    return;
-  }
-  await button.click();
+  if (isMobileProject) await page.getByRole("button", { name: "Open platform menu" }).click();
+  await page.getByRole("button", { name, exact: true }).click();
 }
 
 test.describe("Platform roles", () => {

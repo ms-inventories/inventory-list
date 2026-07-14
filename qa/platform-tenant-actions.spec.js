@@ -21,6 +21,11 @@ async function seedQaRootSession(page) {
   }, qaRootAdmin);
 }
 
+async function activatePlatformNav(page, name, isMobileProject) {
+  if (isMobileProject) await page.getByRole("button", { name: "Open platform menu" }).click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 function expectedTenantUrls(slug) {
   const adminUrl = new URL(ADMIN_URL);
   const baseHost = adminUrl.hostname.replace(/^admin\./, "");
@@ -29,17 +34,17 @@ function expectedTenantUrls(slug) {
   const workspace = `${adminUrl.protocol}//${host}${port}/`;
   return {
     host,
-    workspace,
-    admin: `${workspace}#/admin`
+    workspace
   };
 }
 
 test.describe("Platform tenant row actions", () => {
-  test("platoon rows expose clear workspace, admin, and copy actions", async ({ page }) => {
+  test("platoon rows expose one workspace destination and a copy action", async ({ page }, testInfo) => {
+    const isMobileProject = Boolean(testInfo.project.use.isMobile);
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);
 
-    await page.getByRole("button", { name: "Platoons", exact: true }).click();
+    await activatePlatformNav(page, "Platoons", isMobileProject);
     await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
 
     const tenantUrls = expectedTenantUrls("ms");
@@ -47,13 +52,13 @@ test.describe("Platform tenant row actions", () => {
     await expect(row).toBeVisible();
 
     const workspaceLink = row.getByRole("link", { name: `Open ${tenantUrls.host} workspace` });
+    await expect(workspaceLink).toHaveCount(1);
     await expect(workspaceLink).toHaveAttribute("href", tenantUrls.workspace);
     await expect(workspaceLink).toContainText("Open workspace");
+    await expect(row.getByRole("link", { name: /admin view/i })).toHaveCount(0);
+    await expect(row.getByText("Admin view", { exact: true })).toHaveCount(0);
 
-    const adminLink = row.getByRole("link", { name: `Open ${tenantUrls.host} admin view` });
-    await expect(adminLink).toHaveAttribute("href", tenantUrls.admin);
-    await expect(adminLink).toContainText("Admin view");
-
+    if (isMobileProject) await row.getByRole("button", { name: "More actions for MS Platoon" }).click();
     await expect(row.getByRole("button", { name: "Copy link" })).toBeVisible();
   });
 });

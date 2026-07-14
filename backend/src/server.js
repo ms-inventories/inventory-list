@@ -1,12 +1,20 @@
+import crypto from "node:crypto";
 import cors from "cors";
 import express from "express";
 import { assertProductionConfig, config } from "./config.js";
 import { closePool } from "./db.js";
+import { registerMediaRoutes } from "./media.js";
 import { registerRoutes } from "./routes.js";
 
 assertProductionConfig();
 
 const app = express();
+
+function requestIdFromHeader(value) {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  const normalized = String(candidate || "").trim();
+  return /^[A-Za-z0-9._-]{8,80}$/.test(normalized) ? normalized : "";
+}
 
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true;
@@ -22,12 +30,14 @@ function isAllowedCorsOrigin(origin) {
   }
 }
 
+app.use((request, response, next) => {
+  const requestId = requestIdFromHeader(request.headers["x-request-id"]) || crypto.randomUUID();
+  request.requestId = requestId;
+  response.setHeader("X-Request-ID", requestId);
+  next();
+});
 app.use(express.json({ limit: "20mb" }));
-app.use("/media", express.static(config.storage.root, {
-  fallthrough: false,
-  immutable: true,
-  maxAge: "7d"
-}));
+registerMediaRoutes(app);
 app.use(cors({
   origin(origin, callback) {
     if (isAllowedCorsOrigin(origin)) {

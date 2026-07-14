@@ -13,6 +13,34 @@ Use this as the working backlog before turning individual items into implementat
 
 ## P0: Make The Main Flow Reliable
 
+- [x] **UI-041: Recover cleanly from abandoned packet/session flows**
+  - Source: screen recording from 2026-07-09 21:34.
+  - Status: implemented locally, awaiting ACP, 2026-07-10. Focused lifecycle/error tests pass, the packet-wizard session-loading race is covered, and `qa/recorded-packet-flow.spec.js` replays import, closeout, navigation, source history, stale-error checks, and screenshots on desktop/mobile.
+  - Current issue: after backing out of packet/session work, the visible session can disappear while the page still shows `Internal server error`; closed or empty sessions make the page feel stuck even when the active work is gone.
+  - Desired behavior: cancel/close/back navigation clears stale status, chooses the next valid session, and never leaves an old error banner attached to an empty view.
+  - Controls affected: `Upload packet`, packet wizard close/cancel, `Close` session, dashboard/session reloads.
+
+- [x] **UI-042: Make packet review trustworthy before import**
+  - Source: screen recording from 2026-07-09 21:34.
+  - Current issue: uploaded PDF text lands in a cramped raw textarea and the review modal makes users scroll through guessed rows without a clear "valid rows vs ignored text" summary.
+  - Desired behavior: show a parser summary before review, separate accepted/ignored text, preserve the source filename/type, and make low-confidence rows obvious without making users inspect raw PDF noise.
+  - Controls affected: packet wizard source step, review rows step, import history.
+  - Status: completed by current Codex thread, 2026-07-09. The packet wizard now shows source, ready rows, low-confidence rows, ignored text counts, collapsed ignored text diagnostics, and parser regression coverage. Safe for `UI-043` to continue; coordinate before changing packet wizard review layout or parser analysis output again.
+
+- [x] **UI-043: Clean up empty/duplicate session lifecycle**
+  - Source: screen recording from 2026-07-09 21:34.
+  - Status: complete for the focused behaviors. Empty drafts can be deleted, duplicate empty sessions are reused, closed sessions are secondary, and closeout requires confirmation; the combined recording replay remains in `UI-041`/`QA-003`.
+  - Current issue: repeated empty `Test` sessions and closed sessions remain visually noisy; users can create duplicates, close them, and still feel like the app is holding onto bad work.
+  - Desired behavior: support delete/archive for zero-row sessions, hide closed sessions by default, prevent accidental duplicate empty sessions, and make `Close` a deliberate closeout action.
+  - Controls affected: `New session`, session list, closed session archive, close/reopen controls.
+
+- [x] **UI-044: Make API failures actionable**
+  - Source: live packet/session QA and current backend error handling.
+  - Status: implemented locally, awaiting ACP, 2026-07-10. API failures now return safe codes and request IDs, structured server logs retain route/tenant/subject context, UI errors show a support reference, and platform diagnostics remember the last failed request ID.
+  - Current issue: several flows collapse to a generic `Internal server error`, so admins cannot tell whether the failure is auth, tenant access, parser input, storage, database state, or a transient API problem.
+  - Desired behavior: user-facing errors stay safe and specific to the action, while support/admin diagnostics include a request ID, route, tenant, and next step for checking logs.
+  - Controls affected: session create/close, packet upload/import, dashboard loads, tenant launch, review actions.
+
 - [x] **UI-001: Fix Authentik launch routing**
   - Current issue: Authentik can land users on the admin route, which makes regular users hit a platform admin sign-in or access-denied path.
   - Desired behavior: the public login and any optional Authentik app tile launch `https://876en.org/#/launch`; the app routes platform admins, platoon admins, FRG admins, and regular platoon members to the correct workspace.
@@ -108,47 +136,56 @@ Use this as the working backlog before turning individual items into implementat
 - [x] **UI-017: Pending item assignment**
   - Current issue: dashboard implies assignment/tasking, but assignment needs a complete workflow.
   - Desired behavior: tenant admin can assign rows to members; contributors see assigned rows; reassignment and "assign to me" update state.
-  - Status: completed by current Codex thread, 2026-07-10. Session rows now store assignment ownership, platoon admins can assign/reassign/unassign rows, contributors can use `Assign to me`, the `Mine` filter surfaces assigned work, dashboard pending rows show assignment state, and desktop/mobile QA coverage passes. Safe for `UI-018` to continue; coordinate before changing session row ownership, assignment controls, or `qa/session-assignment.spec.js`.
+  - Status: completed and field-refined, 2026-07-11. The home page now follows one selected active inventory, offers a native selector when several are active, and opens the exact existing item. Work is partitioned into `Available`, `My work`, and `Team`; Claim resolves Authentik-only users correctly, prevents claim races, moves the row to My work, and opens proof entry. Admin reassignment remains available.
 
-- [ ] **UI-018: Review queue actions**
+- [x] **UI-018: Review queue actions**
   - Current issue: approve/reject/request more proof exists conceptually, but needs full confidence in live behavior and status feedback.
   - Desired behavior: every review action updates the queue, item state, session progress, and notification state.
+  - Status: implemented locally, awaiting ACP, 2026-07-10. Approve, reject, and more-proof now have nearby loading/confirmation feedback and desktop/mobile QA verifies queue, row, session-count, history, and contributor-notification state.
 
-- [ ] **UI-019: Reports view**
+- [x] **UI-019: Reports view**
   - Current issue: reporting exists as closeout export pieces, but there is no clear Reports page.
   - Desired behavior: reports page for session closeout, missing items, found items, proof status, CSV export, printable summary.
+  - Status: implemented locally, awaiting ACP, 2026-07-10. Tenant admins have a dedicated cross-session Reports page with session/lifecycle/outcome/proof filters, tenant-isolated aggregate data, current-filter CSV and print output, approved-missing outcome handling, spreadsheet-formula neutralization, and desktop/mobile QA coverage.
 
-- [ ] **UI-020: Inventory guidance view**
+- [x] **UI-020: Inventory guidance view (retired)**
   - Current issue: guidance is a natural nav item but not a real page yet.
   - Desired behavior: per-tenant instructions, where-to-look notes, packet handling tips, and common equipment reference notes.
+  - Status: retired from the tenant UI, 2026-07-11, after field review found the focused dashboard/session/proof flows sufficient. Existing guidance data and APIs are preserved for compatibility, but the page, navigation, Sessions shortcut, and settings editor are no longer user-facing.
 
 ## P1: People And Invite Flow
 
-- [ ] **UI-021: Invite helper needs full lifecycle**
+- [x] **UI-021: Invite helper needs full lifecycle**
   - Current issue: invite creation exists, but admin workflow needs resend/copy/revoke/expire clarity.
   - Desired behavior: invite list shows status, expiration, last sent, copy link, resend email, revoke.
+  - Status: completed in `USER-MANAGEMENT-001` with QA invite lifecycle coverage.
 
-- [ ] **UI-022: Member role editing**
+- [x] **UI-022: Member role editing**
   - Current issue: members are listed but role management needs a visible flow.
   - Desired behavior: tenant admin can promote/demote helper vs platoon admin and remove members.
+  - Status: completed in `USER-MANAGEMENT-002`, including last-active-admin protection.
 
-- [ ] **UI-023: Authentik group sync status**
+- [x] **UI-023: Authentik group sync status**
   - Current issue: Authentik groups and backend tenant memberships can feel disconnected.
   - Desired behavior: each member row shows source of access: tenant membership, Authentik group, or platform admin override.
+  - Status: operational diagnostics remain available to platform administrators, but tenant-facing group/source internals were removed on 2026-07-11. People & Invites now contains only actions a platoon admin can actually take, and Workspace Settings retains the workspace link without exposing Authentik group names.
 
 ## P1: FRG / Public Site Controls
 
-- [ ] **UI-024: Public login dropdown**
+- [x] **UI-024: Public login dropdown**
   - Current issue: it should be verified against final launch behavior.
   - Desired behavior: public visitors see vague wording; authorized users land in the app launcher, not Authentik's tile dashboard.
+  - Status: implemented and QA-covered; durable auth routing is pushed, while the latest public wording/polish remains in the shared worktree awaiting ACP.
 
-- [ ] **UI-025: Newsletter signup and approval**
+- [x] **UI-025: Newsletter signup and approval**
   - Current issue: signup exists, but live operational flow needs approval and email-send verification.
   - Desired behavior: public request, FRG admin approval/rejection, Brevo send path, unsubscribe path, export list.
+  - Status: signup/approval is pushed; delivery, unsubscribe, and export are implemented locally and QA-covered but await consolidated ACP and real Brevo validation.
 
-- [ ] **UI-026: FRG content editor**
+- [x] **UI-026: FRG content editor**
   - Current issue: newsletter/admin page exists, but the homepage still depends on curated app content.
   - Desired behavior: FRG admins can manage announcements, events, resources, and newsletter issues without touching code.
+  - Status: completed in `NEWSLETTER-002`; later mobile/public polish remains in the shared worktree awaiting ACP.
 
 ## P2: Reduce Clutter And False Promises
 
@@ -156,59 +193,68 @@ Use this as the working backlog before turning individual items into implementat
   - Current issue: `Use access token` is useful during setup but confusing for real users.
   - Desired behavior: only visible when `ALLOW_DEV_AUTH=true` or an explicit diagnostics flag is enabled.
 
-- [ ] **UI-028: Clean up legacy static app affordances**
+- [x] **UI-028: Clean up legacy static app affordances**
   - Current issue: root static pages still have old admin/password flows and PDF upload wording.
   - Desired behavior: keep legacy app available intentionally, but label it as legacy or remove confusing admin links after cutover.
+  - Status: completed in `LEGACY-001`; the static root is an explicitly labeled fallback.
 
 - [ ] **UI-029: Empty states should always give one next action**
   - Current issue: several empty states explain what is missing but do not always include a next button.
   - Desired behavior: empty states include the next action when the user has permission, such as `Create session`, `Upload packet`, `Invite helper`.
+  - Status: audited 2026-07-11; implementation remains. The first related destination fix now opens existing dashboard session work instead of the create-session wizard.
 
 - [ ] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
   - Desired behavior: labels map to clear destinations: `Open workspace`, `Open session`, `Review queue`, `Import packet`, `Launch app`.
+  - Status: in progress, 2026-07-11. Dashboard existing-work actions now say `Open sessions`/`Open session`; duplicate platform `Admin view` links are removed; public/legacy entry labels now distinguish `Launch app`, `Open equipment list`, and `Open workspace`. Packet/import and remaining empty-state labels still need consolidation.
 
-- [ ] **UI-031: Mobile-first toolbar cleanup**
+- [x] **UI-031: Mobile-first toolbar cleanup**
   - Current issue: desktop layout is improving, but mobile needs repeated inspection.
   - Desired behavior: primary action is visible, secondary actions collapse into a menu, text does not wrap awkwardly, tables become cards.
+  - Status: implemented locally, awaiting ACP, 2026-07-11, through `UX-002`. Mobile platform/tenant navigation, compact headers, contextual secondary actions, drawer-backed session actions, real card labels, 44px targets, and viewport/focus/overflow QA now cover Pixel 7 and 360px layouts.
 
 ## P2: Product Completion Tasks
 
-- [ ] **UI-032: Session closeout flow**
+- [x] **UI-032: Session closeout flow**
   - Desired behavior: close session shows unresolved rows, review count, proof state, final report preview, and confirm close.
+  - Status: implemented locally, awaiting ACP, 2026-07-10. Closeout now includes unresolved/status summaries, explicit confirmation, print/copy/CSV output, closed-session archiving, and a clear reopen action; focused and recorded-flow QA passes.
 
-- [ ] **UI-033: Item detail page/drawer**
+- [x] **UI-033: Item detail page/drawer**
   - Desired behavior: clicking a row opens a detail drawer with photos, known location, packet line, proof history, notes, and actions.
+  - Status: implemented locally, awaiting ACP, 2026-07-10. The responsive drawer centralizes packet and known-item fields, source batch, assignment, full evidence history, nested photo viewing, role-aware actions, live feedback, keyboard/focus behavior, and closed-session read-only safeguards. Desktop/mobile QA passes.
 
-- [ ] **UI-034: Photo proof viewer**
+- [x] **UI-034: Photo proof viewer**
   - Desired behavior: review queue has a real evidence viewer with image zoom, serial photo grouping, location note, and request-more-proof context.
+  - Status: implemented locally, awaiting ACP, 2026-07-10. Current and historical evidence now use labeled thumbnails; the responsive viewer provides zoom, keyboard/touch-sized navigation, captions, submitter/location/serial/note details, and the prior request context for resubmitted proof. Desktop/mobile QA coverage passes.
 
-- [ ] **UI-035: Search behavior audit**
+- [x] **UI-035: Search behavior audit**
   - Desired behavior: tenant search filters dashboard tables, sessions, rows, proof submissions, and member views consistently.
+  - Status: implemented locally, awaiting ACP, 2026-07-11, through `SEARCH-001`. A shared normalized multi-term matcher now drives page-scoped dashboard, session/proof-history, review, people/invitation, reports, platform/newsletter, and legacy-lookup search with clear/reset, query-aware empty states, focus behavior, and desktop/mobile coverage.
 
 - [ ] **UI-036: Loading and error states**
   - Desired behavior: every async button has loading text, disabled state, success state, and a useful failure message.
+  - Status: in progress, 2026-07-11, through `UX-003`. Session direct-check and close/reopen mutations now have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; public unsubscribe and legacy viewer login also lock while pending. Remaining newsletter and multi-row action audits are documented follow-ups.
 
 ## P3: Later SaaS Depth
 
 - [ ] **UI-037: Multi-workspace switcher**
   - Desired behavior: platform admins or users in multiple platoons can switch workspaces from the user menu.
 
-- [ ] **UI-038: Audit log UI**
+- [x] **UI-038: Audit log UI**
   - Desired behavior: platform and tenant admins can see who imported rows, changed status, approved proof, invited users, and closed sessions.
+  - Status: implemented locally, awaiting ACP, 2026-07-11, through `AUDIT-001`. The tenant-scoped Activity Log provides safe human-readable event details, actor/action/category/entity/date filters, stable cursor pagination, related-session navigation, tenant isolation, and contributor denial. Platform admins can inspect it through their tenant override; a global cross-tenant feed is a later option.
 
-- [ ] **UI-039: Tenant settings**
-  - Desired behavior: platoon admins can update display name, default guidance, permitted roles, and notification preferences.
+- [x] **UI-039: Tenant settings**
+  - Desired behavior: platoon admins can update the workspace display name and notification preferences without seeing deployment-only identity configuration.
+  - Status: field-refined, 2026-07-11, through `TENANT-004`. Display name and in-app/email preferences remain editable, the workspace link remains copyable, and retired guidance plus read-only slug/Authentik group internals are no longer tenant-facing.
 
 - [ ] **UI-040: Admin setup checklist**
   - Desired behavior: platform admin sees setup completion for DNS, Authentik group, tenant admin invite, packet import, and storage.
 
-## First Suggested Work Slice
+## Current Suggested Work Order
 
-1. UI-001: Authentik launch routing. Done for this pass; keep future work pointed at the app launcher, not Authentik's tile dashboard.
-2. UI-027: Hide manual token controls in production.
-3. UI-003: Packet upload wizard.
-4. UI-006 through UI-010: hide or wire platform sidebar dead controls.
-5. UI-013 through UI-015: wire tenant hamburger, notifications, and user menu.
+1. Keep the owner-only `OPS-002` rotation confirmation as a deferred, unverified follow-up; it does not block local feature work.
+2. `UI-036`: loading/error states, beginning with session-row and close/reopen mutation locks.
+3. `UI-029` and `UI-030`: actionable empty states and consistent destination/action labels.
 
-That sequence removes the biggest "this button lied to me" moments before adding deeper features.
+This order prioritizes workflow correctness and diagnosability before adding more surface area.

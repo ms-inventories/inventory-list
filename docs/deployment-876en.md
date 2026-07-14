@@ -136,6 +136,17 @@ Mount the NAS/share into the backend container and set:
 STORAGE_DRIVER=local
 STORAGE_ROOT=/data/inventory-uploads
 PUBLIC_MEDIA_BASE_URL=https://api.876en.org/media
+MEDIA_SIGNING_SECRET=<base64-encoded 32-byte-or-longer random secret>
+MEDIA_SESSION_TTL_SECONDS=300
+MEDIA_UPLOAD_STAGING_TTL_HOURS=24
+```
+
+`PUBLIC_MEDIA_BASE_URL` must point back to this API's `/media` route. Authorized tenant API activity issues a short-lived, host-only, HttpOnly, tenant-path-scoped media-session cookie; copied media URLs fail without that cookie, and packet-source files additionally require platoon-admin access. Media responses deliberately do not opt into CORS. New photos stay staged for `MEDIA_UPLOAD_STAGING_TTL_HOURS` until an authorized evidence/reference transaction consumes their opaque upload ID. Generate `MEDIA_SIGNING_SECRET` independently from the database and OIDC credentials, encode it as base64, and keep it only in the Coolify secret store.
+
+Schedule this backend command at least hourly in Coolify to remove expired, unattached files. It row-locks expired uploads, treats an already-missing file as cleaned, records an audit event, and never selects attached media:
+
+```bash
+npm --prefix backend run cleanup:media
 ```
 
 Recommended layout on NAS:
@@ -149,12 +160,11 @@ inventory-uploads/
     ms/
 ```
 
-Later backend work should add:
+Later storage work should add:
 
-- upload endpoint
 - image compression/normalization
-- storage key generation by tenant/session/submission
-- static media serving or signed download URLs
+- content hashes and a reconciliation report for legacy/unregistered NAS files
+- an explicit retention policy if future record deletion should eventually purge attached media
 
 ## Brevo Email
 
@@ -262,7 +272,7 @@ The next backend/frontend slice should add a manual match/override control for s
 
 Use this as the first real go-live pass.
 
-1. Backend Coolify env is set from `backend/.env.example`, with `NODE_ENV=production`, `ALLOW_DEV_AUTH=false`, the production `DATABASE_URL`, and `PLATFORM_ADMIN_EMAILS` containing your root admin email.
+1. Backend Coolify env is set from `backend/.env.example`, with `NODE_ENV=production`, `ALLOW_DEV_AUTH=false`, the production `DATABASE_URL`, a unique `MEDIA_SIGNING_SECRET`, and `PLATFORM_ADMIN_EMAILS` containing your root admin email.
 2. Backend deploy logs show `migration complete: database is current`, or the backend terminal runs `npm run migrate` with the same result.
 3. Backend `https://api.876en.org/health` returns `{ "ok": true }`.
 4. Frontend Coolify env has `VITE_BASE_DOMAIN=876en.org`, `VITE_API_BASE_URL=https://api.876en.org/api`, and the Authentik discovery/client values.
@@ -271,7 +281,8 @@ Use this as the first real go-live pass.
 7. Open `https://876en.org/#/launch`, sign in with the account in `876en-admins`, and confirm it routes to platform admin.
 8. Create the first tenants, for example `1st` and `ms`, assigning each platoon admin email as the first platoon admin.
 9. Open each tenant admin link, create a test inventory session, import a couple packet rows, invite one contributor, and submit/approve one proof item.
-10. After the test pass, leave the root static GitHub Pages site online until you are comfortable moving the public homepage to the Coolify app.
+10. Confirm a current in-app evidence/source link opens, then copy the same plain `/media/...` URL into an anonymous/private browser and confirm it returns `403`. Also confirm a contributor cannot open a packet-source link.
+11. After the test pass, leave the root static GitHub Pages site online until you are comfortable moving the public homepage to the Coolify app.
 
 ## QA Environment
 
@@ -302,6 +313,9 @@ BASE_DOMAIN=876en.org
 PUBLIC_APP_URL=https://qa.876en.org
 PUBLIC_MEDIA_BASE_URL=https://qa-api.876en.org/media
 STORAGE_ROOT=/data/inventory-uploads-qa
+MEDIA_SIGNING_SECRET=<separate base64-encoded QA-only random secret>
+MEDIA_SESSION_TTL_SECONDS=300
+MEDIA_UPLOAD_STAGING_TTL_HOURS=24
 ```
 
 Keep QA on a separate database and storage folder. Never enable `ALLOW_DEV_AUTH` on the production backend.

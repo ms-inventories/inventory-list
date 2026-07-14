@@ -21,6 +21,11 @@ async function seedQaRootSession(page) {
   }, qaRootAdmin);
 }
 
+async function activatePlatformNav(page, name, isMobileProject) {
+  if (isMobileProject) await page.getByRole("button", { name: "Open platform menu" }).click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 test.describe("Platform users", () => {
   test("users nav opens workspace access coverage", async ({ page }, testInfo) => {
     const isMobileProject = Boolean(testInfo.project.use.isMobile);
@@ -28,7 +33,7 @@ test.describe("Platform users", () => {
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);
 
-    await page.getByRole("button", { name: "Users", exact: true }).click();
+    await activatePlatformNav(page, "Users", isMobileProject);
 
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
     await expect(page.getByText("Review account coverage across active workspaces.")).toBeVisible();
@@ -42,12 +47,23 @@ test.describe("Platform users", () => {
     await expect(accessTable).toContainText("Admins");
     await expect(accessTable).toContainText("Actions");
     if (!isMobileProject) {
-      await expect(accessTable.getByText("Workspace", { exact: true })).toBeVisible();
-      await expect(accessTable.getByText("Admin group", { exact: true })).toBeVisible();
-      await expect(accessTable.getByText("Members", { exact: true })).toBeVisible();
-      await expect(accessTable.getByText("Admins", { exact: true })).toBeVisible();
-      await expect(accessTable.getByText("Actions", { exact: true })).toBeVisible();
+      const tableHeader = accessTable.locator(".platform-table-head");
+      await expect(tableHeader.getByText("Workspace", { exact: true })).toBeVisible();
+      await expect(tableHeader.getByText("Admin group", { exact: true })).toBeVisible();
+      await expect(tableHeader.getByText("Members", { exact: true })).toBeVisible();
+      await expect(tableHeader.getByText("Admins", { exact: true })).toBeVisible();
+      await expect(tableHeader.getByText("Actions", { exact: true })).toBeVisible();
     }
+
+    const accessRow = accessTable.getByRole("row").filter({ hasText: "MS Platoon" }).first();
+    const workspaceLink = accessRow.getByRole("link", { name: /Open ms\.localhost workspace/ });
+    await expect(workspaceLink).toHaveCount(1);
+    await expect(workspaceLink).toBeVisible();
+    await expect(accessRow.getByRole("link", { name: /admin view/i })).toHaveCount(0);
+    if (isMobileProject) {
+      await accessRow.getByRole("button", { name: "More actions for MS Platoon" }).click();
+    }
+    await expect(accessRow.getByRole("button", { name: "Copy link" })).toBeVisible();
 
     await page.getByPlaceholder("Search access by platoon or subdomain...").fill("no matching workspace");
     await expect(page.getByText("No user coverage found")).toBeVisible();

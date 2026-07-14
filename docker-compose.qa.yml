@@ -39,10 +39,13 @@ services:
       TENANT_ADMIN_GROUP: 876en-platoon-admin
       TENANT_GROUP_PREFIX: 876en-
       PLATFORM_ADMIN_EMAILS: qa-root@876en.test
-      CORS_ORIGINS: http://localhost:5175,http://admin.localhost:5175,http://ms.localhost:5175,http://1st.localhost:5175
+      CORS_ORIGINS: http://localhost:5175,http://admin.localhost:5175,http://ms.localhost:5175,http://1st.localhost:5175,http://qa-other.localhost:5175,http://qa-settings-desktop.localhost:5175,http://qa-settings-mobile.localhost:5175,http://qa-search-desktop.localhost:5175,http://qa-search-mobile.localhost:5175
       STORAGE_DRIVER: local
       STORAGE_ROOT: /data/inventory-uploads
-      PUBLIC_MEDIA_BASE_URL: http://localhost:5300/media
+      PUBLIC_MEDIA_BASE_URL: /media
+      MEDIA_SIGNING_SECRET: cWEtb25seS1tZWRpYS1jb29raWUta2V5LTMyLWJ5dGVzIQ==
+      MEDIA_SESSION_TTL_SECONDS: 300
+      MEDIA_UPLOAD_STAGING_TTL_HOURS: 24
       EMAIL_FROM_NAME: 876 EN Inventory QA
       EMAIL_FROM_ADDRESS: no-reply@localhost
     ports:
@@ -64,7 +67,8 @@ services:
     command: sh -lc "npm --prefix react-app run dev -- --host 0.0.0.0"
     environment:
       VITE_BASE_DOMAIN: localhost
-      VITE_API_BASE_URL: http://localhost:5300/api
+      VITE_API_BASE_URL: /api
+      VITE_DEV_API_PROXY_TARGET: http://qa-api:3000
       VITE_LEGACY_BUCKET_BASE_URL: https://ms-inventories.s3.us-east-1.amazonaws.com
       VITE_OIDC_CLIENT_ID: qa-inventory-web
       VITE_OIDC_DISCOVERY_URL: http://auth.localhost/application/o/inventory-web/.well-known/openid-configuration

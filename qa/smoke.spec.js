@@ -4,6 +4,7 @@ const FRONTEND_URL = process.env.QA_FRONTEND_URL || "http://localhost:5175";
 const ADMIN_URL = process.env.QA_ADMIN_URL || "http://admin.localhost:5175/#/admin";
 const NEWSLETTER_URL = process.env.QA_NEWSLETTER_URL || "http://admin.localhost:5175/#/newsletter";
 const TENANT_URL = process.env.QA_TENANT_URL || "http://ms.localhost:5175/#/admin";
+const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
 const LAUNCH_URL = process.env.QA_LAUNCH_URL || "http://localhost:5175/#/launch";
 
 const qaIdentities = {
@@ -56,17 +57,24 @@ test.describe("QA smoke", () => {
     await expect(loginMenu).toBeVisible();
 
     await loginMenu.click();
-    await expect(page.getByRole("link", { name: /Member portal/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Launch app/ })).toBeVisible();
+    await expect(page.getByText("Sign in to continue")).toBeVisible();
+    await expect(page.locator(".public-login-panel")).not.toContainText(/inventory/i);
   });
 
   test("platform root admin can reach platoon management", async ({ page }) => {
     await page.goto(ADMIN_URL);
     await signInWithQaPersona(page, "Root admin");
 
-    await expect(page.getByRole("heading", { name: "Platoons" })).toBeVisible();
+    const recentPlatoons = page.locator(".platform-dashboard-card").filter({
+      has: page.getByRole("heading", { name: "Recent platoons", exact: true })
+    });
+    await recentPlatoons.getByRole("button", { name: "View all", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Platoons", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByRole("button", { name: "Create platoon" }).first()).toBeVisible();
     await expect(page.getByText("ms.localhost").first()).toBeVisible();
-    await expect(page.getByText("Super administrator")).toBeVisible();
+    await page.getByRole("button", { name: "Open account actions" }).click();
+    await expect(page.getByRole("region", { name: "Account menu" }).getByText("QA Root Admin", { exact: true })).toBeVisible();
   });
 
   test("launch router sends platform admins to platform admin", async ({ page }) => {
@@ -101,11 +109,41 @@ test.describe("QA smoke", () => {
     await page.getByRole("button", { name: "Issues", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Newsletter issues", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "New issue" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Black Shadow QA Update" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Export deliveries" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Black Shadow Family Update" })).toBeVisible();
+    await expect(page.getByText("Delivery records", { exact: true })).toBeVisible();
+
+    await page.getByLabel("Send test").fill("qa-proof@example.com");
+    await page.getByRole("button", { name: "Send test" }).click();
+    await expect(page.getByText(/Test email was not sent: smtp_not_configured|Test email sent to/)).toBeVisible();
+
+    await page.getByRole("button", { name: "Publish", exact: true }).click();
+    await expect(page.getByText(/recipient|No delivery records yet/)).toBeVisible();
 
     await page.getByRole("button", { name: "Subscribers", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByText("Approved subscribers", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Export CSV" })).toBeVisible();
+  });
+
+  test("newsletter unsubscribe page accepts a subscriber email", async ({ page }) => {
+    const email = `qa-unsub-${Date.now()}@example.com`;
+
+    await page.request.post(`${API_URL}/newsletter/subscribers`, {
+      data: {
+        displayName: "QA Unsubscribe",
+        email,
+        platoon: "MS",
+        supervisorName: "QA Lead"
+      }
+    });
+
+    await page.goto(`${FRONTEND_URL}/#/unsubscribe?email=${encodeURIComponent(email)}`);
+    await expect(page.getByRole("heading", { name: "Unsubscribe" })).toBeVisible();
+    await expect(page.getByLabel("Email address")).toHaveValue(email);
+
+    await page.getByRole("button", { name: "Unsubscribe" }).click();
+    await expect(page.getByText("You have been unsubscribed from the newsletter.")).toBeVisible();
   });
 
   test("platoon admin sees leader dashboard and admin-only controls", async ({ page }) => {
@@ -114,16 +152,31 @@ test.describe("QA smoke", () => {
 
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Start new inventory" })).toBeVisible();
+    const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
+    if (await workspaceMenu.isVisible()) {
+      await workspaceMenu.click();
+      await expect(page.getByRole("button", { name: "Review Queue" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "People & Invites" })).toBeVisible();
+      await page.locator(".leader-brand").getByRole("button", { name: "Close menu" }).click();
+      await page.getByRole("button", { name: "More actions", exact: true }).click();
+    } else {
+      await expect(page.getByRole("button", { name: "Review Queue" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "People & Invites" })).toBeVisible();
+    }
     await expect(page.getByRole("button", { name: "Upload packet" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Review Queue" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "People & Invites" })).toBeVisible();
   });
 
-  test("platoon admin can open and review packet upload rows", async ({ page }) => {
+  test("platoon admin can open and review packet upload rows", async ({ page }, testInfo) => {
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
+    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Upload packet" }).click();
+    const uploadPacket = page.getByRole("button", { name: "Upload packet" });
+    if (testInfo.project.name === "mobile-chrome") {
+      await page.getByRole("button", { name: "More actions", exact: true }).click();
+    }
+    await expect(uploadPacket).toBeVisible();
+    await uploadPacket.click();
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
@@ -150,7 +203,12 @@ test.describe("QA smoke", () => {
     await signInWithQaPersona(page, "NCO");
 
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-    await expect(page.getByText("Contributor")).toBeVisible();
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    const userMenu = page.getByRole("region", { name: "User menu" });
+    await expect(userMenu.locator(".leader-profile-summary").getByText("Contributor", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
+    if (await workspaceMenu.isVisible()) await workspaceMenu.click();
     await expect(page.getByRole("button", { name: "Inventory Sessions" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Review Queue" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "People & Invites" })).toHaveCount(0);

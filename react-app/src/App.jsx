@@ -8,6 +8,7 @@ import {
   LogIn,
   Mail,
   Megaphone,
+  MoreHorizontal,
   Repeat2,
   ScanText,
   Search,
@@ -18,9 +19,11 @@ import {
 import AcceptInvite from "./components/AcceptInvite.jsx";
 import AdminConsole from "./components/AdminConsole.jsx";
 import blackShadowLogo from "./assets/black-shadow-company.jpg";
+import { APP_NAME, ORG_NAME } from "./branding.js";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "./config.js";
 import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
 import { apiRequest, getApiErrorMessage } from "./lib/api.js";
+import { matchesSearch, normalizeSearchText, searchTerms } from "./lib/search.js";
 import {
   clearAuthSession,
   beginOidcLogin,
@@ -161,15 +164,12 @@ function getFieldValue(item, label) {
 }
 
 function normalizeSearchValue(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeSearchText(value);
 }
 
 function getSearchText(item) {
   const fieldText = (item.fields || [])
+    .filter(field => !isImageField(field))
     .map(field => `${field.label || ""} ${fieldValueToText(field.value)}`)
     .join(" ");
 
@@ -177,19 +177,12 @@ function getSearchText(item) {
 }
 
 function getSearchTerms(query) {
-  return normalizeSearchValue(query)
-    .split(" ")
+  return searchTerms(query)
     .filter(term => term.length > 1 && !SEARCH_NOISE_TERMS.has(term));
 }
 
 function itemMatchesSearch(item, query) {
-  const normalizedQuery = normalizeSearchValue(query);
-  const terms = getSearchTerms(query);
-  if (!normalizedQuery) return true;
-  if (!terms.length) return false;
-
-  const haystack = normalizeSearchValue(getSearchText(item));
-  return terms.every(term => haystack.includes(term));
+  return matchesSearch(getSearchText(item), query);
 }
 
 function getItemSearchParts(item) {
@@ -348,6 +341,60 @@ function StatusText({ status, className = "" }) {
   return (
     <div className={`status-text ${className} ${status?.isError ? "error" : ""}`} role="status" aria-live="polite">
       {status?.text || ""}
+    </div>
+  );
+}
+
+function ViewerActionMenu({ children }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (!menuRef.current?.contains(event.target)) setIsOpen(false);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setIsOpen(false);
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div ref={menuRef} className="responsive-action-menu mobile-secondary-actions viewer-action-menu">
+      <button
+        ref={triggerRef}
+        className="btn btn-secondary"
+        type="button"
+        aria-label="More inventory actions"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen(open => !open)}
+      >
+        <MoreHorizontal aria-hidden="true" />
+        <span>More</span>
+      </button>
+      {isOpen ? (
+        <div
+          className="responsive-action-panel"
+          onClick={event => {
+            if (event.target.closest("button, a")) setIsOpen(false);
+          }}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -755,7 +802,7 @@ function LaunchRouter() {
   return (
     <div className="auth-screen launch-screen">
       <section className="auth-card launch-card" aria-labelledby="launchTitle">
-        <p className="eyebrow">876 EN Inventory</p>
+        <p className="eyebrow">{APP_NAME}</p>
         <h1 id="launchTitle">Opening workspace</h1>
         <p className="auth-copy">
           We are checking your account and sending you to the right place.
@@ -911,7 +958,7 @@ function PublicHome() {
     const supervisorName = subscriberForm.supervisorName.trim();
 
     if (!displayName || !email || !platoon || !supervisorName) {
-      setStatus({ text: "Fill out each field so an admin can verify the request.", isError: true });
+      setStatus({ text: "Fill out each field so the request can be reviewed.", isError: true });
       return;
     }
 
@@ -938,7 +985,7 @@ function PublicHome() {
       setStatus({
         text: isApproved
           ? "You are already approved for the Black Shadow Company newsletter."
-          : "Request submitted for review. Newsletter emails begin after an admin approves the request.",
+          : "Request submitted for review. Newsletter emails begin after approval.",
         isError: false
       });
     } catch (error) {
@@ -957,7 +1004,7 @@ function PublicHome() {
       Icon: Megaphone,
       fallback: {
         title: "Announcements",
-        summary: "Public unit and family updates without exposing internal inventory work."
+        summary: "Company and family updates for the Black Shadow community."
       }
     },
     {
@@ -996,6 +1043,7 @@ function PublicHome() {
         <img className="public-hero-logo" src={blackShadowLogo} alt="" aria-hidden="true" />
         <nav className="public-nav" aria-label="Public navigation">
           <a className="public-brand" href="/">
+            <img src={blackShadowLogo} alt="" aria-hidden="true" />
             <span>876 EN</span>
             <strong>Black Shadow Company</strong>
           </a>
@@ -1009,8 +1057,8 @@ function PublicHome() {
               <a href={getApplicationPortalUrl()}>
                 <LogIn aria-hidden="true" />
                 <span>
-                  <strong>Member portal</strong>
-                  <small>Open approved apps</small>
+                  <strong>Launch app</strong>
+                  <small>Sign in to continue</small>
                 </span>
               </a>
             </div>
@@ -1079,11 +1127,9 @@ function PublicHome() {
           </div>
           <div className="public-newsletter-form public-newsletter-request-card">
             <div>
-              <p className="eyebrow">Company verification</p>
+              <p className="eyebrow">Updates</p>
               <h3>Request newsletter access</h3>
-              <p>
-                Submit a short request so an admin can approve newsletter delivery.
-              </p>
+              <p>Submit a short request so updates go to the right people.</p>
             </div>
             <button className="btn btn-primary btn-full" type="button" onClick={openSubscriberModal}>
               <ShieldCheck aria-hidden="true" />
@@ -1103,7 +1149,7 @@ function PublicHome() {
               <span className="modal-icon"><ShieldCheck aria-hidden="true" /></span>
               <div>
                 <p className="eyebrow">Newsletter request</p>
-                <div className="modal-title" id="newsletterRequestTitle">Verify company connection</div>
+                <div className="modal-title" id="newsletterRequestTitle">Request company updates</div>
               </div>
               <button
                 className="icon-button"
@@ -1138,27 +1184,29 @@ function PublicHome() {
                 required
               />
 
-              <label className="field-label" htmlFor="newsletterRequestPlatoon">Platoon</label>
+              <label className="field-label" htmlFor="newsletterRequestPlatoon">Connection</label>
               <input
                 id="newsletterRequestPlatoon"
                 className="input"
                 type="text"
                 value={subscriberForm.platoon}
-                placeholder="1st Platoon, Maintenance, HQ..."
+                placeholder="Family, soldier, platoon, section"
                 onChange={event => updateSubscriberForm("platoon", event.target.value)}
                 required
               />
+              <small className="field-hint">How you are connected to the company.</small>
 
-              <label className="field-label" htmlFor="newsletterRequestSupervisor">Immediate supervisor</label>
+              <label className="field-label" htmlFor="newsletterRequestSupervisor">Unit contact</label>
               <input
                 id="newsletterRequestSupervisor"
                 className="input"
                 type="text"
                 value={subscriberForm.supervisorName}
-                placeholder="Squad leader or immediate supervisor"
+                placeholder="Sponsor or unit contact"
                 onChange={event => updateSubscriberForm("supervisorName", event.target.value)}
                 required
               />
+              <small className="field-hint">The person who can confirm the request if needed.</small>
 
               <div className="button-row public-newsletter-modal-actions">
                 <button className="btn btn-primary" type="submit" disabled={!canSubmitSubscriberRequest || isSubscriberSubmitting}>
@@ -1185,10 +1233,15 @@ function NewsletterUnsubscribe() {
     return new URLSearchParams(query).get("email") || "";
   });
   const [status, setStatus] = useState({ text: "", isError: false });
+  const [isUnsubscribing, setIsUnsubscribing] = useState(false);
+  const unsubscribePendingRef = useRef(false);
 
   async function unsubscribe(event) {
     event.preventDefault();
+    if (unsubscribePendingRef.current) return;
+    unsubscribePendingRef.current = true;
     try {
+      setIsUnsubscribing(true);
       setStatus({ text: "Updating subscription...", isError: false });
       await apiRequest("/newsletter/unsubscribe", {
         method: "POST",
@@ -1197,6 +1250,9 @@ function NewsletterUnsubscribe() {
       setStatus({ text: "You have been unsubscribed from the newsletter.", isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      unsubscribePendingRef.current = false;
+      setIsUnsubscribing(false);
     }
   }
 
@@ -1215,11 +1271,12 @@ function NewsletterUnsubscribe() {
             value={email}
             placeholder="name@example.com"
             onChange={event => setEmail(event.target.value)}
+            disabled={isUnsubscribing}
             required
           />
-          <button className="btn btn-primary btn-full" type="submit" disabled={!email.trim()}>
+          <button className="btn btn-primary btn-full" type="submit" disabled={!email.trim() || isUnsubscribing}>
             <Mail aria-hidden="true" />
-            <span>Unsubscribe</span>
+            <span>{isUnsubscribing ? "Unsubscribing..." : "Unsubscribe"}</span>
           </button>
           <StatusText status={status} />
         </form>
@@ -1235,6 +1292,7 @@ function LoginScreen({
   tenantSlug,
   dataSource,
   loginStatus,
+  isLoggingIn,
   onSelectedPlatoonIdChange,
   onPasswordChange,
   onSubmit
@@ -1242,8 +1300,8 @@ function LoginScreen({
   return (
     <div className="auth-screen">
       <section className="auth-card" aria-labelledby="loginTitle">
-        <p className="eyebrow">{tenantSlug ? `${tenantSlug} workspace` : "876 EN inventory"}</p>
-        <h1 id="loginTitle">Equipment Inventory</h1>
+        <p className="eyebrow">{tenantSlug ? `${tenantSlug} workspace` : ORG_NAME}</p>
+        <h1 id="loginTitle">{APP_NAME}</h1>
         <p className="auth-copy">
           {dataSource === "demo"
             ? "Demo data is loaded for local testing. Use password demo."
@@ -1256,7 +1314,7 @@ function LoginScreen({
             id="platoonSelect"
             className="select"
             value={selectedPlatoonId}
-            disabled={!indexData}
+            disabled={!indexData || isLoggingIn}
             onChange={e => onSelectedPlatoonIdChange(e.target.value)}
           >
             {(indexData?.platoons || []).map(platoon => (
@@ -1271,20 +1329,21 @@ function LoginScreen({
             className="input"
             placeholder="Password..."
             value={password}
+            disabled={isLoggingIn}
             onChange={e => onPasswordChange(e.target.value)}
             onKeyDown={e => {
-              if (e.key === "Enter") onSubmit();
+              if (e.key === "Enter" && !isLoggingIn) onSubmit();
             }}
           />
 
-          <button id="submitBtn" className="btn btn-primary btn-full" onClick={onSubmit}>
+          <button id="submitBtn" className="btn btn-primary btn-full" type="button" disabled={!indexData || isLoggingIn} onClick={onSubmit}>
             <LogIn aria-hidden="true" />
-            <span>Open inventory</span>
+            <span>{isLoggingIn ? "Opening..." : "Open equipment list"}</span>
           </button>
 
           <a className="btn btn-secondary btn-full" href="/#/admin">
             <Settings aria-hidden="true" />
-            <span>Admin view</span>
+            <span>Open workspace</span>
           </a>
 
           <StatusText status={loginStatus} />
@@ -1536,11 +1595,14 @@ function ViewerApp() {
   const [inventory, setInventory] = useState(null);
   const [selectedPlatoon, setSelectedPlatoon] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanPicker, setScanPicker] = useState(null);
   const [lightboxImage, setLightboxImage] = useState(null);
+  const searchInputRef = useRef(null);
   const cameraInputRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const loginPendingRef = useRef(false);
   const tenantSlug = useMemo(() => getTenantSlugFromHostname(), []);
 
   useEffect(() => {
@@ -1607,6 +1669,7 @@ function ViewerApp() {
   const visibleCount = filteredItems.length || suggestions.length;
 
   async function attemptLogin() {
+    if (loginPendingRef.current) return;
     setLoginStatus({ text: "", isError: false });
 
     if (!currentPlatoon) {
@@ -1614,6 +1677,8 @@ function ViewerApp() {
       return;
     }
 
+    loginPendingRef.current = true;
+    setIsLoggingIn(true);
     setLoginStatus({ text: "Loading inventory...", isError: false });
 
     try {
@@ -1638,6 +1703,9 @@ function ViewerApp() {
       setLoginStatus({ text: "", isError: false });
     } catch {
       setLoginStatus({ text: "Failed to load platoon inventory", isError: true });
+    } finally {
+      loginPendingRef.current = false;
+      setIsLoggingIn(false);
     }
   }
 
@@ -1653,6 +1721,11 @@ function ViewerApp() {
   function searchPacketLine(line) {
     setSearchQuery(line || "");
     setScanStatus({ text: line ? `Searched: ${line}` : "", isError: false });
+  }
+
+  function clearInventorySearch() {
+    setSearchQuery("");
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
   }
 
   async function scanPacketForSearch(file) {
@@ -1685,6 +1758,7 @@ function ViewerApp() {
         tenantSlug={tenantSlug}
         dataSource={dataSource}
         loginStatus={loginStatus}
+        isLoggingIn={isLoggingIn}
         onSelectedPlatoonIdChange={setSelectedPlatoonId}
         onPasswordChange={setPassword}
         onSubmit={attemptLogin}
@@ -1697,21 +1771,34 @@ function ViewerApp() {
       <header className="app-header">
         <div>
           <p className="eyebrow">{tenantSlug ? `${tenantSlug} workspace` : "Platoon inventory"}</p>
-          <h1 id="pageTitle">{selectedPlatoon?.name || "Equipment Inventory"}</h1>
+          <h1 id="pageTitle">{selectedPlatoon?.name || APP_NAME}</h1>
           <p className="header-copy">Fast lookup for what is on hand and where it is staged.</p>
         </div>
         <div className="header-actions">
-          <label className="search-wrap" htmlFor="searchInput">
+          <div className="search-wrap" role="search">
             <Search aria-hidden="true" />
             <input
+              ref={searchInputRef}
               id="searchInput"
               className="input search-input"
               type="search"
+              aria-label="Search inventory"
               placeholder="Search packet item, LIN, NSN..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={event => {
+                if (event.key === "Escape" && searchQuery) {
+                  event.preventDefault();
+                  clearInventorySearch();
+                }
+              }}
             />
-          </label>
+            {searchQuery ? (
+              <button className="search-clear-button" type="button" aria-label="Clear search" onClick={clearInventorySearch}>
+                <X aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
           <input
             ref={cameraInputRef}
             className="hidden"
@@ -1739,25 +1826,39 @@ function ViewerApp() {
             <ScanText aria-hidden="true" />
             <span>Scan paper</span>
           </button>
-          <button className="btn btn-secondary" type="button" disabled={isScanning} onClick={() => pdfInputRef.current?.click()}>
+          <button className="btn btn-secondary desktop-secondary-action" type="button" disabled={isScanning} onClick={() => pdfInputRef.current?.click()}>
             <FileUp aria-hidden="true" />
             <span>Upload PDF</span>
           </button>
-          <a className="btn btn-secondary" href="/#/admin">
+          <a className="btn btn-secondary desktop-secondary-action" href="/#/admin">
             <Settings aria-hidden="true" />
-            <span>Admin</span>
+            <span>Open workspace</span>
           </a>
-          <button className="btn btn-secondary" type="button" onClick={resetToLogin}>
+          <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={resetToLogin}>
             <Repeat2 aria-hidden="true" />
             <span>Change platoon</span>
           </button>
+          <ViewerActionMenu>
+            <button type="button" disabled={isScanning} onClick={() => pdfInputRef.current?.click()}>
+              <FileUp aria-hidden="true" />
+              <span>Upload PDF</span>
+            </button>
+            <a href="/#/admin">
+              <Settings aria-hidden="true" />
+              <span>Open workspace</span>
+            </a>
+            <button type="button" onClick={resetToLogin}>
+              <Repeat2 aria-hidden="true" />
+              <span>Change platoon</span>
+            </button>
+          </ViewerActionMenu>
         </div>
       </header>
 
       <StatusText status={scanStatus} className="scan-status" />
 
       <section className="summary-strip" aria-label="Inventory summary">
-        <div className="summary-item">
+        <div className="summary-item" aria-live="polite">
           <span className="summary-value">{items.length}</span>
           <span className="summary-label">Items tracked</span>
         </div>
