@@ -4746,7 +4746,7 @@ export function registerRoutes(app) {
         photoIds: z.array(z.string().uuid()).optional(),
         photos: z.array(z.object({
           uploadId: z.string().uuid(),
-          caption: z.string().optional(),
+          caption: z.string().nullish(),
           kind: z.enum(photoKinds).default("general")
         })).max(8).optional()
       }),
