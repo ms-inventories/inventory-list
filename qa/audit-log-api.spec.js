@@ -3,6 +3,7 @@ import { Client } from "pg";
 
 const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
 const QA_DATABASE_URL = process.env.QA_DATABASE_URL || "postgres://inventory:inventory@localhost:55432/inventory_qa";
+const PHOTO_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const qaAdmin = {
   sub: "qa-lead",
@@ -59,6 +60,20 @@ async function createSession(request, name, identity = qaAdmin, tenantSlug = "ms
   }))).session;
 }
 
+async function uploadPhoto(request, label, identity = qaNco) {
+  return (await responseJson(await request.post(`${API_URL}/uploads/photos`, {
+    headers: qaHeaders(identity),
+    data: {
+      fileName: `${label}.png`,
+      mimeType: "image/png",
+      dataUrl: PHOTO_DATA_URL,
+      caption: label,
+      kind: "general",
+      purpose: "evidence"
+    }
+  }))).photo;
+}
+
 test.describe("tenant audit log API", () => {
   test("returns a safe, filterable, cursor-paginated tenant activity feed", async ({ request }, testInfo) => {
     test.setTimeout(60_000);
@@ -109,13 +124,15 @@ test.describe("tenant audit log API", () => {
       headers: qaHeaders(qaAdmin),
       data: { memberId: ncoMember.id }
     }));
+    const proofPhoto = await uploadPhoto(request, `audit-proof-${suffix}`);
     const submission = (await responseJson(await request.post(`${API_URL}/session-items/${sessionItemId}/submissions`, {
       headers: qaHeaders(qaNco),
       data: {
         status: "found",
         locationText: `Audit location ${suffix}`,
         serialNumber: `AUDIT-${suffix}`,
-        note: `Audit proof ${suffix}`
+        note: `Audit proof ${suffix}`,
+        photos: [{ uploadId: proofPhoto.uploadId, kind: "general" }]
       }
     }))).submission;
     await responseJson(await request.patch(`${API_URL}/submissions/${submission.id}/review`, {
@@ -181,7 +198,7 @@ test.describe("tenant audit log API", () => {
 
     const submitted = feed.events.find(event => event.action === "submission.created" && event.entity.id === submission.id);
     expect(submitted?.actor.email).toBe(qaNco.email);
-    expect(submitted?.details).toEqual({ status: "found", photoCount: 0 });
+    expect(submitted?.details).toEqual({ status: "found", photoCount: 1 });
     expect(submitted?.details).not.toHaveProperty("mediaUploadIds");
     expect(submitted?.context).toMatchObject({ sessionId: session.id, sessionItemId, packetLine });
 

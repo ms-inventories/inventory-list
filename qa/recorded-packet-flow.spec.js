@@ -60,9 +60,13 @@ test.describe("recorded packet and session regression", () => {
     await packetDialog.getByRole("button", { name: "Import 27 rows" }).click();
     await expect(packetDialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
     await captureStep(page, testInfo, "03-import-complete");
-    await packetDialog.getByRole("button", { name: "Open session" }).click();
+    await packetDialog.getByRole("button", { name: /^(Open session|Review matches)$/ }).click();
 
     await expect(packetDialog).toBeHidden();
+    const itemDrawer = page.locator(".session-item-drawer");
+    if (await itemDrawer.isVisible()) {
+      await itemDrawer.getByRole("button", { name: "Close item details" }).click();
+    }
     await expect(page.locator(".session-summary", { hasText: sessionName })).toBeVisible();
     const importHistoryDisclosure = page.locator("details.packet-import-history");
     await expect(importHistoryDisclosure).toBeVisible();

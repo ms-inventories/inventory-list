@@ -98,7 +98,7 @@ test.describe("tenant media access", () => {
       expect(setCookie).toContain("Path=/media/tenants/ms");
       expect(setCookie).toContain("Max-Age=300");
 
-      await responseJson(await contributor.post(`${API_URL}/session-items/${item.sessionItem.id}/submissions`, {
+      const proofSubmission = await responseJson(await contributor.post(`${API_URL}/session-items/${item.sessionItem.id}/submissions`, {
         headers: qaHeaders(qaNco),
         data: {
           status: "found",
@@ -110,6 +110,18 @@ test.describe("tenant media access", () => {
           }]
         }
       }));
+      const savedProof = await responseJson(await admin.patch(
+        `${API_URL}/submissions/${proofSubmission.submission.id}/review`,
+        {
+          headers: qaHeaders(qaAdmin),
+          data: {
+            decision: "approved",
+            saveItem: true,
+            savedMediaUploadIds: [upload.photo.uploadId]
+          }
+        }
+      ));
+      expect(savedProof.savedItem?.id).toBeTruthy();
 
       const photoUrl = assertProtectedMediaUrl(upload.photo.url);
       await expectMediaDenied(await anonymous.get(photoUrl.toString(), {
@@ -151,7 +163,7 @@ test.describe("tenant media access", () => {
       const referenceUrl = assertProtectedMediaUrl(referenceUpload.photo.url);
       await expectMediaDenied(await admin.get(referenceUrl.toString()));
 
-      await responseJson(await admin.post(`${API_URL}/inventory/items`, {
+      const referenceItem = await responseJson(await admin.post(`${API_URL}/inventory/items`, {
         headers: qaHeaders(qaAdmin),
         data: {
           title: `Protected reference ${suffix}`,
@@ -160,6 +172,15 @@ test.describe("tenant media access", () => {
         }
       }));
       expect((await admin.get(referenceUrl.toString())).status()).toBe(200);
+      await expectMediaDenied(await contributor.get(referenceUrl.toString()));
+
+      await responseJson(await admin.post(`${API_URL}/inventory/sessions/${session.session.id}/items`, {
+        headers: qaHeaders(qaAdmin),
+        data: {
+          packetLine: `QA-CONFIRMED-REFERENCE-${suffix.toUpperCase()}`,
+          inventoryItemId: referenceItem.item.id
+        }
+      }));
       expect((await contributor.get(referenceUrl.toString())).status()).toBe(200);
       await expectMediaDenied(await anonymous.get(referenceUrl.toString()));
 
@@ -195,6 +216,32 @@ test.describe("tenant media access", () => {
       expect(adminSource.headers()["content-disposition"]).toContain("attachment");
       expect(adminSource.headers()["content-disposition"]).toContain(`protected-source-${suffix}.txt`);
       expect(await adminSource.text()).toBe(`${packetLine}\n`);
+
+      await responseJson(await admin.patch(`${API_URL}/inventory/sessions/${session.session.id}`, {
+        headers: qaHeaders(qaAdmin),
+        data: { status: "closed" }
+      }));
+      await expectMediaDenied(await contributor.get(photoUrl.toString()));
+      await expectMediaDenied(await contributor.get(referenceUrl.toString()));
+
+      const followUp = await responseJson(await admin.post(`${API_URL}/inventory/sessions`, {
+        headers: qaHeaders(qaAdmin),
+        data: { name: `QA protected media follow-up ${suffix}`, status: "active" }
+      }));
+      for (const [savedItemId, label] of [
+        [savedProof.savedItem.id, "proof"],
+        [referenceItem.item.id, "reference"]
+      ]) {
+        await responseJson(await admin.post(`${API_URL}/inventory/sessions/${followUp.session.id}/items`, {
+          headers: qaHeaders(qaAdmin),
+          data: {
+            packetLine: `QA-CONFIRMED-${label.toUpperCase()}-${suffix.toUpperCase()}`,
+            inventoryItemId: savedItemId
+          }
+        }));
+      }
+      expect((await contributor.get(photoUrl.toString())).status()).toBe(200);
+      expect((await contributor.get(referenceUrl.toString())).status()).toBe(200);
 
       const state = await contributor.storageState();
       const mediaCookie = state.cookies.find(cookie => cookie.name === "inventory_media_ms");

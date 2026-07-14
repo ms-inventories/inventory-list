@@ -94,7 +94,12 @@ async function addPacketRows(page) {
   await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
   await dialog.getByRole("button", { name: /Import 2 rows?/ }).click();
   await expect(dialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
-  await dialog.getByRole("button", { name: "Open session" }).click();
+  await dialog.getByRole("button", { name: /^(Open session|Review matches)$/ }).click();
+  await expect(dialog).toBeHidden();
+  const itemDrawer = page.locator(".session-item-drawer");
+  if (await itemDrawer.isVisible()) {
+    await itemDrawer.getByRole("button", { name: "Close item details" }).click();
+  }
 }
 
 test.describe("session assignment", () => {
@@ -129,8 +134,9 @@ test.describe("session assignment", () => {
     await page.locator(".session-row", { hasText: sessionName }).click();
     await page.getByRole("button", { name: /^Mine\b/ }).click();
 
-    await expect(page.getByText("Assigned to QA NCO")).toBeVisible();
-    await expect(page.getByText("Tool Kit", { exact: true })).toBeVisible();
+    const assignedToolKitRow = page.locator(".session-item", { hasText: "TOOL KIT CARPENTERS" }).first();
+    await expect(assignedToolKitRow).toBeVisible();
+    await expect(assignedToolKitRow.getByText("Assigned to QA NCO", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: /^Unclaimed\b/ }).click();
     const generatorRow = page.locator(".session-item", { hasText: "TAMPER,VIBRATING" }).first();
     if (testInfo.project.name === "mobile-chrome") {

@@ -536,7 +536,7 @@ function normalizeMetadataValue(value) {
   return value ? [String(value)] : [];
 }
 
-function getInventoryItemImages(item) {
+function getLegacyInventoryItemImages(item) {
   const metadata = item?.metadata || {};
   const values = [
     metadata.image,
@@ -561,6 +561,62 @@ function getInventoryItemImages(item) {
   return [...new Set(values)]
     .filter(value => /^(https?:\/\/|data:image\/|\/media\/|\/assets\/|images\/|assets\/)/i.test(value))
     .slice(0, 3);
+}
+
+function getInventoryItemPhotos(item) {
+  const hasNormalizedPhotos = Array.isArray(item?.photos) || Array.isArray(item?.savedPhotos);
+  const savedPhotos = Array.isArray(item?.photos)
+    ? item.photos
+    : Array.isArray(item?.savedPhotos)
+      ? item.savedPhotos
+      : [];
+  const normalized = savedPhotos
+    .map((photo, index) => {
+      if (typeof photo === "string") {
+        return {
+          id: `saved-${index}-${photo}`,
+          mediaUploadId: "",
+          url: photo,
+          kind: "general",
+          caption: ""
+        };
+      }
+      return {
+        ...photo,
+        id: photo?.id || photo?.mediaUploadId || photo?.storageKey || `saved-${index}`,
+        mediaUploadId: photo?.mediaUploadId || "",
+        url: photo?.url || "",
+        kind: photo?.kind || "general",
+        caption: photo?.caption || ""
+      };
+    })
+    .filter(photo => photo.url);
+
+  if (!hasNormalizedPhotos || item?.legacyMediaMetadata === true) {
+    getLegacyInventoryItemImages(item).forEach((url, index) => {
+      if (!normalized.some(photo => photo.url === url)) {
+        normalized.push({
+          id: `legacy-${index}-${url}`,
+          mediaUploadId: "",
+          url,
+          kind: "general",
+          caption: "Saved reference"
+        });
+      }
+    });
+  }
+
+  const seen = new Set();
+  return normalized.filter(photo => {
+    const key = photo.mediaUploadId || photo.url;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 3);
+}
+
+function getInventoryItemImages(item) {
+  return getInventoryItemPhotos(item).map(photo => photo.url);
 }
 
 function sessionProgress(session) {
@@ -684,6 +740,13 @@ function getSessionItemSearchText(item) {
     item?.inventoryItem?.description,
     item?.inventoryItem?.currentLocation,
     metadataSearchText(item?.inventoryItem?.metadata),
+    item?.suggestedInventoryItem?.title,
+    item?.suggestedInventoryItem?.commonName,
+    item?.suggestedInventoryItem?.armyName,
+    item?.suggestedInventoryItem?.lin,
+    item?.suggestedInventoryItem?.nsn,
+    item?.suggestedInventoryItem?.serialNumber,
+    item?.suggestedInventoryItem?.currentLocation,
     latest?.status,
     latest?.locationText,
     latest?.serialNumber,
@@ -1175,9 +1238,12 @@ function buildProofRequestMessage(fields) {
 }
 
 function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSaved, onStatus }) {
+  const savedItemPhotos = getInventoryItemPhotos(item?.inventoryItem);
+  const previousLocation = item?.inventoryItem?.currentLocation || "";
+  const savedLocation = previousLocation || item?.locationHint || "";
   const [form, setForm] = useState({
     status: "found",
-    locationText: "",
+    locationText: savedLocation,
     serialNumber: "",
     note: "",
     photoFiles: []
@@ -1290,6 +1356,24 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         <div className="proof-request-context">
           <strong>Platoon admin request</strong>
           <span>{requestNote}</span>
+        </div>
+      ) : null}
+
+      {item?.inventoryItem ? (
+        <div className="saved-record-context">
+          <div>
+            <strong>Previous inventory</strong>
+            <span>{previousLocation ? `Last saved at ${previousLocation}` : "Saved item record"}</span>
+          </div>
+          {savedItemPhotos.length ? (
+            <div className="saved-record-photo-strip" aria-label="Previously saved item photos">
+              {savedItemPhotos.map((photo, index) => (
+                <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.url} aria-label={`Open saved item photo ${index + 1}`}>
+                  <img src={photo.url} alt="" loading="lazy" />
+                </a>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1492,6 +1576,54 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
   );
 }
 
+function PossiblePriorMatchCard({ item, isSaving = false, onConfirm, onDismiss }) {
+  const candidate = item?.suggestedInventoryItem;
+  if (!candidate) return null;
+
+  const photos = getInventoryItemPhotos(candidate);
+  const identifiers = [
+    candidate.lin ? `LIN ${candidate.lin}` : "",
+    candidate.nsn ? `NSN ${candidate.nsn}` : "",
+    candidate.serialNumber ? `SN ${candidate.serialNumber}` : ""
+  ].filter(Boolean);
+
+  return (
+    <section className="prior-match-card" aria-label="Possible previous inventory record">
+      <div className="prior-match-card-heading">
+        <div>
+          <p className="eyebrow">Possible previous record</p>
+          <h3>{candidate.commonName || candidate.title || candidate.armyName || "Saved item"}</h3>
+        </div>
+        <History aria-hidden="true" />
+      </div>
+      {identifiers.length ? <p className="prior-match-identifiers">{identifiers.join(" · ")}</p> : null}
+      {candidate.currentLocation ? (
+        <p className="prior-match-location"><strong>Last saved location:</strong> {candidate.currentLocation}</p>
+      ) : null}
+      {photos.length ? (
+        <div className="prior-match-photos" aria-label="Previously saved photos">
+          {photos.map((photo, index) => (
+            <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.url} aria-label={`Open previous photo ${index + 1}`}>
+              <img src={photo.url} alt="" loading="lazy" />
+            </a>
+          ))}
+        </div>
+      ) : null}
+      <p className="prior-match-copy">Is this the same physical item?</p>
+      <div className="prior-match-actions">
+        <button className="btn btn-primary" type="button" disabled={isSaving} onClick={onConfirm}>
+          <CheckCircle2 aria-hidden="true" />
+          <span>{isSaving ? "Saving..." : "Use this record"}</span>
+        </button>
+        <button className="btn btn-secondary" type="button" disabled={isSaving} onClick={onDismiss}>
+          <XCircle aria-hidden="true" />
+          <span>Not the same item</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function SessionItemDrawer({
   item,
   session,
@@ -1501,6 +1633,7 @@ function SessionItemDrawer({
   canClaim,
   assignmentAction,
   directCheckAction,
+  matchAction,
   isClosed,
   status,
   assignableMembers,
@@ -1511,6 +1644,7 @@ function SessionItemDrawer({
   onAssign,
   onClaim,
   onDirectCheck,
+  onResolveMatch,
   onOpenProof,
   onOpenReview,
   onOpenPhoto,
@@ -1594,6 +1728,7 @@ function SessionItemDrawer({
                 <span>Up to 3 photos</span>
               </div>
               <ProofForm
+                key={item.id}
                 item={item}
                 token={token}
                 tenantSlug={tenantSlug}
@@ -1610,6 +1745,15 @@ function SessionItemDrawer({
             <span>{item.expectedQty == null ? "Quantity not listed" : `Expected quantity ${item.expectedQty}`}</span>
             <span>{assignedName ? `Assigned to ${assignedName}` : "Unassigned"}</span>
           </div>
+
+          {canManage && item.suggestedInventoryItem ? (
+            <PossiblePriorMatchCard
+              item={item}
+              isSaving={Boolean(matchAction)}
+              onConfirm={() => onResolveMatch("confirm")}
+              onDismiss={() => onResolveMatch("dismiss")}
+            />
+          ) : null}
 
           <details className="session-detail-section session-detail-disclosure">
             <summary>
@@ -1654,8 +1798,8 @@ function SessionItemDrawer({
           <details className="session-detail-section session-detail-disclosure">
             <summary>
               <span>
-                <small>Friendly reference</small>
-                <strong>Known item</strong>
+                <small>Previous inventory</small>
+                <strong>Saved record</strong>
               </span>
               <span className="session-detail-summary-side">
                 {item.inventoryItem ? <span className="session-detail-match">Matched</span> : null}
@@ -1701,7 +1845,7 @@ function SessionItemDrawer({
                 ) : null}
               </>
             ) : (
-              <p className="session-detail-empty">This packet row is not matched to a known inventory item yet.</p>
+              <p className="session-detail-empty">No saved item record is linked to this packet row yet.</p>
             )}
           </details>
 
@@ -1898,6 +2042,7 @@ function SessionPanel({
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [directCheckActions, setDirectCheckActions] = useState(() => new Map());
   const [assignmentActions, setAssignmentActions] = useState(() => new Map());
+  const [matchActions, setMatchActions] = useState(() => new Map());
   const [sessionStatusActions, setSessionStatusActions] = useState(() => new Map());
   const [printReportId, setPrintReportId] = useState("");
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
@@ -1912,6 +2057,7 @@ function SessionPanel({
   const sessionItemFilterSessionRef = useRef("");
   const directCheckActionRef = useRef(new Map());
   const assignmentActionRef = useRef(new Map());
+  const matchActionRef = useRef(new Map());
   const sessionStatusActionRef = useRef(new Map());
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
 
@@ -2380,16 +2526,26 @@ function SessionPanel({
 
     try {
       setIsSaving(true);
-      await apiRequest(`/inventory/sessions/${targetSessionId}/items/bulk`, {
+      const data = await apiRequest(`/inventory/sessions/${targetSessionId}/items/bulk`, {
         method: "POST",
         token,
         tenantSlug,
         body: { items, importBatch }
       });
+      const possibleMatchCount = Number(
+        data.possibleMatchCount
+        ?? (data.sessionItems || []).filter(item => item.suggestedInventoryItemId || item.suggested_inventory_item_id).length
+        ?? 0
+      );
       clearPacketImport();
-      setStatus({ text: `Added ${items.length} packet rows.`, isError: false });
+      setStatus({
+        text: possibleMatchCount
+          ? `Added ${items.length} packet rows. ${possibleMatchCount} possible previous ${possibleMatchCount === 1 ? "record needs" : "records need"} review.`
+          : `Added ${items.length} packet rows.`,
+        isError: false
+      });
       await loadSessions(targetSessionId);
-      return { count: items.length, sourceName, sessionId: targetSessionId };
+      return { count: items.length, sourceName, sessionId: targetSessionId, possibleMatchCount };
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
       return null;
@@ -2440,6 +2596,52 @@ function SessionPanel({
     } finally {
       directCheckActionRef.current.delete(sessionItemId);
       setDirectCheckActions(current => {
+        const next = new Map(current);
+        next.delete(sessionItemId);
+        return next;
+      });
+    }
+  }
+
+  async function resolvePriorMatch(sessionItemId, action) {
+    if (!sessionItemId || matchActionRef.current.has(sessionItemId)) return false;
+    const remainingCandidates = (detail?.items || []).filter(item => item.suggestedInventoryItem && item.id !== sessionItemId);
+    const nextCandidateId = remainingCandidates[0]?.id || "";
+
+    matchActionRef.current.set(sessionItemId, action);
+    setMatchActions(current => {
+      const next = new Map(current);
+      next.set(sessionItemId, action);
+      return next;
+    });
+
+    try {
+      setStatus({ text: action === "confirm" ? "Linking the saved record..." : "Removing the suggested match...", isError: false });
+      await apiRequest(`/session-items/${sessionItemId}/inventory-match`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { action }
+      });
+      await loadSessionDetail(selectedSessionId, false);
+      if (nextCandidateId) {
+        setProofItemId("");
+        setDetailItemId(nextCandidateId);
+        setStatus({
+          text: `${action === "confirm" ? "Saved record linked." : "Suggestion removed."} ${remainingCandidates.length} possible ${remainingCandidates.length === 1 ? "match remains" : "matches remain"}.`,
+          isError: false
+        });
+      } else {
+        setStatus({ text: action === "confirm" ? "Saved record linked." : "Suggestion removed.", isError: false });
+      }
+      return true;
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (error?.status === 409) await loadSessionDetail(selectedSessionId, false);
+      return false;
+    } finally {
+      matchActionRef.current.delete(sessionItemId);
+      setMatchActions(current => {
         const next = new Map(current);
         next.delete(sessionItemId);
         return next;
@@ -2646,6 +2848,10 @@ function SessionPanel({
     () => detailItems.filter(sessionItemIsComplete),
     [detailItems]
   );
+  const possibleMatchItems = useMemo(
+    () => detailItems.filter(item => item.suggestedInventoryItem),
+    [detailItems]
+  );
   const sessionItemFilterCounts = useMemo(() => ({
     available: actionableDetailItems.filter(item => sessionItemAssignmentBucket(item, me) === "available").length,
     mine: actionableDetailItems.filter(item => sessionItemAssignmentBucket(item, me) === "mine").length,
@@ -2710,6 +2916,13 @@ function SessionPanel({
     setDetailItemId(itemId);
   }
 
+  function openFirstPossibleMatch() {
+    const first = possibleMatchItems[0];
+    if (!first) return;
+    if (packetWizardOpen) closePacketWizard();
+    openItemDetail(first.id);
+  }
+
   function openProof(itemId) {
     proofTriggerRef.current = document.activeElement;
     if (detailItemId !== itemId) {
@@ -2768,6 +2981,7 @@ function SessionPanel({
   const closeSessionAction = closeSessionTarget?.id ? sessionStatusActions.get(closeSessionTarget.id) || "" : "";
   const detailItemDirectCheckAction = detailItem?.id ? directCheckActions.get(detailItem.id) || "" : "";
   const detailItemAssignmentAction = detailItem?.id ? assignmentActions.get(detailItem.id) || "" : "";
+  const detailItemMatchAction = detailItem?.id ? matchActions.get(detailItem.id) || "" : "";
   const detailItemAssignedToCurrentUser = detailItem ? sessionItemAssignedToUser(detailItem, me) : false;
   const detailCanClaim = Boolean(
     detailItem
@@ -3068,6 +3282,20 @@ function SessionPanel({
                 </div>
               ) : null}
 
+              {canManage && possibleMatchItems.length && !selectedSessionIsClosed ? (
+                <div className="prior-match-banner">
+                  <History aria-hidden="true" />
+                  <div>
+                    <strong>{possibleMatchItems.length} possible previous {possibleMatchItems.length === 1 ? "record" : "records"}</strong>
+                    <span>Confirm the same physical item before the team uses old locations or photos.</span>
+                  </div>
+                  <button className="btn btn-secondary btn-small" type="button" onClick={openFirstPossibleMatch}>
+                    <span>Review matches</span>
+                    <ChevronRight aria-hidden="true" />
+                  </button>
+                </div>
+              ) : null}
+
               {actionableDetailItems.length ? (
                 <div className="session-item-toolbar">
                   <div className="session-filter-strip session-assignment-tabs" role="group" aria-label="Work assignment lists">
@@ -3128,6 +3356,8 @@ function SessionPanel({
                             </span>
                           ) : item.packetLine && item.packetLine !== itemDisplayName(item) ? <span>{item.packetLine}</span> : null}
                           {item.locationHint || knownLocation ? <small>{item.locationHint || knownLocation}</small> : null}
+                          {item.inventoryItem ? <small className="session-prior-chip confirmed">Saved record</small> : null}
+                          {canManage && item.suggestedInventoryItem ? <small className="session-prior-chip suggested">Possible previous record</small> : null}
                           {submission ? (
                             <small className={`session-proof-state ${needsMoreProof ? "requested" : ""}`}>
                               {formatReviewState(submission.reviewState)}
@@ -3271,6 +3501,7 @@ function SessionPanel({
         canClaim={detailCanClaim}
         assignmentAction={detailItemAssignmentAction}
         directCheckAction={detailItemDirectCheckAction}
+        matchAction={detailItemMatchAction}
         isClosed={selectedSessionIsClosed}
         status={status}
         assignableMembers={assignmentOptions}
@@ -3281,6 +3512,7 @@ function SessionPanel({
         onAssign={memberId => updateSessionItemAssignment(detailItem.id, memberId)}
         onClaim={() => updateSessionItemAssignment(detailItem.id, "self", { claim: true })}
         onDirectCheck={nextStatus => updateDirectCheck(detailItem.id, nextStatus)}
+        onResolveMatch={action => resolvePriorMatch(detailItem.id, action)}
         onOpenProof={() => openProof(detailItem.id)}
         onOpenReview={canManage && onOpenReview ? () => {
           setProofItemId("");
@@ -3636,6 +3868,9 @@ function SessionPanel({
                   <div>
                     <h3>Packet imported</h3>
                     <p>{packetWizardSummary?.count || 0} rows were added from {packetWizardSummary?.sourceName || "the packet"}.</p>
+                    {packetWizardSummary?.possibleMatchCount ? (
+                      <p>{packetWizardSummary.possibleMatchCount} possible previous {packetWizardSummary.possibleMatchCount === 1 ? "record is" : "records are"} ready for leader review.</p>
+                    ) : null}
                   </div>
                   <div className="packet-wizard-actions">
                     <button
@@ -3651,9 +3886,9 @@ function SessionPanel({
                       <FileUp aria-hidden="true" />
                       <span>Import another</span>
                     </button>
-                    <button className="btn btn-primary" type="button" onClick={closePacketWizard}>
-                      <ListChecks aria-hidden="true" />
-                      <span>Open session</span>
+                    <button className="btn btn-primary" type="button" onClick={packetWizardSummary?.possibleMatchCount ? openFirstPossibleMatch : closePacketWizard}>
+                      {packetWizardSummary?.possibleMatchCount ? <History aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
+                      <span>{packetWizardSummary?.possibleMatchCount ? "Review matches" : "Open session"}</span>
                     </button>
                   </div>
                 </div>
@@ -3927,6 +4162,97 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
   );
 }
 
+function savedEvidenceChoices(submission) {
+  const saved = getInventoryItemPhotos(submission?.sessionItem?.inventoryItem)
+    .filter(photo => photo.mediaUploadId)
+    .map(photo => ({ ...photo, source: "saved", sourceLabel: "Saved" }));
+  const current = (submission?.photos || [])
+    .filter(photo => photo.mediaUploadId)
+    .map(photo => ({ ...photo, source: "submission", sourceLabel: "New" }));
+  const choices = [];
+  const seen = new Set();
+  [...saved, ...current].forEach(photo => {
+    if (seen.has(photo.mediaUploadId)) return;
+    seen.add(photo.mediaUploadId);
+    choices.push(photo);
+  });
+  return choices;
+}
+
+function defaultSavedEvidenceIds(submission) {
+  const choices = savedEvidenceChoices(submission);
+  const saved = choices.filter(photo => photo.source === "saved");
+  const current = choices.filter(photo => photo.source === "submission");
+  return [...saved, ...current].slice(0, 3).map(photo => photo.mediaUploadId);
+}
+
+function SavedEvidencePicker({
+  submission,
+  enabled = false,
+  selectedIds = [],
+  onEnabledChange,
+  onToggle
+}) {
+  const choices = savedEvidenceChoices(submission);
+  const savedCount = choices.filter(photo => photo.source === "saved" && selectedIds.includes(photo.mediaUploadId)).length;
+  const newCount = choices.filter(photo => photo.source === "submission" && selectedIds.includes(photo.mediaUploadId)).length;
+
+  return (
+    <details className="saved-evidence-picker">
+      <summary>
+        <span>
+          <small>After approval</small>
+          <strong>Save for next inventory</strong>
+        </span>
+        <span className="saved-evidence-count">{enabled ? `${selectedIds.length}/3 photos` : "Optional"}</span>
+      </summary>
+      <div className="saved-evidence-picker-body">
+        <label className="saved-evidence-enable">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={event => onEnabledChange(event.target.checked)}
+          />
+          <span>
+            <strong>Save or update this item</strong>
+            <small>Carry the approved location, serial, and selected photos into the next inventory.</small>
+          </span>
+        </label>
+        {enabled ? (
+          <>
+            <p>Pick up to three photos to keep with the saved record.</p>
+            {choices.length ? (
+              <div className="saved-evidence-options" role="group" aria-label="Photos saved for next inventory">
+                {choices.map((photo, index) => {
+                  const selected = selectedIds.includes(photo.mediaUploadId);
+                  return (
+                    <label className={`saved-evidence-option ${selected ? "selected" : ""}`} key={photo.mediaUploadId}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        aria-label={`${selected ? "Remove" : "Save"} ${photo.sourceLabel.toLowerCase()} photo ${index + 1}`}
+                        onChange={() => onToggle(photo.mediaUploadId)}
+                      />
+                      <img src={photo.url} alt="" loading="lazy" />
+                      <span>{photo.sourceLabel}</span>
+                      {selected ? <CheckCircle2 aria-hidden="true" /> : null}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="saved-evidence-empty">No photos are available to save. Location and serial can still be carried forward.</p>
+            )}
+            <small>{savedCount ? `${savedCount} saved` : "No old photos"}{newCount ? ` · ${newCount} new` : ""}</small>
+          </>
+        ) : (
+          <p>Leave this off to approve the proof without changing the saved item record.</p>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function ReviewPanel({ token, tenantSlug, query = "" }) {
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading review queue...", isError: false });
@@ -3935,6 +4261,9 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
   const [proofRequestFields, setProofRequestFields] = useState(["serial_photo", "wide_photo"]);
   const [isRequestingProof, setIsRequestingProof] = useState(false);
   const [reviewingSubmissionId, setReviewingSubmissionId] = useState("");
+  const [matchActionId, setMatchActionId] = useState("");
+  const [savedEvidenceBySubmission, setSavedEvidenceBySubmission] = useState({});
+  const [saveItemBySubmission, setSaveItemBySubmission] = useState({});
   const [photoViewer, setPhotoViewer] = useState(null);
   const photoViewerTriggerRef = useRef(null);
   const hasSearchQuery = searchTerms(query).length > 0;
@@ -3949,6 +4278,16 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
     submission.serialNumber,
     submission.note,
     submission.reviewNote,
+    submission.sessionItem?.inventoryItem?.title,
+    submission.sessionItem?.inventoryItem?.commonName,
+    submission.sessionItem?.inventoryItem?.lin,
+    submission.sessionItem?.inventoryItem?.nsn,
+    submission.sessionItem?.inventoryItem?.currentLocation,
+    submission.sessionItem?.suggestedInventoryItem?.title,
+    submission.sessionItem?.suggestedInventoryItem?.commonName,
+    submission.sessionItem?.suggestedInventoryItem?.lin,
+    submission.sessionItem?.suggestedInventoryItem?.nsn,
+    submission.sessionItem?.suggestedInventoryItem?.currentLocation,
     (submission.history || []).flatMap(historyItem => [
       historyItem.status,
       historyItem.reviewState,
@@ -3965,7 +4304,26 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
     try {
       setStatus({ text: "Loading review queue...", isError: false });
       const data = await apiRequest("/inventory/review-queue", { token, tenantSlug });
-      setSubmissions(data.submissions || []);
+      const nextSubmissions = data.submissions || [];
+      setSubmissions(nextSubmissions);
+      setSavedEvidenceBySubmission(current => {
+        const next = {};
+        nextSubmissions.forEach(submission => {
+          const validIds = new Set(savedEvidenceChoices(submission).map(photo => photo.mediaUploadId));
+          const preserved = (current[submission.id] || []).filter(id => validIds.has(id)).slice(0, 3);
+          next[submission.id] = Object.prototype.hasOwnProperty.call(current, submission.id)
+            ? preserved
+            : defaultSavedEvidenceIds(submission);
+        });
+        return next;
+      });
+      setSaveItemBySubmission(current => {
+        const next = {};
+        nextSubmissions.forEach(submission => {
+          next[submission.id] = Boolean(current[submission.id]);
+        });
+        return next;
+      });
       setStatus({ text: "", isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -3989,6 +4347,16 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
     const submission = submissions.find(item => item.id === submissionId);
     const packetLine = submission?.sessionItem?.packetLine || "the submitted proof";
     const actionLabel = decision === "approved" ? "Approved" : "Rejected";
+    if (decision === "approved" && submission?.sessionItem?.suggestedInventoryItem) {
+      setStatus({ text: `Confirm whether the possible previous record is the same item before approving ${packetLine}.`, isError: true });
+      return;
+    }
+    const canSaveItem = Boolean(
+      decision === "approved"
+      && submission?.status === "found"
+      && (submission?.sessionItem?.expectedQty == null || Number(submission.sessionItem.expectedQty) === 1)
+    );
+    const shouldSaveItem = canSaveItem && Boolean(saveItemBySubmission[submissionId]);
     try {
       setReviewingSubmissionId(submissionId);
       setStatus({ text: `${actionLabel === "Approved" ? "Approving" : "Rejecting"} ${packetLine}...`, isError: false });
@@ -3996,7 +4364,12 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
         method: "PATCH",
         token,
         tenantSlug,
-        body: { decision, note }
+        body: {
+          decision,
+          note,
+          saveItem: shouldSaveItem,
+          savedMediaUploadIds: shouldSaveItem ? (savedEvidenceBySubmission[submissionId] || []) : undefined
+        }
       });
       await loadQueue();
       setStatus({ text: `${actionLabel} proof for ${packetLine}.`, isError: false });
@@ -4004,6 +4377,47 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
       setReviewingSubmissionId("");
+    }
+  }
+
+  function toggleSavedEvidence(submissionId, mediaUploadId) {
+    const selected = savedEvidenceBySubmission[submissionId] || [];
+    if (!selected.includes(mediaUploadId) && selected.length >= 3) {
+      setStatus({ text: "Keep up to 3 photos with the saved item.", isError: true });
+      return;
+    }
+    setStatus({ text: "", isError: false });
+    setSavedEvidenceBySubmission(current => ({
+      ...current,
+      [submissionId]: selected.includes(mediaUploadId)
+        ? selected.filter(id => id !== mediaUploadId)
+        : [...selected, mediaUploadId]
+    }));
+  }
+
+  async function resolveReviewMatch(submission, action) {
+    const sessionItemId = submission?.sessionItem?.id;
+    if (!sessionItemId || matchActionId) return;
+    try {
+      setMatchActionId(submission.id);
+      setStatus({ text: action === "confirm" ? "Linking the saved record..." : "Removing the suggested match...", isError: false });
+      await apiRequest(`/session-items/${sessionItemId}/inventory-match`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { action }
+      });
+      setSavedEvidenceBySubmission(current => {
+        const next = { ...current };
+        delete next[submission.id];
+        return next;
+      });
+      await loadQueue();
+      setStatus({ text: action === "confirm" ? "Saved record linked. Review can continue." : "Suggestion removed. Review can continue.", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setMatchActionId("");
     }
   }
 
@@ -4160,20 +4574,44 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
               </div>
             ) : null}
 
+            {submission.sessionItem?.suggestedInventoryItem ? (
+              <PossiblePriorMatchCard
+                item={submission.sessionItem}
+                isSaving={matchActionId === submission.id}
+                onConfirm={() => resolveReviewMatch(submission, "confirm")}
+                onDismiss={() => resolveReviewMatch(submission, "dismiss")}
+              />
+            ) : null}
+
+            {!submission.sessionItem?.suggestedInventoryItem
+              && submission.status === "found"
+              && (submission.sessionItem?.expectedQty == null || Number(submission.sessionItem.expectedQty) === 1) ? (
+                <SavedEvidencePicker
+                  submission={submission}
+                  enabled={Boolean(saveItemBySubmission[submission.id])}
+                  selectedIds={savedEvidenceBySubmission[submission.id] || []}
+                  onEnabledChange={enabled => setSaveItemBySubmission(current => ({
+                    ...current,
+                    [submission.id]: enabled
+                  }))}
+                  onToggle={mediaUploadId => toggleSavedEvidence(submission.id, mediaUploadId)}
+                />
+              ) : null}
+
             <div className="review-actions">
               <button
                 className="btn btn-primary btn-small"
                 type="button"
-                disabled={reviewingSubmissionId === submission.id || isRequestingProof}
+                disabled={reviewingSubmissionId === submission.id || isRequestingProof || Boolean(matchActionId) || Boolean(submission.sessionItem?.suggestedInventoryItem)}
                 onClick={() => review(submission.id, "approved")}
               >
                 <CheckCircle2 aria-hidden="true" />
-                <span>{reviewingSubmissionId === submission.id ? "Updating..." : "Approve"}</span>
+                <span>{reviewingSubmissionId === submission.id ? "Updating..." : submission.sessionItem?.suggestedInventoryItem ? "Check match first" : "Approve"}</span>
               </button>
               <button
                 className="btn btn-secondary btn-small"
                 type="button"
-                disabled={reviewingSubmissionId === submission.id || isRequestingProof}
+                disabled={reviewingSubmissionId === submission.id || isRequestingProof || Boolean(matchActionId)}
                 onClick={() => openProofRequest(submission)}
               >
                 <Camera aria-hidden="true" />
@@ -4182,7 +4620,7 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
               <button
                 className="btn btn-danger-soft btn-small"
                 type="button"
-                disabled={reviewingSubmissionId === submission.id || isRequestingProof}
+                disabled={reviewingSubmissionId === submission.id || isRequestingProof || Boolean(matchActionId)}
                 onClick={() => review(submission.id, "rejected")}
               >
                 <XCircle aria-hidden="true" />

@@ -108,6 +108,10 @@ async function createDrawerScenario(request, projectName) {
     }
   }));
   const sessionItemId = bulk.sessionItems[0].id;
+  await responseJson(await request.patch(`${API_URL}/session-items/${sessionItemId}/inventory-match`, {
+    headers: qaHeaders(qaAdmin),
+    data: { action: "confirm" }
+  }));
 
   const members = await responseJson(await request.get(`${API_URL}/tenant/members`, {
     headers: qaHeaders(qaAdmin)
@@ -135,7 +139,7 @@ async function createDrawerScenario(request, projectName) {
   const serialPhoto = await uploadPhoto(request, `serial-${suffix}`, "Readable serial plate", "serial");
   const note = "Serial plate and final location confirmed.";
   const serialNumber = `DRAWER-${suffix.toUpperCase()}`;
-  await submitProof(request, sessionItemId, {
+  const final = await submitProof(request, sessionItemId, {
     status: "found",
     locationText: "Cage 9, radio shelf",
     serialNumber,
@@ -155,7 +159,8 @@ async function createDrawerScenario(request, projectName) {
     sourceName,
     note,
     serialNumber,
-    requestMessage
+    requestMessage,
+    submissionId: final.submission.id
   };
 }
 
@@ -216,6 +221,10 @@ test.describe("session item details", () => {
     await expect(drawer.getByRole("button", { name: /Add proof|Respond with proof/ })).toHaveCount(0);
     await expect(drawer.locator(".proof-form")).toHaveCount(0);
 
+    await responseJson(await request.patch(`${API_URL}/submissions/${scenario.submissionId}/review`, {
+      headers: qaHeaders(qaAdmin),
+      data: { decision: "approved", saveItem: false }
+    }));
     await responseJson(await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
       headers: qaHeaders(qaAdmin),
       data: { status: "closed" }
@@ -246,7 +255,7 @@ test.describe("session item details", () => {
     await expect(inventoryDetails.getByText(scenario.packetLine, { exact: true })).toBeVisible();
     await expect(inventoryDetails.getByText("QA NCO", { exact: true })).toBeVisible();
 
-    const knownItem = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Known item" });
+    const knownItem = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Saved record" });
     await expect(knownItem).not.toHaveAttribute("open", "");
     await knownItem.locator("summary").click();
     await expect(knownItem.getByText(scenario.armyName, { exact: true })).toBeVisible();
@@ -313,6 +322,10 @@ test.describe("session item details", () => {
     await expect(drawer).toBeHidden();
     await expect(detailsButton).toBeFocused();
 
+    await responseJson(await request.patch(`${API_URL}/submissions/${scenario.submissionId}/review`, {
+      headers: qaHeaders(qaAdmin),
+      data: { decision: "approved", saveItem: false }
+    }));
     await responseJson(await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
       headers: qaHeaders(qaAdmin),
       data: { status: "closed" }
@@ -344,8 +357,9 @@ test.describe("session item details", () => {
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     await openSessions(page);
     await selectSession(page, scenario, { closed: true });
-    await page.getByRole("button", { name: /^Others\b/ }).click();
-    await page.locator(".session-item", { hasText: scenario.title }).getByRole("button", { name: `Open details for ${scenario.title}` }).click();
+    const completedItems = page.locator(".session-completed-items");
+    await completedItems.locator("summary").click();
+    await completedItems.getByRole("button", { name: `Open details for completed item ${scenario.title}` }).click();
     drawer = page.getByRole("dialog", { name: scenario.title });
     await expect(drawer).toBeVisible();
     const closedLeaderTools = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Manage item" });

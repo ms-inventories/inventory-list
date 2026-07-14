@@ -632,7 +632,7 @@ function rowToInvitation(row) {
   };
 }
 
-function rowToInventoryItem(row) {
+function rowToInventoryItem(row, photos = []) {
   return {
     id: row.id,
     title: row.title,
@@ -642,7 +642,13 @@ function rowToInventoryItem(row) {
     nsn: row.nsn,
     description: row.description,
     currentLocation: row.current_location,
+    serialNumber: row.serial_number,
+    lastVerifiedSubmissionId: row.last_verified_submission_id,
+    lastVerifiedBy: row.last_verified_by,
+    lastVerifiedAt: row.last_verified_at,
+    legacyMediaMetadata: Boolean(row.legacy_media_metadata),
     metadata: row.metadata || {},
+    photos,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -665,7 +671,11 @@ function rowToSession(row) {
   };
 }
 
-function rowToSessionItem(row) {
+function rowToSessionItem(row, {
+  inventoryPhotos = [],
+  suggestedInventoryPhotos = [],
+  includeSuggestion = false
+} = {}) {
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -684,9 +694,11 @@ function rowToSessionItem(row) {
     assignedAt: row.assigned_at,
     directVerifiedBy: row.direct_verified_by,
     directVerifiedByEmail: row.direct_verified_by_email,
+    inventoryMatchConfirmedBy: row.inventory_match_confirmed_by,
+    inventoryMatchConfirmedAt: row.inventory_match_confirmed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    inventoryItem: row.inventory_item_id ? {
+    inventoryItem: row.inventory_item_id && row.item_title ? {
       id: row.inventory_item_id,
       title: row.item_title,
       commonName: row.common_name,
@@ -695,7 +707,30 @@ function rowToSessionItem(row) {
       nsn: row.nsn,
       description: row.description,
       currentLocation: row.current_location,
-      metadata: row.item_metadata || {}
+      serialNumber: row.item_serial_number,
+      lastVerifiedSubmissionId: row.item_last_verified_submission_id,
+      lastVerifiedBy: row.item_last_verified_by,
+      lastVerifiedAt: row.item_last_verified_at,
+      legacyMediaMetadata: Boolean(row.item_legacy_media_metadata),
+      metadata: row.item_metadata || {},
+      photos: inventoryPhotos
+    } : null,
+    suggestedInventoryItem: includeSuggestion && row.suggested_inventory_item_id && row.suggested_item_title ? {
+      id: row.suggested_inventory_item_id,
+      title: row.suggested_item_title,
+      commonName: row.suggested_common_name,
+      armyName: row.suggested_army_name,
+      lin: row.suggested_lin,
+      nsn: row.suggested_nsn,
+      description: row.suggested_description,
+      currentLocation: row.suggested_current_location,
+      serialNumber: row.suggested_serial_number,
+      lastVerifiedSubmissionId: row.suggested_last_verified_submission_id,
+      lastVerifiedBy: row.suggested_last_verified_by,
+      lastVerifiedAt: row.suggested_last_verified_at,
+      legacyMediaMetadata: Boolean(row.suggested_legacy_media_metadata),
+      metadata: row.suggested_item_metadata || {},
+      photos: suggestedInventoryPhotos
     } : null,
     submissions: []
   };
@@ -779,12 +814,78 @@ function rowToPhoto(row) {
   return {
     id: row.id,
     submissionId: row.submission_id,
+    mediaUploadId: row.media_upload_id,
     storageKey: row.storage_key,
     url: buildMediaUrl(row.storage_key),
     caption: row.caption,
     kind: row.kind,
     createdAt: row.created_at
   };
+}
+
+async function loadInventoryItemMedia(inventoryItemIds, execute = query) {
+  const ids = [...new Set((inventoryItemIds || []).filter(Boolean))];
+  const byItemId = new Map(ids.map(id => [id, []]));
+  if (!ids.length) return byItemId;
+
+  const result = await execute(
+    `
+      SELECT reference.id,
+        reference.inventory_item_id,
+        reference.media_upload_id,
+        reference.sort_order,
+        upload.storage_key,
+        evidence.caption,
+        evidence.kind
+      FROM inventory_item_media reference
+      JOIN media_uploads upload ON upload.id = reference.media_upload_id
+      LEFT JOIN LATERAL (
+        SELECT photo.caption, photo.kind
+        FROM submission_photos photo
+        WHERE photo.media_upload_id = reference.media_upload_id
+        ORDER BY photo.created_at DESC, photo.id DESC
+        LIMIT 1
+      ) evidence ON true
+      WHERE reference.inventory_item_id = ANY($1::uuid[])
+        AND upload.state = 'attached'
+      ORDER BY reference.inventory_item_id, reference.sort_order, reference.created_at, reference.id
+    `,
+    [ids]
+  );
+
+  result.rows.forEach(row => {
+    const photos = byItemId.get(row.inventory_item_id) || [];
+    photos.push({
+      id: row.id,
+      mediaUploadId: row.media_upload_id,
+      url: buildMediaUrl(row.storage_key),
+      kind: row.kind || "general",
+      caption: row.caption || null
+    });
+    byItemId.set(row.inventory_item_id, photos);
+  });
+  return byItemId;
+}
+
+async function loadInventoryItemsById(tenantId, inventoryItemIds, execute = query) {
+  const ids = [...new Set((inventoryItemIds || []).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const [itemsResult, mediaByItemId] = await Promise.all([
+    execute(
+      `
+        SELECT *
+        FROM inventory_items
+        WHERE tenant_id = $1
+          AND id = ANY($2::uuid[])
+      `,
+      [tenantId, ids]
+    ),
+    loadInventoryItemMedia(ids, execute)
+  ]);
+  return new Map(itemsResult.rows.map(row => [
+    row.id,
+    rowToInventoryItem(row, mediaByItemId.get(row.id) || [])
+  ]));
 }
 
 function rowToImportBatch(row, { includeText = false } = {}) {
@@ -1215,6 +1316,28 @@ function localMediaStorageKeys(value) {
   };
   visit(value);
   return [...storageKeys];
+}
+
+function withoutLegacyInventoryImages(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  const cleaned = { ...metadata };
+  [
+    "image",
+    "images",
+    "imageUrl",
+    "imageUrls",
+    "photo",
+    "photos",
+    "thumbnail",
+    "thumbnailUrl"
+  ].forEach(key => delete cleaned[key]);
+  if (Array.isArray(cleaned.fields)) {
+    cleaned.fields = cleaned.fields.filter(field => {
+      const label = String(field?.label || "").toLowerCase();
+      return !label.includes("image") && !label.includes("photo");
+    });
+  }
+  return cleaned;
 }
 
 function imageBufferMatchesMimeType(buffer, mimeType) {
@@ -4370,7 +4493,7 @@ export function registerRoutes(app) {
   });
 
   route(app, "get", "/api/inventory/items", async (request, reply) => {
-    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const result = await query(
       `
         SELECT *
@@ -4380,8 +4503,11 @@ export function registerRoutes(app) {
       `,
       [context.tenant.id]
     );
+    const mediaByItemId = await loadInventoryItemMedia(result.rows.map(row => row.id));
 
-    return { items: result.rows.map(rowToInventoryItem) };
+    return {
+      items: result.rows.map(row => rowToInventoryItem(row, mediaByItemId.get(row.id) || []))
+    };
   });
 
   route(app, "get", "/api/inventory/reports", async (request, reply) => {
@@ -4475,10 +4601,11 @@ export function registerRoutes(app) {
         armyName: z.string().optional(),
         lin: z.string().optional(),
         nsn: z.string().optional(),
+        serialNumber: z.string().optional(),
         description: z.string().optional(),
         currentLocation: z.string().optional(),
         metadata: z.record(z.unknown()).optional(),
-        mediaUploadIds: z.array(z.string().uuid()).max(8).optional()
+        mediaUploadIds: z.array(z.string().uuid()).max(3).optional()
       }),
       request.body
     );
@@ -4514,8 +4641,8 @@ export function registerRoutes(app) {
       const result = await client.query(
         `
           INSERT INTO inventory_items
-            (tenant_id, title, common_name, army_name, lin, nsn, description, current_location, metadata, created_by)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+            (tenant_id, title, common_name, army_name, lin, nsn, serial_number, description, current_location, metadata, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
           RETURNING *
         `,
         [
@@ -4525,6 +4652,7 @@ export function registerRoutes(app) {
           body.armyName || null,
           body.lin || null,
           body.nsn || null,
+          body.serialNumber || null,
           body.description || null,
           body.currentLocation || null,
           JSON.stringify(body.metadata || {}),
@@ -4561,7 +4689,8 @@ export function registerRoutes(app) {
     });
 
     reply.code(201);
-    return { item: rowToInventoryItem(item) };
+    const mediaByItemId = await loadInventoryItemMedia([item.id]);
+    return { item: rowToInventoryItem(item, mediaByItemId.get(item.id) || []) };
   });
 
   route(app, "get", "/api/inventory/sessions", async (request, reply) => {
@@ -4825,21 +4954,40 @@ export function registerRoutes(app) {
           ii.nsn,
           ii.description,
           ii.current_location,
+          ii.serial_number AS item_serial_number,
+          ii.last_verified_submission_id AS item_last_verified_submission_id,
+          ii.last_verified_by AS item_last_verified_by,
+          ii.last_verified_at AS item_last_verified_at,
+          ii.legacy_media_metadata AS item_legacy_media_metadata,
           ii.metadata AS item_metadata,
+          suggested.title AS suggested_item_title,
+          suggested.common_name AS suggested_common_name,
+          suggested.army_name AS suggested_army_name,
+          suggested.lin AS suggested_lin,
+          suggested.nsn AS suggested_nsn,
+          suggested.description AS suggested_description,
+          suggested.current_location AS suggested_current_location,
+          suggested.serial_number AS suggested_serial_number,
+          suggested.last_verified_submission_id AS suggested_last_verified_submission_id,
+          suggested.last_verified_by AS suggested_last_verified_by,
+          suggested.last_verified_at AS suggested_last_verified_at,
+          suggested.legacy_media_metadata AS suggested_legacy_media_metadata,
+          suggested.metadata AS suggested_item_metadata,
           assigned.email AS assigned_to_email,
           assigned.display_name AS assigned_to_name,
           assigner.email AS assigned_by_email,
           assigner.display_name AS assigned_by_name,
           verifier.email AS direct_verified_by_email
         FROM inventory_session_items si
-        LEFT JOIN inventory_items ii ON ii.id = si.inventory_item_id
+        LEFT JOIN inventory_items ii ON ii.id = si.inventory_item_id AND ii.tenant_id = $2
+        LEFT JOIN inventory_items suggested ON suggested.id = si.suggested_inventory_item_id AND suggested.tenant_id = $2
         LEFT JOIN app_users assigned ON assigned.id = si.assigned_to
         LEFT JOIN app_users assigner ON assigner.id = si.assigned_by
         LEFT JOIN app_users verifier ON verifier.id = si.direct_verified_by
         WHERE si.session_id = $1
         ORDER BY si.created_at ASC
       `,
-      [session.id]
+      [session.id, context.tenant.id]
     );
 
     const submissionsResult = await query(
@@ -4854,7 +5002,16 @@ export function registerRoutes(app) {
       [session.id]
     );
 
-    const items = itemsResult.rows.map(rowToSessionItem);
+    const mediaByItemId = await loadInventoryItemMedia(itemsResult.rows.flatMap(row => [
+      row.inventory_item_id,
+      row.suggested_inventory_item_id
+    ]));
+    const includeSuggestion = hasTenantRole(context, ["tenant_admin"]);
+    const items = itemsResult.rows.map(row => rowToSessionItem(row, {
+      inventoryPhotos: mediaByItemId.get(row.inventory_item_id) || [],
+      suggestedInventoryPhotos: mediaByItemId.get(row.suggested_inventory_item_id) || [],
+      includeSuggestion
+    }));
     const itemById = new Map(items.map(item => [item.id, item]));
     const submissions = submissionsResult.rows.map(rowToSubmission);
     const submissionById = new Map(submissions.map(submission => [submission.id, submission]));
@@ -4927,6 +5084,20 @@ export function registerRoutes(app) {
       );
       const current = currentResult.rows[0];
       if (!current) return null;
+      if (body.status === "closed" && current.status !== "closed") {
+        const actionableReview = await client.query(
+          `
+            SELECT 1
+            FROM item_submissions submission
+            JOIN inventory_session_items item ON item.id = submission.session_item_id
+            WHERE item.session_id = $1
+              AND submission.review_state IN ('pending', 'request_more_info')
+            LIMIT 1
+          `,
+          [current.id]
+        );
+        if (actionableReview.rows[0]) return { reviewPending: true };
+      }
       const result = await client.query(
         `
           UPDATE inventory_sessions
@@ -4973,6 +5144,10 @@ export function registerRoutes(app) {
     if (!updated) {
       reply.code(404);
       throw new Error("Session not found");
+    }
+    if (updated.reviewPending) {
+      reply.code(409);
+      throw new Error("Review or request the pending proof before closing this session.");
     }
 
     return {
@@ -5058,8 +5233,21 @@ export function registerRoutes(app) {
       const session = sessionResult.rows[0];
       if (!session) return null;
 
-      let matchedItem = null;
-      if (!body.inventoryItemId && body.packetLine) {
+      let confirmedItem = null;
+      let suggestedItem = null;
+      if (body.inventoryItemId) {
+        const inventoryResult = await client.query(
+          `
+            SELECT id, title, common_name, army_name, lin, nsn, description, current_location
+            FROM inventory_items
+            WHERE id = $1 AND tenant_id = $2
+            LIMIT 1
+          `,
+          [body.inventoryItemId, context.tenant.id]
+        );
+        confirmedItem = inventoryResult.rows[0] || null;
+        if (!confirmedItem) throw requestError("Choose an inventory item from this workspace.");
+      } else if (body.packetLine) {
         const inventoryResult = await client.query(
           `
             SELECT id, title, common_name, army_name, lin, nsn, description, current_location
@@ -5068,21 +5256,32 @@ export function registerRoutes(app) {
           `,
           [context.tenant.id]
         );
-        matchedItem = findInventoryItemMatch(body.packetLine, inventoryResult.rows.map(itemMatchProfile))?.item || null;
+        suggestedItem = findInventoryItemMatch(body.packetLine, inventoryResult.rows.map(itemMatchProfile))?.item || null;
       }
 
       const result = await client.query(
         `
-          INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint)
-          VALUES ($1, $2, $3, $4, $5)
+          INSERT INTO inventory_session_items (
+            session_id,
+            inventory_item_id,
+            suggested_inventory_item_id,
+            packet_line,
+            expected_qty,
+            location_hint,
+            inventory_match_confirmed_by,
+            inventory_match_confirmed_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $2::uuid IS NULL THEN NULL ELSE now() END)
           RETURNING *
         `,
         [
           session.id,
-          body.inventoryItemId || matchedItem?.id || null,
+          confirmedItem?.id || null,
+          suggestedItem?.id || null,
           body.packetLine || null,
           body.expectedQty ?? null,
-          body.locationHint || matchedItem?.current_location || null
+          body.locationHint || confirmedItem?.current_location || null,
+          confirmedItem ? context.user.id : null
         ]
       );
       const sessionItem = result.rows[0];
@@ -5097,7 +5296,9 @@ export function registerRoutes(app) {
           sessionName: session.name,
           packetLine: sessionItem.packet_line,
           expectedQty: sessionItem.expected_qty,
-          locationHint: sessionItem.location_hint
+          locationHint: sessionItem.location_hint,
+          inventoryItemId: sessionItem.inventory_item_id,
+          suggestedInventoryItemId: sessionItem.suggested_inventory_item_id
         }
       });
 
@@ -5173,6 +5374,7 @@ export function registerRoutes(app) {
         [context.tenant.id]
       );
       const matchableInventoryItems = inventoryResult.rows.map(itemMatchProfile);
+      const inventoryItemById = new Map(inventoryResult.rows.map(item => [item.id, item]));
       let importBatch = null;
       if (hasImportBatch) {
         const sourceUpload = body.importBatch?.sourceFile
@@ -5265,42 +5467,72 @@ export function registerRoutes(app) {
 
       const rows = [];
       let matchedCount = 0;
+      let possibleMatchCount = 0;
       for (const item of body.items) {
-        const matchedItem = item.inventoryItemId
+        const confirmedItem = item.inventoryItemId
+          ? inventoryItemById.get(item.inventoryItemId) || null
+          : null;
+        if (item.inventoryItemId && !confirmedItem) {
+          throw requestError("Choose inventory items from this workspace.");
+        }
+        const suggestedItem = confirmedItem
           ? null
           : findInventoryItemMatch(item.packetLine, matchableInventoryItems)?.item || null;
-        const inventoryItemId = item.inventoryItemId || matchedItem?.id || null;
-        const locationHint = item.locationHint || matchedItem?.current_location || null;
-        if (inventoryItemId) matchedCount += 1;
+        const locationHint = item.locationHint || confirmedItem?.current_location || null;
+        if (confirmedItem || suggestedItem) matchedCount += 1;
+        if (suggestedItem) possibleMatchCount += 1;
 
         const result = importBatch
           ? await client.query(
             `
-              INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint, import_batch_id)
-              VALUES ($1, $2, $3, $4, $5, $6)
+              INSERT INTO inventory_session_items (
+                session_id,
+                inventory_item_id,
+                suggested_inventory_item_id,
+                packet_line,
+                expected_qty,
+                location_hint,
+                import_batch_id,
+                inventory_match_confirmed_by,
+                inventory_match_confirmed_at
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $2::uuid IS NULL THEN NULL ELSE now() END)
               RETURNING *
             `,
             [
               request.params.sessionId,
-              inventoryItemId,
+              confirmedItem?.id || null,
+              suggestedItem?.id || null,
               item.packetLine.trim(),
               item.expectedQty ?? null,
               locationHint,
-              importBatch.id
+              importBatch.id,
+              confirmedItem ? context.user.id : null
             ]
           )
           : await client.query(
             `
-              INSERT INTO inventory_session_items (session_id, inventory_item_id, packet_line, expected_qty, location_hint)
-              VALUES ($1, $2, $3, $4, $5)
+              INSERT INTO inventory_session_items (
+                session_id,
+                inventory_item_id,
+                suggested_inventory_item_id,
+                packet_line,
+                expected_qty,
+                location_hint,
+                inventory_match_confirmed_by,
+                inventory_match_confirmed_at
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $2::uuid IS NULL THEN NULL ELSE now() END)
               RETURNING *
             `,
             [
               request.params.sessionId,
-              inventoryItemId,
+              confirmedItem?.id || null,
+              suggestedItem?.id || null,
               item.packetLine.trim(),
               item.expectedQty ?? null,
-              locationHint
+              locationHint,
+              confirmedItem ? context.user.id : null
             ]
           );
         rows.push(result.rows[0]);
@@ -5321,7 +5553,7 @@ export function registerRoutes(app) {
         }
       });
 
-        return { rows, importBatch };
+      return { rows, importBatch, possibleMatchCount };
       });
       packetSourceFile = null;
     } catch (error) {
@@ -5345,7 +5577,8 @@ export function registerRoutes(app) {
     reply.code(201);
     return {
       sessionItems: created.rows,
-      importBatch: created.importBatch ? rowToImportBatch(created.importBatch, { includeText: true }) : null
+      importBatch: created.importBatch ? rowToImportBatch(created.importBatch, { includeText: true }) : null,
+      possibleMatchCount: created.possibleMatchCount
     };
   });
 
@@ -5518,6 +5751,120 @@ export function registerRoutes(app) {
       throw new Error("Photo upload not found");
     }
     return { discarded: true, uploadId: discarded.id };
+  });
+
+  route(app, "patch", "/api/session-items/:sessionItemId/inventory-match", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({ action: z.enum(["confirm", "dismiss"]) }).strict(),
+      request.body
+    );
+
+    const match = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT item.id,
+            item.inventory_item_id,
+            item.suggested_inventory_item_id,
+            item.location_hint,
+            session.status AS session_status
+          FROM inventory_session_items item
+          JOIN inventory_sessions session ON session.id = item.session_id
+          WHERE item.id = $1
+            AND session.tenant_id = $2
+          FOR UPDATE OF item, session
+        `,
+        [request.params.sessionItemId, context.tenant.id]
+      );
+      const current = currentResult.rows[0];
+      if (!current) return null;
+      if (current.session_status === "closed") return { sessionClosed: true };
+      if (!current.suggested_inventory_item_id) return { staleMatch: true };
+
+      let inventoryItem = null;
+      if (body.action === "confirm") {
+        const inventoryResult = await client.query(
+          `
+            SELECT *
+            FROM inventory_items
+            WHERE id = $1
+              AND tenant_id = $2
+            FOR UPDATE
+          `,
+          [current.suggested_inventory_item_id, context.tenant.id]
+        );
+        inventoryItem = inventoryResult.rows[0] || null;
+        if (!inventoryItem) return { invalidSuggestion: true };
+      }
+
+      const updatedResult = await client.query(
+        `
+          UPDATE inventory_session_items
+          SET inventory_item_id = CASE WHEN $2 = 'confirm' THEN suggested_inventory_item_id ELSE inventory_item_id END,
+            suggested_inventory_item_id = NULL,
+            inventory_match_confirmed_by = CASE WHEN $2 = 'confirm' THEN $3 ELSE inventory_match_confirmed_by END,
+            inventory_match_confirmed_at = CASE WHEN $2 = 'confirm' THEN now() ELSE inventory_match_confirmed_at END,
+            location_hint = CASE
+              WHEN $2 = 'confirm' THEN COALESCE(location_hint, $4)
+              ELSE location_hint
+            END,
+            updated_at = now()
+          WHERE id = $1
+            AND suggested_inventory_item_id IS NOT NULL
+          RETURNING *
+        `,
+        [current.id, body.action, context.user.id, inventoryItem?.current_location || null]
+      );
+      if (!updatedResult.rows[0]) return { staleMatch: true };
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: body.action === "confirm" ? "session_item.inventory_match_confirmed" : "session_item.inventory_match_dismissed",
+        entityType: "inventory_session_item",
+        entityId: current.id,
+        metadata: {
+          inventoryItemId: current.suggested_inventory_item_id
+        }
+      });
+
+      return { sessionItem: updatedResult.rows[0], inventoryItem };
+    });
+
+    if (!match) {
+      reply.code(404);
+      throw new Error("Session item not found");
+    }
+    if (match.sessionClosed) {
+      reply.code(409);
+      throw new Error("Closed sessions are read-only.");
+    }
+    if (match.staleMatch) {
+      reply.code(409);
+      throw new Error("This saved-item suggestion has already been resolved.");
+    }
+    if (match.invalidSuggestion) {
+      reply.code(409);
+      throw new Error("This saved-item suggestion is no longer available.");
+    }
+
+    const photosByItemId = match.inventoryItem
+      ? await loadInventoryItemMedia([match.inventoryItem.id])
+      : new Map();
+    return {
+      sessionItem: {
+        id: match.sessionItem.id,
+        inventoryItemId: match.sessionItem.inventory_item_id,
+        suggestedInventoryItemId: match.sessionItem.suggested_inventory_item_id,
+        locationHint: match.sessionItem.location_hint,
+        inventoryMatchConfirmedBy: match.sessionItem.inventory_match_confirmed_by,
+        inventoryMatchConfirmedAt: match.sessionItem.inventory_match_confirmed_at,
+        updatedAt: match.sessionItem.updated_at
+      },
+      inventoryItem: match.inventoryItem
+        ? rowToInventoryItem(match.inventoryItem, photosByItemId.get(match.inventoryItem.id) || [])
+        : null
+    };
   });
 
   route(app, "patch", "/api/session-items/:sessionItemId/assignment", async (request, reply) => {
@@ -5804,6 +6151,9 @@ export function registerRoutes(app) {
         && sessionItemResult.rows[0].assigned_to !== context.user.id) {
         return { assignmentRequired: true };
       }
+      if (body.status === "found" && !photos.length) {
+        return { foundPhotoRequired: true };
+      }
 
       const lockedUploads = new Map();
       for (const uploadId of [...photoUploadIds].sort()) {
@@ -5913,6 +6263,9 @@ export function registerRoutes(app) {
       reply.code(409);
       throw new Error("Claim this item before submitting proof.");
     }
+    if (submission.foundPhotoRequired) {
+      throw requestError("Add at least one new photo for found items.");
+    }
 
     runNotification("Proof submission", () => notifyTenantAdminsOfSubmission(context, submission, {
       photoCount: (body.photos || []).length
@@ -5931,6 +6284,11 @@ export function registerRoutes(app) {
             si.id AS session_item_id,
             si.packet_line,
             si.status AS session_item_status,
+            si.expected_qty,
+            si.inventory_item_id,
+            si.suggested_inventory_item_id,
+            si.inventory_match_confirmed_by,
+            si.inventory_match_confirmed_at,
             s.id AS session_id,
             s.name AS session_name,
             row_number() OVER (
@@ -5966,7 +6324,14 @@ export function registerRoutes(app) {
       sessionItem: {
         id: row.session_item_id,
         packetLine: row.packet_line,
-        status: row.session_item_status
+        status: row.session_item_status,
+        expectedQty: row.expected_qty,
+        inventoryItemId: row.inventory_item_id,
+        suggestedInventoryItemId: row.suggested_inventory_item_id,
+        inventoryMatchConfirmedBy: row.inventory_match_confirmed_by,
+        inventoryMatchConfirmedAt: row.inventory_match_confirmed_at,
+        inventoryItem: null,
+        suggestedInventoryItem: null
       }
     }));
 
@@ -6018,6 +6383,18 @@ export function registerRoutes(app) {
       });
     }
 
+    const inventoryItemsById = await loadInventoryItemsById(
+      context.tenant.id,
+      submissions.flatMap(submission => [
+        submission.sessionItem.inventoryItemId,
+        submission.sessionItem.suggestedInventoryItemId
+      ])
+    );
+    submissions.forEach(submission => {
+      submission.sessionItem.inventoryItem = inventoryItemsById.get(submission.sessionItem.inventoryItemId) || null;
+      submission.sessionItem.suggestedInventoryItem = inventoryItemsById.get(submission.sessionItem.suggestedInventoryItemId) || null;
+    });
+
     return { submissions };
   });
 
@@ -6026,12 +6403,24 @@ export function registerRoutes(app) {
     const body = parseBody(
       z.object({
         decision: z.enum(reviewDecisions),
-        note: z.string().optional()
+        note: z.string().optional(),
+        saveItem: z.boolean().optional(),
+        savedMediaUploadIds: z.array(z.string().uuid()).max(3).optional()
       }),
       request.body
     );
+    const requestedSavedMediaUploadIds = body.savedMediaUploadIds || [];
+    if (new Set(requestedSavedMediaUploadIds).size !== requestedSavedMediaUploadIds.length) {
+      throw requestError("Choose each saved photo only once.");
+    }
+    if (body.savedMediaUploadIds && !body.saveItem) {
+      throw requestError("Saved photo choices require saving the approved item.");
+    }
+    if (body.saveItem && body.decision !== "approved") {
+      throw requestError("Only approved proof can be saved for future inventory sessions.");
+    }
 
-    const submission = await withTransaction(async client => {
+    const reviewed = await withTransaction(async client => {
       const pointerResult = await client.query(
         `
           SELECT sub.session_item_id
@@ -6047,7 +6436,12 @@ export function registerRoutes(app) {
 
       const sessionItemResult = await client.query(
         `
-          SELECT si.id, s.status AS session_status
+          SELECT si.id,
+            si.inventory_item_id,
+            si.suggested_inventory_item_id,
+            si.expected_qty,
+            si.packet_line,
+            s.status AS session_status
           FROM inventory_session_items si
           JOIN inventory_sessions s ON s.id = si.session_id
           WHERE si.id = $1
@@ -6076,6 +6470,107 @@ export function registerRoutes(app) {
       current.session_item_id = sessionItem.id;
       if (!["pending", "request_more_info"].includes(current.review_state)) {
         return { staleReview: true };
+      }
+      if (body.decision === "approved" && sessionItem.suggested_inventory_item_id) {
+        return { unresolvedSuggestion: true };
+      }
+
+      let savePlan = null;
+      if (body.saveItem) {
+        if (current.status !== "found") return { saveRequiresFound: true };
+        if (sessionItem.expected_qty != null && Number(sessionItem.expected_qty) !== 1) {
+          return { saveRequiresSingleItem: true };
+        }
+
+        let inventoryItem = null;
+        if (sessionItem.inventory_item_id) {
+          const inventoryResult = await client.query(
+            `
+              SELECT *
+              FROM inventory_items
+              WHERE id = $1
+                AND tenant_id = $2
+              FOR UPDATE
+            `,
+            [sessionItem.inventory_item_id, context.tenant.id]
+          );
+          inventoryItem = inventoryResult.rows[0] || null;
+          if (!inventoryItem) return { invalidInventoryItem: true };
+        }
+
+        const currentPhotosResult = await client.query(
+          `
+            SELECT photo.media_upload_id, upload.storage_key
+            FROM submission_photos photo
+            JOIN media_uploads upload ON upload.id = photo.media_upload_id
+            WHERE photo.submission_id = $1
+              AND upload.tenant_id = $2
+              AND upload.state = 'attached'
+              AND upload.attached_to_type = 'item_submission'
+              AND upload.attached_to_id = $1
+            ORDER BY photo.created_at, photo.id
+          `,
+          [current.id, context.tenant.id]
+        );
+        const currentPhotoIds = currentPhotosResult.rows.map(row => row.media_upload_id);
+        const existingReferencesResult = inventoryItem
+          ? await client.query(
+            `
+              SELECT reference.media_upload_id
+              FROM inventory_item_media reference
+              JOIN media_uploads upload ON upload.id = reference.media_upload_id
+              WHERE reference.inventory_item_id = $1
+                AND upload.tenant_id = $2
+                AND upload.state = 'attached'
+              ORDER BY reference.sort_order, reference.created_at, reference.id
+              FOR UPDATE OF reference
+            `,
+            [inventoryItem.id, context.tenant.id]
+          )
+          : { rows: [] };
+        const existingReferenceIds = existingReferencesResult.rows.map(row => row.media_upload_id);
+        const selectedMediaUploadIds = body.savedMediaUploadIds === undefined
+          ? [...new Set([...existingReferenceIds, ...currentPhotoIds])].slice(0, 3)
+          : requestedSavedMediaUploadIds;
+        const allowedMediaUploadIds = new Set([...currentPhotoIds, ...existingReferenceIds]);
+        if (selectedMediaUploadIds.some(id => !allowedMediaUploadIds.has(id))) {
+          return { invalidSavedMedia: true };
+        }
+
+        if (selectedMediaUploadIds.length) {
+          const lockedUploads = await client.query(
+            `
+              SELECT id
+              FROM media_uploads
+              WHERE id = ANY($1::uuid[])
+                AND tenant_id = $2
+                AND state = 'attached'
+              ORDER BY id
+              FOR UPDATE
+            `,
+            [selectedMediaUploadIds, context.tenant.id]
+          );
+          if (lockedUploads.rows.length !== selectedMediaUploadIds.length) {
+            return { invalidSavedMedia: true };
+          }
+          const conflictingReference = await client.query(
+            `
+              SELECT media_upload_id
+              FROM inventory_item_media
+              WHERE media_upload_id = ANY($1::uuid[])
+                AND ($2::uuid IS NULL OR inventory_item_id <> $2)
+              LIMIT 1
+              FOR UPDATE
+            `,
+            [selectedMediaUploadIds, inventoryItem?.id || null]
+          );
+          if (conflictingReference.rows[0]) return { invalidSavedMedia: true };
+        }
+
+        savePlan = {
+          inventoryItem,
+          selectedMediaUploadIds
+        };
       }
 
       if (body.decision !== "request_more_info") {
@@ -6131,6 +6626,113 @@ export function registerRoutes(app) {
         );
       }
 
+      let savedInventoryItem = null;
+      if (savePlan) {
+        if (savePlan.inventoryItem) {
+          const savedResult = await client.query(
+            `
+              UPDATE inventory_items
+              SET current_location = COALESCE(NULLIF(btrim($2), ''), current_location),
+                serial_number = COALESCE(NULLIF(btrim($3), ''), serial_number),
+                last_verified_submission_id = $4,
+                last_verified_by = $5,
+                last_verified_at = now(),
+                legacy_media_metadata = false,
+                metadata = $7::jsonb,
+                updated_at = now()
+              WHERE id = $1
+                AND tenant_id = $6
+              RETURNING *
+            `,
+            [
+              savePlan.inventoryItem.id,
+              current.location_text || "",
+              current.serial_number || "",
+              current.id,
+              context.user.id,
+              context.tenant.id,
+              JSON.stringify(withoutLegacyInventoryImages(savePlan.inventoryItem.metadata || {}))
+            ]
+          );
+          savedInventoryItem = savedResult.rows[0] || null;
+        } else {
+          const packetLine = String(sessionItem.packet_line || "Verified inventory item").trim() || "Verified inventory item";
+          const lin = [...extractLinValues(packetLine)][0] || null;
+          const nsn = [...extractNsnValues(packetLine)][0] || null;
+          const savedResult = await client.query(
+            `
+              INSERT INTO inventory_items (
+                tenant_id,
+                title,
+                army_name,
+                lin,
+                nsn,
+                serial_number,
+                current_location,
+                created_by,
+                last_verified_submission_id,
+                last_verified_by,
+                last_verified_at
+              )
+              VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $7, now())
+              RETURNING *
+            `,
+            [
+              context.tenant.id,
+              packetLine,
+              lin,
+              nsn,
+              current.serial_number || null,
+              current.location_text || null,
+              context.user.id,
+              current.id
+            ]
+          );
+          savedInventoryItem = savedResult.rows[0];
+        }
+
+        if (!savedInventoryItem) throw new Error("Saved inventory item update did not return a row.");
+        await client.query(
+          "DELETE FROM inventory_item_media WHERE inventory_item_id = $1",
+          [savedInventoryItem.id]
+        );
+        for (const [index, mediaUploadId] of savePlan.selectedMediaUploadIds.entries()) {
+          await client.query(
+            `
+              INSERT INTO inventory_item_media (inventory_item_id, media_upload_id, sort_order)
+              VALUES ($1, $2, $3)
+            `,
+            [savedInventoryItem.id, mediaUploadId, index]
+          );
+        }
+        await client.query(
+          `
+            UPDATE inventory_session_items
+            SET inventory_item_id = $2,
+              suggested_inventory_item_id = NULL,
+              inventory_match_confirmed_by = $3,
+              inventory_match_confirmed_at = now(),
+              location_hint = COALESCE(location_hint, NULLIF(btrim($4), '')),
+              updated_at = now()
+            WHERE id = $1
+          `,
+          [sessionItem.id, savedInventoryItem.id, context.user.id, current.location_text || ""]
+        );
+        await createAuditEvent(client, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          action: "inventory_item.verified",
+          entityType: "inventory_item",
+          entityId: savedInventoryItem.id,
+          metadata: {
+            submissionId: current.id,
+            sessionItemId: sessionItem.id,
+            photoCount: savePlan.selectedMediaUploadIds.length,
+            created: !savePlan.inventoryItem
+          }
+        });
+      }
+
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
@@ -6140,27 +6742,60 @@ export function registerRoutes(app) {
         metadata: { decision: body.decision, note: body.note || null }
       });
 
-      return result.rows[0];
+      return { submission: result.rows[0], savedInventoryItem };
     });
 
-    if (!submission) {
+    if (!reviewed) {
       reply.code(404);
       throw new Error("Submission not found");
     }
-    if (submission.sessionClosed) {
+    if (reviewed.sessionClosed) {
       reply.code(409);
       throw new Error("Closed sessions are read-only.");
     }
-    if (submission.staleReview) {
+    if (reviewed.staleReview) {
       reply.code(409);
       throw new Error("This proof has already been reviewed or replaced.");
     }
+    if (reviewed.unresolvedSuggestion) {
+      reply.code(409);
+      throw new Error("Confirm or dismiss the suggested saved item before approving this proof.");
+    }
+    if (reviewed.saveRequiresFound) {
+      reply.code(409);
+      throw new Error("Only found proof can be saved for future inventory sessions.");
+    }
+    if (reviewed.saveRequiresSingleItem) {
+      reply.code(409);
+      throw new Error("Save individual items only when the packet quantity is one.");
+    }
+    if (reviewed.invalidInventoryItem) {
+      reply.code(409);
+      throw new Error("The saved inventory item is no longer available.");
+    }
+    if (reviewed.invalidSavedMedia) {
+      reply.code(400);
+      throw new Error("Choose saved photos from this item or the proof being approved.");
+    }
+
+    const submission = reviewed.submission;
 
     if (body.decision === "request_more_info") {
       runNotification("Proof request", () => notifySubmitterOfProofRequest(context, submission.id, body.note));
     }
 
-    return { submission };
+    const savedMediaByItemId = reviewed.savedInventoryItem
+      ? await loadInventoryItemMedia([reviewed.savedInventoryItem.id])
+      : new Map();
+    return {
+      submission,
+      savedItem: reviewed.savedInventoryItem
+        ? rowToInventoryItem(
+          reviewed.savedInventoryItem,
+          savedMediaByItemId.get(reviewed.savedInventoryItem.id) || []
+        )
+        : null
+    };
   });
 
   route(app, "post", "/api/submissions/:submissionId/evidence-requests", async (request, reply) => {

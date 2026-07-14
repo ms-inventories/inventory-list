@@ -60,6 +60,7 @@ test.describe("session lifecycle", () => {
 
   test("requires confirmation before closing a session with packet rows", async ({ page }, testInfo) => {
     const sessionName = `QA closeout ${testInfo.project.name} ${Date.now()}`;
+    const packetLin = `${testInfo.project.name.startsWith("mobile") ? "M" : "C"}${String(Date.now() % 100000).padStart(5, "0")}`;
 
     await page.goto(TENANT_URL);
     await signInAsPlatoonAdmin(page);
@@ -70,7 +71,7 @@ test.describe("session lifecycle", () => {
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Continue" }).click();
-    await dialog.locator("textarea").fill("000009148 R20684 RADIAC SET: AN/VDR-2");
+    await dialog.locator("textarea").fill(`000009148 ${packetLin} QA CLOSEOUT TEST ITEM`);
     await dialog.getByRole("button", { name: "Review rows" }).click();
     await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
     await dialog.getByRole("button", { name: /Import 1 rows?/ }).click();

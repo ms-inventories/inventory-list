@@ -160,7 +160,7 @@ test("one-time crew access is session scoped and closing revokes it immediately"
         kind: "location"
       }
     }));
-    await json(await crew.post(`${API_URL}/session-items/${firstItem.sessionItem.id}/submissions`, {
+    const crewProof = await json(await crew.post(`${API_URL}/session-items/${firstItem.sessionItem.id}/submissions`, {
       headers: crewHeaders({ mutate: true }),
       data: {
         status: "found",
@@ -168,6 +168,10 @@ test("one-time crew access is session scoped and closing revokes it immediately"
         serialNumber: "CREW-QA-1",
         photos: [{ uploadId: upload.photo.uploadId, kind: "location" }]
       }
+    }));
+    await json(await request.patch(`${API_URL}/submissions/${crewProof.submission.id}/review`, {
+      headers: adminHeaders(),
+      data: { decision: "approved", saveItem: false }
     }));
     const mediaUrl = new URL(upload.photo.url, API_URL).toString();
     expect((await crew.get(mediaUrl)).status()).toBe(200);
@@ -189,7 +193,7 @@ test("one-time crew access is session scoped and closing revokes it immediately"
     }));
     const preservedItem = closedDetail.items.find(item => item.id === firstItem.sessionItem.id);
     const releasedItem = closedDetail.items.find(item => item.id === secondItem.sessionItem.id);
-    expect(preservedItem).toMatchObject({ status: "needs_review", assignedTo: me.user.id });
+    expect(preservedItem).toMatchObject({ status: "approved", assignedTo: me.user.id });
     expect(preservedItem.submissions).toHaveLength(1);
     expect(releasedItem).toMatchObject({ status: "unchecked", assignedTo: null });
   } finally {
@@ -514,7 +518,7 @@ test("leader revoke releases untouched claims but preserves submitted work", asy
     }
     await json(await crew.post(`${API_URL}/session-items/${submittedItem.sessionItem.id}/submissions`, {
       headers: crewHeaders({ mutate: true }),
-      data: { status: "found", locationText: "QA submitted location" }
+      data: { status: "not_found", locationText: "QA submitted location" }
     }));
 
     const revoked = await json(await request.post(

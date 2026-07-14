@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
+const PHOTO_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const qaAdmin = {
   sub: "qa-lead",
@@ -50,10 +51,31 @@ async function createScenario(request, suffix) {
   return { sessionId: session.session.id, sessionItemId: item.sessionItem.id };
 }
 
+async function uploadPhoto(request, label) {
+  return (await responseJson(await request.post(`${API_URL}/uploads/photos`, {
+    headers: qaHeaders(qaNco),
+    data: {
+      fileName: `${label}.png`,
+      mimeType: "image/png",
+      dataUrl: PHOTO_DATA_URL,
+      caption: label,
+      kind: "general",
+      purpose: "evidence"
+    }
+  }))).photo;
+}
+
 async function submitProof(request, sessionItemId, note) {
+  const label = `proof-${sessionItemId}-${note.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
+  const proofPhoto = await uploadPhoto(request, label);
   return responseJson(await request.post(`${API_URL}/session-items/${sessionItemId}/submissions`, {
     headers: qaHeaders(qaNco),
-    data: { status: "found", locationText: "QA shelf", note }
+    data: {
+      status: "found",
+      locationText: "QA shelf",
+      note,
+      photos: [{ uploadId: proofPhoto.uploadId, kind: "general" }]
+    }
   }));
 }
 

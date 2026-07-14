@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const TENANT_URL = process.env.QA_TENANT_URL || "http://ms.localhost:5175/#/admin";
 const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
+const PHOTO_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const qaAdmin = {
   sub: "qa-lead",
@@ -35,6 +36,20 @@ async function responseJson(response) {
   return response.json();
 }
 
+async function uploadPhoto(request, label) {
+  return (await responseJson(await request.post(`${API_URL}/uploads/photos`, {
+    headers: qaHeaders(qaNco),
+    data: {
+      fileName: `${label}.png`,
+      mimeType: "image/png",
+      dataUrl: PHOTO_DATA_URL,
+      caption: label,
+      kind: "general",
+      purpose: "evidence"
+    }
+  }))).photo;
+}
+
 async function createPendingSubmission(request, label) {
   const sessionName = `QA review ${label} ${Date.now()}`;
   const packetLine = `QA-${label.toUpperCase()} ${Date.now()} TEST ITEM`;
@@ -54,13 +69,15 @@ async function createPendingSubmission(request, label) {
     data: { memberId: "self" }
   }));
 
+  const proofPhoto = await uploadPhoto(request, `review-${label}-${sessionItemId}`);
   const submission = await responseJson(await request.post(`${API_URL}/session-items/${sessionItemId}/submissions`, {
     headers: qaHeaders(qaNco),
     data: {
       status: "found",
       locationText: "QA review shelf",
       note: `Evidence for ${label}`,
-      serialNumber: `QA-${label.toUpperCase()}-001`
+      serialNumber: `QA-${label.toUpperCase()}-001`,
+      photos: [{ uploadId: proofPhoto.uploadId, kind: "general" }]
     }
   }));
 
@@ -132,6 +149,10 @@ test.describe("review queue decisions", () => {
     const approvedItem = approvedDetail.items.find(item => item.id === approved.sessionItemId);
     expect(approvedItem.status).toBe("approved");
     expect(approvedItem.submissions.find(item => item.id === approved.submissionId)?.reviewState).toBe("approved");
+    const savedItems = await responseJson(await request.get(`${API_URL}/inventory/items`, {
+      headers: qaHeaders(qaAdmin)
+    }));
+    expect(savedItems.items.some(item => item.title === approved.packetLine)).toBeFalsy();
 
     const rejectedDetail = await loadSessionDetail(request, rejected);
     const rejectedItem = rejectedDetail.items.find(item => item.id === rejected.sessionItemId);

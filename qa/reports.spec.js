@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 
 const TENANT_URL = process.env.QA_TENANT_URL || "http://ms.localhost:5175/#/admin";
 const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
+const PHOTO_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 const qaAdmin = {
   sub: "qa-lead",
@@ -69,13 +70,29 @@ async function submitResult(request, itemId, status, marker) {
     headers: qaHeaders(qaNco),
     data: { memberId: "self" }
   }));
+  let photos = [];
+  if (status === "found") {
+    const upload = await responseJson(await request.post(`${API_URL}/uploads/photos`, {
+      headers: qaHeaders(qaNco),
+      data: {
+        fileName: `report-${marker}.png`,
+        mimeType: "image/png",
+        dataUrl: PHOTO_DATA_URL,
+        caption: `Report proof ${marker}`,
+        kind: "general",
+        purpose: "evidence"
+      }
+    }));
+    photos = [{ uploadId: upload.photo.uploadId, kind: "general" }];
+  }
   return (await responseJson(await request.post(`${API_URL}/session-items/${itemId}/submissions`, {
     headers: qaHeaders(qaNco),
     data: {
       status,
       locationText: `Report location ${marker}`,
       serialNumber: `REPORT-${marker}`,
-      note: `Report note ${marker}`
+      note: `Report note ${marker}`,
+      photos
     }
   }))).submission;
 }

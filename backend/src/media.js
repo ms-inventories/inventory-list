@@ -198,9 +198,36 @@ async function authorizedMediaRecord(session, storageKey) {
         WHERE photo.storage_key = $1
           AND inventory_session.tenant_id = $2
           AND ($3::uuid IS NULL OR inventory_session.id = $3)
+          AND (
+            $4::boolean = true
+            OR NOT EXISTS (
+              SELECT 1
+              FROM inventory_item_media saved_reference
+              JOIN inventory_items saved_item ON saved_item.id = saved_reference.inventory_item_id
+              WHERE saved_reference.media_upload_id = photo.media_upload_id
+                AND saved_item.tenant_id = $2
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM inventory_item_media saved_reference
+              JOIN inventory_items saved_item ON saved_item.id = saved_reference.inventory_item_id
+              JOIN inventory_session_items active_item ON active_item.inventory_item_id = saved_item.id
+              JOIN inventory_sessions active_session ON active_session.id = active_item.session_id
+              WHERE saved_reference.media_upload_id = photo.media_upload_id
+                AND saved_item.tenant_id = $2
+                AND active_session.tenant_id = $2
+                AND active_session.status = 'active'
+                AND ($3::uuid IS NULL OR active_session.id = $3)
+            )
+          )
         LIMIT 1
       `,
-      [storageKey, session.tenantId, crewSessionId]
+      [
+        storageKey,
+        session.tenantId,
+        crewSessionId,
+        session.platformAdmin || session.role === "tenant_admin"
+      ]
     );
     if (submissionResult.rows[0]) return { kind: "evidence" };
 
@@ -214,17 +241,25 @@ async function authorizedMediaRecord(session, storageKey) {
           AND upload.state = 'attached'
           AND item.tenant_id = $2
           AND (
-            $3::uuid IS NULL
+            $4::boolean = true
             OR EXISTS (
               SELECT 1
               FROM inventory_session_items session_item
+              JOIN inventory_sessions active_session ON active_session.id = session_item.session_id
               WHERE session_item.inventory_item_id = item.id
-                AND session_item.session_id = $3
+                AND active_session.tenant_id = $2
+                AND active_session.status = 'active'
+                AND ($3::uuid IS NULL OR active_session.id = $3)
             )
           )
         LIMIT 1
       `,
-      [storageKey, session.tenantId, crewSessionId]
+      [
+        storageKey,
+        session.tenantId,
+        crewSessionId,
+        session.platformAdmin || session.role === "tenant_admin"
+      ]
     );
     if (inventoryReferenceResult.rows[0]) return { kind: "inventory_reference" };
 
@@ -236,17 +271,25 @@ async function authorizedMediaRecord(session, storageKey) {
           AND legacy_media_metadata = true
           AND strpos(metadata::text, $1) > 0
           AND (
-            $3::uuid IS NULL
+            $4::boolean = true
             OR EXISTS (
               SELECT 1
               FROM inventory_session_items session_item
+              JOIN inventory_sessions active_session ON active_session.id = session_item.session_id
               WHERE session_item.inventory_item_id = inventory_items.id
-                AND session_item.session_id = $3
+                AND active_session.tenant_id = $2
+                AND active_session.status = 'active'
+                AND ($3::uuid IS NULL OR active_session.id = $3)
             )
           )
         LIMIT 1
       `,
-      [storageKey, session.tenantId, crewSessionId]
+      [
+        storageKey,
+        session.tenantId,
+        crewSessionId,
+        session.platformAdmin || session.role === "tenant_admin"
+      ]
     );
     return legacyInventoryReferenceResult.rows[0] ? { kind: "inventory_reference" } : null;
   }
