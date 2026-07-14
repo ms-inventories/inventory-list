@@ -27,7 +27,7 @@ async function activatePlatformNav(page, name, isMobileProject) {
 }
 
 test.describe("Platform dashboard", () => {
-  test("dashboard nav opens a real platform overview and shortcuts", async ({ page }, testInfo) => {
+  test("dashboard navigation opens a focused platform overview", async ({ page }, testInfo) => {
     const isMobileProject = Boolean(testInfo.project.use.isMobile);
 
     await seedQaRootSession(page);
@@ -36,7 +36,7 @@ test.describe("Platform dashboard", () => {
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
     await expect(page.getByText("Total platoons", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Recent platoons" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Admin actions" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Admin actions" })).toHaveCount(0);
 
     await activatePlatformNav(page, "Platoons", isMobileProject);
     await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
@@ -45,13 +45,7 @@ test.describe("Platform dashboard", () => {
     await activatePlatformNav(page, "Dashboard", isMobileProject);
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
 
-    const reviewUsersShortcut = page.getByRole("button", { name: "Review users" });
-    await expect(reviewUsersShortcut).toBeVisible();
-    if (isMobileProject) {
-      await activatePlatformNav(page, "Users", true);
-    } else {
-      await reviewUsersShortcut.click();
-    }
+    await activatePlatformNav(page, "Users", isMobileProject);
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
 
     await activatePlatformNav(page, "Dashboard", isMobileProject);
@@ -63,5 +57,35 @@ test.describe("Platform dashboard", () => {
       await viewAllShortcut.click();
     }
     await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
+  });
+
+  test("recent platoons stays contained at desktop and docked widths", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Desktop containment is covered once in Chromium.");
+    await seedQaRootSession(page);
+
+    for (const width of [1440, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(ADMIN_URL);
+
+      const main = page.locator("main");
+      const recent = page.locator(".platform-dashboard-card").filter({ hasText: "Recent platoons" });
+      const table = recent.getByRole("table");
+      await expect(recent).toBeVisible();
+      await expect(table).toBeVisible();
+
+      const [mainBox, cardBox, tableBox] = await Promise.all([
+        main.boundingBox(),
+        recent.boundingBox(),
+        table.boundingBox()
+      ]);
+      expect(cardBox.x).toBeGreaterThanOrEqual(mainBox.x - 1);
+      expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(mainBox.x + mainBox.width + 1);
+      expect(tableBox.x).toBeGreaterThanOrEqual(cardBox.x - 1);
+      expect(tableBox.x + tableBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
+      expect(await recent.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      expect(await page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+      )).toBeTruthy();
+    }
   });
 });

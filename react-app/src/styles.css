@@ -2285,7 +2285,7 @@ button {
 
 .platform-dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -2364,7 +2364,6 @@ button {
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.055);
 }
 
-.platform-dashboard-card,
 .platform-support-card {
   overflow: hidden;
 }
@@ -2554,7 +2553,12 @@ button {
 }
 
 .platform-table-compact {
-  min-width: 820px;
+  min-width: 0;
+}
+
+.platform-table-compact .platform-table-head,
+.platform-table-compact .platform-table-row {
+  grid-template-columns: minmax(260px, 1fr) 110px minmax(190px, auto);
 }
 
 .platform-table-head,
@@ -4962,6 +4966,7 @@ button {
   display: grid;
   align-content: start;
   gap: 12px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 16px 20px 24px;
@@ -4994,6 +4999,74 @@ button {
   border-radius: var(--radius);
   background: #fff;
   padding: 14px;
+}
+
+.session-detail-disclosure > summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.session-detail-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-detail-disclosure > summary > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.session-detail-disclosure > summary small,
+.session-detail-disclosure > summary strong {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-detail-disclosure > summary small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.session-detail-disclosure > summary strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.session-detail-disclosure > summary > svg,
+.session-detail-summary-side > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+
+.session-detail-disclosure[open] > summary > svg,
+.session-detail-disclosure[open] > summary .session-detail-summary-side > svg {
+  transform: rotate(180deg);
+}
+
+.session-detail-summary-side {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.session-item-direct-actions {
+  margin-top: 2px;
 }
 
 .session-detail-section-heading,
@@ -5667,6 +5740,8 @@ button {
 
 .proof-form {
   display: grid;
+  width: 100%;
+  min-width: 0;
   gap: 10px;
   grid-column: 1 / -1;
   border-top: 1px solid var(--line);
@@ -5738,6 +5813,8 @@ button {
 
 .photo-picker {
   display: inline-flex;
+  width: 100%;
+  min-width: 0;
   min-height: 42px;
   align-items: center;
   justify-content: center;
@@ -5748,6 +5825,122 @@ button {
   color: var(--primary-strong);
   cursor: pointer;
   font-weight: 850;
+  padding: 0 12px;
+}
+
+.packet-import-history-heading {
+  cursor: pointer;
+  list-style: none;
+}
+
+.packet-import-history-heading::-webkit-details-marker {
+  display: none;
+}
+
+.packet-import-history-heading::after {
+  content: "⌄";
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.packet-import-history[open] > .packet-import-history-heading::after {
+  transform: rotate(180deg);
+}
+
+.packet-import-history-heading > strong {
+  margin-right: auto;
+}
+
+.photo-picker > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.photo-picker.disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.proof-photo-selection {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.proof-photo-selection-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 8px 9px;
+}
+
+.proof-photo-selection-item > svg {
+  width: 18px;
+  height: 18px;
+  color: var(--primary-strong);
+}
+
+.proof-photo-selection-item > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proof-photo-selection-item > small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.proof-photo-selection-item > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.proof-photo-selection-item > button:hover,
+.proof-photo-selection-item > button:focus-visible {
+  background: var(--surface-muted);
+  color: var(--ink);
+  outline: none;
+}
+
+.proof-photo-selection-item > button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.session-proof-awaiting {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  border: 1px solid #d8c68d;
+  border-radius: 999px;
+  background: #fff8e9;
+  color: #765018;
+  font-size: 0.78rem;
+  font-weight: 900;
   padding: 0 12px;
 }
 
@@ -6830,6 +7023,18 @@ button {
    desktop navigation but not for a two-column session workspace plus every
    row action. Stack the workspace and its row controls before they can force
    the document wider than the viewport. */
+@media (max-width: 1024px) {
+  .session-item-drawer-backdrop {
+    justify-content: stretch;
+  }
+
+  .session-item-drawer {
+    width: 100vw;
+    max-width: none;
+    border-left: 0;
+  }
+}
+
 @media (min-width: 861px) and (max-width: 1180px) {
   .session-layout {
     grid-template-columns: 1fr;
@@ -6898,7 +7103,9 @@ button {
   }
 
   .session-item-drawer {
-    width: min(100%, 560px);
+    width: 100vw;
+    max-width: none;
+    border-left: 0;
   }
 
   .platform-shell {

@@ -311,7 +311,7 @@ test.describe("intermediate session layout", () => {
     await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
     await page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Unclaimed\b/ }).click();
 
-    const row = page.locator(".session-item", { hasText: "G18358 GENERATOR SET SEARCH FIXTURE" });
+    const row = page.locator(".session-item", { hasText: "Quiet Generator" });
     const actions = row.locator(".session-item-actions");
     const details = row.getByRole("button", { name: /Open details for/ });
 
@@ -320,8 +320,9 @@ test.describe("intermediate session layout", () => {
       await expect(row).toBeVisible();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
       await expectInsideHorizontally(row, actions);
-      expect(await row.evaluate(element => getComputedStyle(element).flexDirection)).toBe("column");
-      await expect(row.locator(".session-assignment-control")).toBeVisible();
+      await expect(row.locator(".session-assignment-control")).toHaveCount(0);
+      await expect(row.getByRole("button", { name: "Found", exact: true })).toHaveCount(0);
+      await expect(row.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
       await expect(details).toBeVisible();
     }
 

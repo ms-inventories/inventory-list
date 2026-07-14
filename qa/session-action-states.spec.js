@@ -89,6 +89,7 @@ async function openScenario(page, scenario) {
   await row.getByRole("button", { name: `Open details for ${scenario.packetLine}` }).click();
   const drawer = page.getByRole("dialog", { name: scenario.packetLine });
   await expect(drawer).toBeVisible();
+  await drawer.locator("details.session-detail-disclosure").filter({ hasText: "Manage item" }).locator("summary").click();
   return drawer;
 }
 
@@ -156,9 +157,9 @@ test.describe("session async action states", () => {
     });
 
     let drawer = await openScenario(page, scenario);
-    await drawer.getByRole("button", { name: "Found", exact: true }).click();
+    await drawer.getByRole("button", { name: "Mark found", exact: true }).click();
     const markingFound = drawer.getByRole("button", { name: "Marking found...", exact: true });
-    const siblingNotFound = drawer.getByRole("button", { name: "Not found", exact: true });
+    const siblingNotFound = drawer.getByRole("button", { name: "Mark not found", exact: true });
     await expect(markingFound).toBeDisabled();
     await expect(siblingNotFound).toBeDisabled();
     await expect.poll(() => directRequests).toBe(1);
@@ -171,13 +172,13 @@ test.describe("session async action states", () => {
     await expect(drawer.getByRole("alert")).toContainText(
       `The server could not complete this request. Reference ID: ${directRequestId}.`
     );
-    await expect(drawer.getByRole("button", { name: "Found", exact: true })).toBeEnabled();
-    await expect(drawer.getByRole("button", { name: "Not found", exact: true })).toBeEnabled();
+    await expect(drawer.getByRole("button", { name: "Mark found", exact: true })).toBeEnabled();
+    await expect(drawer.getByRole("button", { name: "Mark not found", exact: true })).toBeEnabled();
 
-    await drawer.getByRole("button", { name: "Not found", exact: true }).click();
+    await drawer.getByRole("button", { name: "Mark not found", exact: true }).click();
     await expect.poll(() => directRequests).toBe(2);
     await expect(drawer.getByRole("status")).toContainText("Session item updated.");
-    await expect(drawer.getByRole("button", { name: "Not found", exact: true })).toBeEnabled();
+    await expect(drawer.getByRole("button", { name: "Mark not found", exact: true })).toBeEnabled();
     await drawer.getByRole("button", { name: "Close item details" }).click();
     await expect(drawer).toBeHidden();
 

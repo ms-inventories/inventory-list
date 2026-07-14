@@ -1,6 +1,6 @@
 # Inventory List Roadmap
 
-> Updated 2026-07-13: the product has moved beyond the original static prototype described in the older phases below. React, Express/Postgres, Authentik, tenant workspaces, and Coolify are now the active architecture. Use `docs/forkable-tasks.md` as the authoritative implementation backlog and `docs/ui-task-list.md` for UI audit status.
+> Updated 2026-07-14: the product has moved beyond the original static prototype described in the older phases below. React, Express/Postgres, Authentik, tenant workspaces, and Coolify are now the active architecture. Use `docs/forkable-tasks.md` as the authoritative implementation backlog and `docs/ui-task-list.md` for UI audit status.
 
 ## Current Product Shape
 
@@ -8,10 +8,14 @@ This is a lightweight inventory lookup tool for guard squad equipment accountabi
 
 Primary field workflow:
 
-1. Supply hands out a physical sub-hand-receipt packet with official Army names, LINs, NSNs, and quantities.
-2. A user searches or scans an item line such as `A90594 ARMAMENT SUBSYS: M153`.
-3. The app returns the friendly name, photo, description, and location.
-4. Admins enrich the inventory with better names, photos, locations, and packet metadata.
+1. A PSG, LT, or other leader opens the platoon workspace on a phone and starts or selects the active inventory.
+2. The leader scans, uploads, or pastes the day's packet and confirms the parsed rows.
+3. The leader brings helpers into that session with a one-time seven-day crew code or a permanent account.
+4. Helpers review the same item list and claim as many nearby items as they plan to work.
+5. A helper records the result, location, serial, note, and up to three proof photos.
+6. The leader reviews the newest proof once, requests more when needed, and approves the item.
+7. Closing the session revokes temporary access and produces the closeout report.
+8. The next packet suggests matches to verified known items so the leader can retain the best location and reference photos.
 
 Current architecture:
 
@@ -45,9 +49,11 @@ Design implication: scanning should behave like a review/import wizard. It shoul
 
 The architecture decision has already been made: continue with the React/Coolify/Postgres/Authentik application and keep the static app only as a fallback. The core packet/session/review workflow is now replayable and diagnosable; the highest-value work now is:
 
-1. Keep the historically exposed credential rotation as an owner-only deferred follow-up until the old value is confirmed rejected.
-2. Continue proof-capture depth (multi-photo preview/remove/compression), then finish loading-state and empty-state coverage now that the primary claim/proof path is mobile-first.
-3. Preserve the new tenant settings and cross-session reporting contracts as those later UI passes evolve.
+1. Publish and production-verify the single-review proof lifecycle, stable proof drawer, three-photo cap, lean item cards, and compact admin dashboard.
+2. Implement session-scoped one-time crew codes with seven-day expiry, atomic consumption, strict rate limits, and immediate closeout revocation.
+3. Make database memberships authoritative and add least-privilege Authentik provisioning for permanent accounts.
+4. Promote leader-selected approved evidence into reusable known-item location/photo records for later session matching.
+5. Keep the historically exposed credential rotation as an owner-only deferred follow-up until the old value is confirmed rejected.
 
 ## Progress
 
@@ -76,6 +82,7 @@ The architecture decision has already been made: continue with the React/Coolify
 - 2026-07-11: Corrected dashboard existing-session destinations and removed duplicate platform workspace destinations while beginning the broader empty-state/action-label cleanup.
 - 2026-07-11: Made active inventory the tenant-home context with a multi-session selector and exact-item routing; replaced ambiguous assignment filters with Available/My work/Team, fixed Authentik-only self-claims with race protection, and retired tenant Guidance plus group/routing diagnostics from user-facing navigation and settings.
 - 2026-07-13: Refined the field workflow around `Unclaimed`, `Mine`, `Others`, and separate Completed history; exposed Claim directly on mobile; required ownership before proof; added row-scoped assignment feedback, exact notification item routing, human-readable statuses, contributor-specific dashboard content, accessible proof controls, and stronger mobile tap/input sizing.
+- 2026-07-14: Hardened proof review so follow-up evidence supersedes the prior open review cycle, one decision resolves the item, stale reviews conflict safely, and evidence is capped at three photos; consolidated proof into a stable drawer, collapsed secondary detail/history, simplified row actions, and made the platform dashboard table compact at docked widths.
 
 ## Phase 1: Make Packet Lookup Excellent
 

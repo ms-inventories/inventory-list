@@ -211,6 +211,7 @@ test.describe("session claim API", () => {
       await drawer.getByRole("button", { name: "Claim item" }).click();
 
       await expect(drawer.getByRole("status")).toContainText("Item claimed.");
+      await expect(row.locator(".proof-form")).toHaveCount(0);
       const proofForm = drawer.locator(".proof-form");
       await expect(proofForm).toBeVisible();
       const foundOutcome = proofForm.getByRole("button", { name: "Found", exact: true });
@@ -222,10 +223,39 @@ test.describe("session claim API", () => {
       await expect(proofForm.getByRole("textbox", { name: "Location" })).toBeVisible();
       await expect(proofForm.getByRole("textbox", { name: "Serial number" })).toBeVisible();
       await expect(proofForm.getByRole("textbox", { name: "Note" })).toBeVisible();
-      const photoInput = proofForm.getByLabel("Add proof photo");
+      const photoInput = proofForm.getByLabel("Add proof photos");
       await expect(photoInput).toBeEnabled();
-      await photoInput.focus();
-      await expect(photoInput).toBeFocused();
+      await expect(photoInput).toHaveAttribute("multiple", "");
+      const drawerBeforePhotos = await drawer.boundingBox();
+      const photoNames = [1, 2, 3].map(index =>
+        `proof-photo-${index}-with-an-intentionally-long-filename-that-must-not-expand-the-item-drawer.jpg`
+      );
+      await photoInput.setInputFiles(photoNames.map(name => ({
+        name,
+        mimeType: "image/jpeg",
+        buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+      })));
+      const selectedPhotos = proofForm.getByRole("list", { name: "Selected proof photos" });
+      await expect(selectedPhotos.getByRole("listitem")).toHaveCount(3);
+      await expect(proofForm.getByLabel("Add another proof photo")).toBeDisabled();
+      for (const name of photoNames) {
+        await expect(proofForm.getByText(name, { exact: true })).toBeVisible();
+      }
+      const viewport = page.viewportSize();
+      const drawerBox = await drawer.boundingBox();
+      expect(Math.abs(drawerBox.x - drawerBeforePhotos.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(drawerBox.y - drawerBeforePhotos.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(drawerBox.width - drawerBeforePhotos.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(drawerBox.height - drawerBeforePhotos.height)).toBeLessThanOrEqual(1);
+      expect(drawerBox.x).toBeGreaterThanOrEqual(0);
+      expect(drawerBox.x + drawerBox.width).toBeLessThanOrEqual(viewport.width + 1);
+      expect(drawerBox.y).toBeGreaterThanOrEqual(0);
+      expect(drawerBox.y + drawerBox.height).toBeLessThanOrEqual(viewport.height + 1);
+      expect(await drawer.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      expect(await proofForm.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+      )).toBeTruthy();
       await expect(page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Mine\b/ })).toHaveClass(/active/);
       await expect(page.getByText("Validation failed", { exact: true })).toHaveCount(0);
 

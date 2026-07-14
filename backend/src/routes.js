@@ -4775,12 +4775,12 @@ export function registerRoutes(app) {
         locationText: z.string().optional(),
         note: z.string().optional(),
         serialNumber: z.string().optional(),
-        photoIds: z.array(z.string().uuid()).optional(),
+        photoIds: z.array(z.string().uuid()).max(3).optional(),
         photos: z.array(z.object({
           uploadId: z.string().uuid(),
           caption: z.string().nullish(),
           kind: z.enum(photoKinds).default("general")
-        })).max(8).optional()
+        })).max(3).optional()
       }),
       request.body
     );
@@ -4816,6 +4816,23 @@ export function registerRoutes(app) {
         });
         lockedUploads.set(upload.id, upload);
       }
+
+      await client.query(
+        `
+          WITH superseded AS (
+            UPDATE item_submissions
+            SET review_state = 'superseded',
+              reviewed_at = COALESCE(reviewed_at, now())
+            WHERE session_item_id = $1
+              AND review_state IN ('pending', 'request_more_info')
+            RETURNING id
+          )
+          UPDATE evidence_requests
+          SET resolved_at = COALESCE(resolved_at, now())
+          WHERE submission_id IN (SELECT id FROM superseded)
+        `,
+        [request.params.sessionItemId]
+      );
 
       const result = await client.query(
         `
@@ -5005,28 +5022,99 @@ export function registerRoutes(app) {
     );
 
     const submission = await withTransaction(async client => {
-      const result = await client.query(
+      const pointerResult = await client.query(
         `
-          UPDATE item_submissions sub
-          SET review_state = $1, review_note = $2, reviewed_by = $3, reviewed_at = now()
+          SELECT sub.session_item_id
+          FROM item_submissions sub
+          JOIN inventory_session_items si ON si.id = sub.session_item_id
+          JOIN inventory_sessions s ON s.id = si.session_id
+          WHERE sub.id = $1
+            AND s.tenant_id = $2
+        `,
+        [request.params.submissionId, context.tenant.id]
+      );
+      if (!pointerResult.rows[0]) return null;
+
+      const sessionItemResult = await client.query(
+        `
+          SELECT si.id, s.status AS session_status
           FROM inventory_session_items si
           JOIN inventory_sessions s ON s.id = si.session_id
-          WHERE sub.session_item_id = si.id
-            AND sub.id = $4
-            AND s.tenant_id = $5
-          RETURNING sub.*, si.id AS session_item_id
+          WHERE si.id = $1
+            AND s.tenant_id = $2
+          FOR UPDATE OF si, s
         `,
-        [body.decision, body.note || null, context.user.id, request.params.submissionId, context.tenant.id]
+        [pointerResult.rows[0].session_item_id, context.tenant.id]
+      );
+      const sessionItem = sessionItemResult.rows[0];
+      if (!sessionItem) return null;
+      if (sessionItem.session_status === "closed") return { sessionClosed: true };
+
+      const currentResult = await client.query(
+        `
+          SELECT *
+          FROM item_submissions
+          WHERE id = $1
+            AND session_item_id = $2
+          FOR UPDATE
+        `,
+        [request.params.submissionId, sessionItem.id]
       );
 
-      if (!result.rows[0]) return null;
+      const current = currentResult.rows[0];
+      if (!current) return null;
+      current.session_item_id = sessionItem.id;
+      if (!["pending", "request_more_info"].includes(current.review_state)) {
+        return { staleReview: true };
+      }
+
+      if (body.decision !== "request_more_info") {
+        await client.query(
+          `
+            UPDATE item_submissions
+            SET review_state = 'superseded',
+              reviewed_at = COALESCE(reviewed_at, now())
+            WHERE session_item_id = $1
+              AND id <> $2
+              AND review_state IN ('pending', 'request_more_info')
+          `,
+          [current.session_item_id, current.id]
+        );
+
+        await client.query(
+          `
+            UPDATE evidence_requests request
+            SET resolved_at = COALESCE(request.resolved_at, now())
+            FROM item_submissions sibling
+            WHERE request.submission_id = sibling.id
+              AND request.resolved_at IS NULL
+              AND sibling.session_item_id = $1
+              AND (sibling.id = $2 OR sibling.review_state = 'superseded')
+          `,
+          [current.session_item_id, current.id]
+        );
+      }
+
+      const result = await client.query(
+        `
+          UPDATE item_submissions
+          SET review_state = $1, review_note = $2, reviewed_by = $3, reviewed_at = now()
+          WHERE id = $4
+            AND review_state IN ('pending', 'request_more_info')
+          RETURNING *
+        `,
+        [body.decision, body.note || null, context.user.id, current.id]
+      );
+
+      if (!result.rows[0]) return { staleReview: true };
+      result.rows[0].session_item_id = current.session_item_id;
 
       if (body.decision === "approved") {
         await client.query(
           "UPDATE inventory_session_items SET status = 'approved', updated_at = now() WHERE id = $1",
           [result.rows[0].session_item_id]
         );
-      } else if (body.decision === "request_more_info") {
+      } else {
         await client.query(
           "UPDATE inventory_session_items SET status = 'needs_review', updated_at = now() WHERE id = $1",
           [result.rows[0].session_item_id]
@@ -5049,6 +5137,14 @@ export function registerRoutes(app) {
       reply.code(404);
       throw new Error("Submission not found");
     }
+    if (submission.sessionClosed) {
+      reply.code(409);
+      throw new Error("Closed sessions are read-only.");
+    }
+    if (submission.staleReview) {
+      reply.code(409);
+      throw new Error("This proof has already been reviewed or replaced.");
+    }
 
     if (body.decision === "request_more_info") {
       runNotification("Proof request", () => notifySubmitterOfProofRequest(context, submission.id, body.note));
@@ -5068,9 +5164,9 @@ export function registerRoutes(app) {
     );
 
     const evidenceRequest = await withTransaction(async client => {
-      const submissionResult = await client.query(
+      const pointerResult = await client.query(
         `
-          SELECT sub.id, si.id AS session_item_id
+          SELECT sub.session_item_id
           FROM item_submissions sub
           JOIN inventory_session_items si ON si.id = sub.session_item_id
           JOIN inventory_sessions s ON s.id = si.session_id
@@ -5078,8 +5174,40 @@ export function registerRoutes(app) {
         `,
         [request.params.submissionId, context.tenant.id]
       );
+      if (!pointerResult.rows[0]) return null;
 
-      if (!submissionResult.rows[0]) return null;
+      const sessionItemResult = await client.query(
+        `
+          SELECT si.id, s.status AS session_status
+          FROM inventory_session_items si
+          JOIN inventory_sessions s ON s.id = si.session_id
+          WHERE si.id = $1
+            AND s.tenant_id = $2
+          FOR UPDATE OF si, s
+        `,
+        [pointerResult.rows[0].session_item_id, context.tenant.id]
+      );
+      const sessionItem = sessionItemResult.rows[0];
+      if (!sessionItem) return null;
+      if (sessionItem.session_status === "closed") return { sessionClosed: true };
+
+      const submissionResult = await client.query(
+        `
+          SELECT id, review_state
+          FROM item_submissions
+          WHERE id = $1
+            AND session_item_id = $2
+          FOR UPDATE
+        `,
+        [request.params.submissionId, sessionItem.id]
+      );
+
+      const submission = submissionResult.rows[0];
+      if (!submission) return null;
+      submission.session_item_id = sessionItem.id;
+      if (!["pending", "request_more_info"].includes(submission.review_state)) {
+        return { staleReview: true };
+      }
 
       const result = await client.query(
         `
@@ -5104,7 +5232,7 @@ export function registerRoutes(app) {
 
       await client.query(
         "UPDATE inventory_session_items SET status = 'needs_review', updated_at = now() WHERE id = $1",
-        [submissionResult.rows[0].session_item_id]
+        [submission.session_item_id]
       );
 
       await createAuditEvent(client, {
@@ -5122,6 +5250,14 @@ export function registerRoutes(app) {
     if (!evidenceRequest) {
       reply.code(404);
       throw new Error("Submission not found");
+    }
+    if (evidenceRequest.sessionClosed) {
+      reply.code(409);
+      throw new Error("Closed sessions are read-only.");
+    }
+    if (evidenceRequest.staleReview) {
+      reply.code(409);
+      throw new Error("This proof has already been reviewed or replaced.");
     }
 
     runNotification("Evidence request", () => notifySubmitterOfProofRequest(context, request.params.submissionId, body.message));
