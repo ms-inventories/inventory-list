@@ -4,6 +4,8 @@ const AUTH_SESSION_KEY = "inventory.auth.session";
 const OIDC_STATE_KEY = "inventory.oidc.state";
 const OIDC_VERIFIER_KEY = "inventory.oidc.verifier";
 
+export const AUTH_SESSION_INVALIDATED_EVENT = "inventory:auth-session-invalidated";
+
 let currentRedirectCompletion = null;
 
 export class AuthFlowError extends Error {
@@ -120,6 +122,19 @@ export function saveAuthSession(session) {
 
 export function clearAuthSession() {
   localStorage.removeItem(AUTH_SESSION_KEY);
+}
+
+export function invalidateAuthSession(accessToken, reason = "unauthorized") {
+  const session = readAuthSession();
+  if (!session?.accessToken || (accessToken && session.accessToken !== accessToken)) return false;
+
+  clearAuthSession();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(AUTH_SESSION_INVALIDATED_EVENT, {
+      detail: { reason }
+    }));
+  }
+  return true;
 }
 
 export function getSessionAccessToken(session) {

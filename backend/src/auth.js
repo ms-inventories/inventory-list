@@ -1,9 +1,19 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, errors, jwtVerify } from "jose";
 import { config } from "./config.js";
 import { query } from "./db.js";
 
 let jwksPromise = null;
 let discoveryPromise = null;
+
+const rejectedBearerTokenErrorCodes = new Set([
+  "ERR_JOSE_ALG_NOT_ALLOWED",
+  "ERR_JWS_INVALID",
+  "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+  "ERR_JWKS_NO_MATCHING_KEY",
+  "ERR_JWT_CLAIM_VALIDATION_FAILED",
+  "ERR_JWT_EXPIRED",
+  "ERR_JWT_INVALID"
+]);
 
 function getHeaderValue(request, name) {
   return request.headers[name.toLowerCase()];
@@ -102,6 +112,15 @@ async function getJwks() {
 }
 
 async function verifyJwt(token) {
+  // Reject structurally invalid bearer tokens before contacting the identity
+  // provider. Signature and claim validation still happen below via jwtVerify.
+  try {
+    decodeProtectedHeader(token);
+    decodeJwt(token);
+  } catch {
+    throw new errors.JWTInvalid("Malformed bearer token");
+  }
+
   const jwks = await getJwks();
   const verifyOptions = {};
   if (config.oidc.issuer) verifyOptions.issuer = config.oidc.issuer;
@@ -246,7 +265,7 @@ function getDevIdentity(request) {
   };
 }
 
-export async function authenticate(request) {
+export async function authenticate(request, verifyToken = verifyBearerToken) {
   const devIdentity = getDevIdentity(request);
   if (devIdentity) return devIdentity;
 
@@ -254,7 +273,12 @@ export async function authenticate(request) {
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match) return null;
 
-  return verifyBearerToken(match[1], getHeaderValue(request, "x-id-token") || "");
+  try {
+    return await verifyToken(match[1], getHeaderValue(request, "x-id-token") || "");
+  } catch (error) {
+    if (rejectedBearerTokenErrorCodes.has(error?.code)) return null;
+    throw error;
+  }
 }
 
 export async function ensureUser(identity) {
