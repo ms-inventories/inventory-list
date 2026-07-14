@@ -197,13 +197,9 @@ test.describe("mobile layout audit", () => {
     await expectWithinViewport(page, page.locator(".leader-topbar"));
     await expectContained(page.locator("main"));
 
-    const dashboardMore = page.getByRole("button", { name: "More actions", exact: true });
-    await dashboardMore.click();
-    await expect(dashboardMore).toHaveAttribute("aria-expanded", "true");
-    await expect(page.getByRole("button", { name: "Upload packet" })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(dashboardMore).toHaveAttribute("aria-expanded", "false");
-    await expect(dashboardMore).toBeFocused();
+    const uploadPacket = page.getByRole("button", { name: "Upload packet" });
+    await expect(uploadPacket).toBeVisible();
+    await expectMinTargetSize(uploadPacket, { height: 44 });
 
     await openWorkspaceView(page, "Workspace Settings");
     await expect(page.getByRole("heading", { name: "Workspace Settings" })).toBeVisible();
@@ -221,13 +217,14 @@ test.describe("mobile layout audit", () => {
     await openWorkspaceView(page, "Inventory Sessions");
     await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
     const assignmentLists = page.getByRole("group", { name: "Work assignment lists" });
-    for (const name of [/Available/, /My work/, /Team/]) {
+    for (const name of [/^Unclaimed\b/, /^Mine\b/, /^Others\b/]) {
       await expectMinTargetSize(assignmentLists.getByRole("button", { name }), { height: 48 });
     }
     const sessionRow = page.locator(".session-item").first();
     await expect(sessionRow).toBeVisible();
     await expect(sessionRow.locator(".session-assignment-control")).toBeHidden();
     await expect(sessionRow.getByRole("button", { name: "Found", exact: true })).toBeHidden();
+    await expect(sessionRow.getByRole("button", { name: "Claim item" })).toBeVisible();
     const details = sessionRow.getByRole("button", { name: /Open details for/ });
     await expect(details).toBeVisible();
     await details.click();
@@ -312,7 +309,7 @@ test.describe("intermediate session layout", () => {
     await expect(session).toBeVisible();
     await session.click();
     await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
-    await page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /Available/ }).click();
+    await page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Unclaimed\b/ }).click();
 
     const row = page.locator(".session-item", { hasText: "G18358 GENERATOR SET SEARCH FIXTURE" });
     const actions = row.locator(".session-item-actions");

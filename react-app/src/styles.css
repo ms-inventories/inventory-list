@@ -4784,6 +4784,96 @@ button {
   gap: 8px;
 }
 
+.leader-metric-strip.contributor {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.session-completed-items {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  overflow: hidden;
+}
+
+.session-completed-items > summary {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 900;
+  padding: 0 14px;
+}
+
+.session-completed-items > summary strong {
+  display: grid;
+  min-width: 26px;
+  min-height: 26px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.session-completed-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.session-completed-list > p {
+  margin: 0;
+  color: var(--muted);
+  padding: 14px;
+}
+
+.session-completed-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  padding: 10px 14px;
+}
+
+.session-completed-item:last-child {
+  border-bottom: 0;
+}
+
+.session-completed-item:hover,
+.session-completed-item:focus-visible {
+  background: var(--surface-muted);
+}
+
+.session-completed-item > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.session-completed-item strong,
+.session-completed-item small {
+  overflow-wrap: anywhere;
+}
+
+.session-completed-item small {
+  color: var(--muted);
+}
+
+.session-completed-item > svg {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
 .session-assignment-control {
   display: grid;
   gap: 4px;
@@ -5584,6 +5674,18 @@ button {
   padding-top: 12px;
 }
 
+.proof-field {
+  display: grid;
+  gap: 5px;
+}
+
+.proof-field > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .proof-request-context {
   display: grid;
   gap: 4px;
@@ -5655,7 +5757,17 @@ button {
 }
 
 .photo-picker input {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.photo-picker:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 3px rgba(50, 96, 65, 0.12);
 }
 
 .review-panel {
@@ -7159,7 +7271,7 @@ button {
     justify-content: flex-start;
   }
 
-  .leader-dashboard-grid {
+.leader-dashboard-grid {
     grid-template-columns: 1fr;
   }
 
@@ -7312,6 +7424,12 @@ button {
     display: none;
   }
 
+  .session-item-actions .session-row-claim-action,
+  .session-item-actions .session-row-primary-action {
+    flex: 1 1 150px;
+    justify-content: center;
+  }
+
   .session-item-actions > .status-pill {
     margin-right: auto;
   }
@@ -7319,6 +7437,10 @@ button {
   .session-assignment-control {
     width: 100%;
   }
+}
+
+.leader-dashboard-grid.single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 861px) {
@@ -7442,22 +7564,19 @@ button {
   }
 
   .session-item-drawer-actions {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     align-items: flex-end;
-    overflow-x: auto;
-    overscroll-behavior-inline: contain;
     padding-right: max(12px, env(safe-area-inset-right));
     padding-left: max(12px, env(safe-area-inset-left));
   }
 
   .session-item-drawer-actions .session-assignment-control {
-    flex: 0 0 172px;
+    flex: 1 1 100%;
   }
 
   .session-item-drawer-actions > .btn {
-    flex: 0 0 auto;
+    flex: 1 1 145px;
     justify-content: center;
-    white-space: nowrap;
   }
 
   .close-session-summary {
@@ -7654,6 +7773,7 @@ button {
 
   .leader-page-actions .btn {
     width: 100%;
+    min-height: 48px;
   }
 
   .leader-metric-strip {
@@ -8418,6 +8538,26 @@ button {
   .session-filter-strip.session-assignment-tabs button,
   .session-filter-strip.leader-work-tabs button {
     min-height: 48px;
+  }
+
+  .proof-form .input {
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  .proof-form textarea.input {
+    min-height: 96px;
+  }
+
+  .segmented-control button,
+  .photo-picker {
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  .session-assignment-control select {
+    min-height: 44px;
+    font-size: 1rem;
   }
 
   .platform-table-card {

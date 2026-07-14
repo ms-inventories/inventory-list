@@ -1,6 +1,6 @@
 # Inventory List Roadmap
 
-> Updated 2026-07-11: the product has moved beyond the original static prototype described in the older phases below. React, Express/Postgres, Authentik, tenant workspaces, and Coolify are now the active architecture. Use `docs/forkable-tasks.md` as the authoritative implementation backlog and `docs/ui-task-list.md` for UI audit status.
+> Updated 2026-07-13: the product has moved beyond the original static prototype described in the older phases below. React, Express/Postgres, Authentik, tenant workspaces, and Coolify are now the active architecture. Use `docs/forkable-tasks.md` as the authoritative implementation backlog and `docs/ui-task-list.md` for UI audit status.
 
 ## Current Product Shape
 
@@ -46,7 +46,7 @@ Design implication: scanning should behave like a review/import wizard. It shoul
 The architecture decision has already been made: continue with the React/Coolify/Postgres/Authentik application and keep the static app only as a fallback. The core packet/session/review workflow is now replayable and diagnosable; the highest-value work now is:
 
 1. Keep the historically exposed credential rotation as an owner-only deferred follow-up until the old value is confirmed rejected.
-2. Continue loading-state depth now that the tenant Activity Log, mobile pass, and search pass are covered on desktop, Pixel 7, and 360px layouts.
+2. Continue proof-capture depth (multi-photo preview/remove/compression), then finish loading-state and empty-state coverage now that the primary claim/proof path is mobile-first.
 3. Preserve the new tenant settings and cross-session reporting contracts as those later UI passes evolve.
 
 ## Progress
@@ -75,6 +75,7 @@ The architecture decision has already been made: continue with the React/Coolify
 - 2026-07-11: Added duplicate guards and visible pending/error/retry states for session direct checks and close/reopen, plus pending locks for legacy viewer login and public unsubscribe.
 - 2026-07-11: Corrected dashboard existing-session destinations and removed duplicate platform workspace destinations while beginning the broader empty-state/action-label cleanup.
 - 2026-07-11: Made active inventory the tenant-home context with a multi-session selector and exact-item routing; replaced ambiguous assignment filters with Available/My work/Team, fixed Authentik-only self-claims with race protection, and retired tenant Guidance plus group/routing diagnostics from user-facing navigation and settings.
+- 2026-07-13: Refined the field workflow around `Unclaimed`, `Mine`, `Others`, and separate Completed history; exposed Claim directly on mobile; required ownership before proof; added row-scoped assignment feedback, exact notification item routing, human-readable statuses, contributor-specific dashboard content, accessible proof controls, and stronger mobile tap/input sizing.
 
 ## Phase 1: Make Packet Lookup Excellent
 

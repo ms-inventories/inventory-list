@@ -151,30 +151,27 @@ test.describe("QA smoke", () => {
     await signInWithQaPersona(page, "Platoon admin");
 
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Dashboard review results" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Start new inventory" })).toBeVisible();
     const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
     if (await workspaceMenu.isVisible()) {
       await workspaceMenu.click();
-      await expect(page.getByRole("button", { name: "Review Queue" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "People & Invites" })).toBeVisible();
       await page.locator(".leader-brand").getByRole("button", { name: "Close menu" }).click();
-      await page.getByRole("button", { name: "More actions", exact: true }).click();
     } else {
-      await expect(page.getByRole("button", { name: "Review Queue" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "People & Invites" })).toBeVisible();
     }
     await expect(page.getByRole("button", { name: "Upload packet" })).toBeVisible();
   });
 
-  test("platoon admin can open and review packet upload rows", async ({ page }, testInfo) => {
+  test("platoon admin can open and review packet upload rows", async ({ page }) => {
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
     const uploadPacket = page.getByRole("button", { name: "Upload packet" });
-    if (testInfo.project.name === "mobile-chrome") {
-      await page.getByRole("button", { name: "More actions", exact: true }).click();
-    }
     await expect(uploadPacket).toBeVisible();
     await uploadPacket.click();
 
@@ -202,7 +199,10 @@ test.describe("QA smoke", () => {
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "NCO");
 
-    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Dashboard review results" })).toHaveCount(0);
+    await expect(page.locator(".leader-metric-strip").getByText("Needs review", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Open user menu" }).click();
     const userMenu = page.getByRole("region", { name: "User menu" });
     await expect(userMenu.locator(".leader-profile-summary").getByText("Contributor", { exact: true })).toBeVisible();

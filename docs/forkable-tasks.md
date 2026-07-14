@@ -520,7 +520,7 @@ Definition of done:
 
 Goal: support assigning packet rows to helpers.
 
-Status: completed and field-refined, 2026-07-11. Assignment ownership is persisted on session rows; the selected active inventory appears on the dashboard; `Available`, `My work`, and `Team` partition the queue; Claim supports Authentik-only users, prevents races, and opens proof entry; admins retain reassignment/unassignment controls.
+Status: completed and mobile-refined, 2026-07-13. Assignment ownership is persisted on session rows; the selected active inventory appears on the dashboard and prioritizes the user's work; `Unclaimed`, `Mine`, and `Others` partition actionable rows while completed items move to separate history. Claim is visible on mobile, supports Authentik-only users, prevents duplicate/racing actions, and opens accessible proof entry; admins retain reassignment/unassignment controls.
 
 Primary files:
 

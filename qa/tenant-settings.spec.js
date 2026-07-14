@@ -47,7 +47,7 @@ async function signIn(page, tenantSlug, persona) {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.locator("summary").filter({ hasText: "QA users" }).click();
   await page.getByRole("button", { name: persona, exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: persona === "NCO" ? "Inventory Dashboard" : "Leader Dashboard" })).toBeVisible();
 }
 
 test.describe("tenant settings", () => {

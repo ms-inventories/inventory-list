@@ -144,7 +144,12 @@ test.describe("cross-session reports", () => {
     await expect(results.getByText(approvedMissingMarker, { exact: true })).toHaveCount(0);
 
     const filters = page.getByRole("group", { name: "Proof status and outcome filters" });
-    await filters.getByRole("button", { name: /Found/ }).click();
+    const allResults = filters.getByRole("button", { name: /^All\b/ });
+    const foundResults = filters.getByRole("button", { name: /Found/ });
+    await expect(allResults).toHaveAttribute("aria-pressed", "true");
+    await foundResults.click();
+    await expect(foundResults).toHaveAttribute("aria-pressed", "true");
+    await expect(allResults).toHaveAttribute("aria-pressed", "false");
     await expect(results.getByText(foundMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(formulaMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(missingMarker, { exact: true })).toHaveCount(0);
@@ -193,7 +198,7 @@ test.describe("cross-session reports", () => {
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await page.locator("summary").filter({ hasText: "QA users" }).click();
     await page.getByRole("button", { name: "NCO" }).click();
-    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
     const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
     if (await mobileMenu.isVisible()) await mobileMenu.click();
     await expect(page.getByRole("button", { name: "Reports", exact: true })).toHaveCount(0);
