@@ -651,7 +651,7 @@ Definition of done:
 
 Goal: make approve/reject/request-more-proof fully trustworthy.
 
-Status: hardened locally, awaiting ACP, 2026-07-14. Desktop/mobile QA verifies approve, reject, more-proof, follow-up submission replacement, stale review conflicts, queue removal, session item state, and visible confirmation feedback.
+Status: complete and QA-verified, 2026-07-14. Approve, reject, match resolution, and more-proof requests use per-submission synchronous guards and action-specific loading labels; unrelated rows remain usable; stale queue responses cannot restore resolved work. Desktop/mobile QA verifies duplicate taps, field/control locking, follow-up replacement, stale review conflicts, queue removal, session state, and visible confirmation feedback.
 
 Primary files:
 
@@ -1125,7 +1125,7 @@ Definition of done:
 
 Goal: every async action should feel deliberate.
 
-Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel and leader start/session/packet-import actions now have the same duplicate protection, field/control locking, and action-specific feedback with desktop/mobile QA. Legacy viewer login and public unsubscribe also reject repeat submissions while pending. Newsletter and remaining lower-frequency multi-row pending-state follow-ups remain.
+Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel, leader start/session/packet-import, and Review Queue decision/request/match actions have the same duplicate protection, field/control locking, stale-response fencing, and action-specific feedback with desktop/mobile QA. Legacy viewer login and public unsubscribe also reject repeat submissions while pending. Newsletter and remaining lower-frequency multi-row pending-state follow-ups remain.
 
 Primary files:
 

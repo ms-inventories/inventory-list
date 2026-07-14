@@ -1601,10 +1601,11 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
   );
 }
 
-function PossiblePriorMatchCard({ item, isSaving = false, onConfirm, onDismiss }) {
+function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss }) {
   const candidate = item?.suggestedInventoryItem;
   if (!candidate) return null;
 
+  const isSaving = Boolean(action);
   const photos = getInventoryItemPhotos(candidate);
   const identifiers = [
     candidate.lin ? `LIN ${candidate.lin}` : "",
@@ -1638,11 +1639,11 @@ function PossiblePriorMatchCard({ item, isSaving = false, onConfirm, onDismiss }
       <div className="prior-match-actions">
         <button className="btn btn-primary" type="button" disabled={isSaving} onClick={onConfirm}>
           <CheckCircle2 aria-hidden="true" />
-          <span>{isSaving ? "Saving..." : "Use this record"}</span>
+          <span>{action === "confirm" ? "Linking record..." : "Use this record"}</span>
         </button>
         <button className="btn btn-secondary" type="button" disabled={isSaving} onClick={onDismiss}>
           <XCircle aria-hidden="true" />
-          <span>Not the same item</span>
+          <span>{action === "dismiss" ? "Removing match..." : "Not the same item"}</span>
         </button>
       </div>
     </section>
@@ -1774,7 +1775,7 @@ function SessionItemDrawer({
           {canManage && item.suggestedInventoryItem ? (
             <PossiblePriorMatchCard
               item={item}
-              isSaving={Boolean(matchAction)}
+              action={matchAction}
               onConfirm={() => onResolveMatch("confirm")}
               onDismiss={() => onResolveMatch("dismiss")}
             />
@@ -4271,6 +4272,7 @@ function defaultSavedEvidenceIds(submission) {
 function SavedEvidencePicker({
   submission,
   enabled = false,
+  disabled = false,
   selectedIds = [],
   onEnabledChange,
   onToggle
@@ -4293,6 +4295,7 @@ function SavedEvidencePicker({
           <input
             type="checkbox"
             checked={enabled}
+            disabled={disabled}
             onChange={event => onEnabledChange(event.target.checked)}
           />
           <span>
@@ -4312,6 +4315,7 @@ function SavedEvidencePicker({
                       <input
                         type="checkbox"
                         checked={selected}
+                        disabled={disabled}
                         aria-label={`${selected ? "Remove" : "Save"} ${photo.sourceLabel.toLowerCase()} photo ${index + 1}`}
                         onChange={() => onToggle(photo.mediaUploadId)}
                       />
@@ -4341,14 +4345,16 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
   const [requestingSubmissionId, setRequestingSubmissionId] = useState("");
   const [proofRequestMessage, setProofRequestMessage] = useState("");
   const [proofRequestFields, setProofRequestFields] = useState(["serial_photo", "wide_photo"]);
-  const [isRequestingProof, setIsRequestingProof] = useState(false);
-  const [reviewingSubmissionId, setReviewingSubmissionId] = useState("");
-  const [matchActionId, setMatchActionId] = useState("");
+  const [reviewActions, setReviewActions] = useState(() => new Map());
   const [savedEvidenceBySubmission, setSavedEvidenceBySubmission] = useState({});
   const [saveItemBySubmission, setSaveItemBySubmission] = useState({});
   const [photoViewer, setPhotoViewer] = useState(null);
   const photoViewerTriggerRef = useRef(null);
+  const reviewActionRef = useRef(new Map());
+  const reviewQueueRequestRef = useRef(0);
+  const proofRequestOpenRef = useRef("");
   const hasSearchQuery = searchTerms(query).length > 0;
+  const isAnyProofRequestPending = [...reviewActions.values()].includes("request");
   const visibleSubmissions = submissions.filter(submission => matchesSearch([
     submission.sessionItem?.packetLine,
     submission.session?.name,
@@ -4382,10 +4388,34 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
     ])
   ], query));
 
+  function beginReviewAction(submissionId, action) {
+    if (!submissionId || reviewActionRef.current.has(submissionId)) return false;
+    reviewActionRef.current.set(submissionId, action);
+    setReviewActions(current => {
+      const next = new Map(current);
+      next.set(submissionId, action);
+      return next;
+    });
+    return true;
+  }
+
+  function finishReviewAction(submissionId, action) {
+    if (reviewActionRef.current.get(submissionId) !== action) return;
+    reviewActionRef.current.delete(submissionId);
+    setReviewActions(current => {
+      const next = new Map(current);
+      if (next.get(submissionId) === action) next.delete(submissionId);
+      return next;
+    });
+  }
+
   async function loadQueue() {
+    const requestId = reviewQueueRequestRef.current + 1;
+    reviewQueueRequestRef.current = requestId;
     try {
       setStatus({ text: "Loading review queue...", isError: false });
       const data = await apiRequest("/inventory/review-queue", { token, tenantSlug });
+      if (requestId !== reviewQueueRequestRef.current) return false;
       const nextSubmissions = data.submissions || [];
       setSubmissions(nextSubmissions);
       setSavedEvidenceBySubmission(current => {
@@ -4407,8 +4437,12 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
         return next;
       });
       setStatus({ text: "", isError: false });
+      return true;
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (requestId === reviewQueueRequestRef.current) {
+        setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
+      return false;
     }
   }
 
@@ -4426,6 +4460,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
   }, [Boolean(photoViewer)]);
 
   async function review(submissionId, decision, note = "") {
+    if (proofRequestOpenRef.current === submissionId) return;
     const submission = submissions.find(item => item.id === submissionId);
     const packetLine = submission?.sessionItem?.packetLine || "the submitted proof";
     const actionLabel = decision === "approved" ? "Approved" : "Rejected";
@@ -4439,8 +4474,9 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
       && (submission?.sessionItem?.expectedQty == null || Number(submission.sessionItem.expectedQty) === 1)
     );
     const shouldSaveItem = canSaveItem && Boolean(saveItemBySubmission[submissionId]);
+    const action = decision === "approved" ? "approve" : "reject";
+    if (!beginReviewAction(submissionId, action)) return;
     try {
-      setReviewingSubmissionId(submissionId);
       setStatus({ text: `${actionLabel === "Approved" ? "Approving" : "Rejecting"} ${packetLine}...`, isError: false });
       await apiRequest(`/submissions/${submissionId}/review`, {
         method: "PATCH",
@@ -4458,7 +4494,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
-      setReviewingSubmissionId("");
+      finishReviewAction(submissionId, action);
     }
   }
 
@@ -4479,9 +4515,10 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
 
   async function resolveReviewMatch(submission, action) {
     const sessionItemId = submission?.sessionItem?.id;
-    if (!sessionItemId || matchActionId) return;
+    const submissionId = submission?.id;
+    const pendingAction = `match-${action}`;
+    if (!sessionItemId || proofRequestOpenRef.current === submissionId || !beginReviewAction(submissionId, pendingAction)) return;
     try {
-      setMatchActionId(submission.id);
       setStatus({ text: action === "confirm" ? "Linking the saved record..." : "Removing the suggested match...", isError: false });
       await apiRequest(`/session-items/${sessionItemId}/inventory-match`, {
         method: "PATCH",
@@ -4491,7 +4528,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
       });
       setSavedEvidenceBySubmission(current => {
         const next = { ...current };
-        delete next[submission.id];
+        delete next[submissionId];
         return next;
       });
       await loadQueue();
@@ -4499,12 +4536,14 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
-      setMatchActionId("");
+      finishReviewAction(submissionId, pendingAction);
     }
   }
 
   function openProofRequest(submission) {
+    if (proofRequestOpenRef.current || [...reviewActionRef.current.values()].includes("request") || reviewActionRef.current.has(submission.id)) return;
     const defaultFields = submission.serialNumber ? ["wide_photo", "location"] : ["serial_photo", "wide_photo"];
+    proofRequestOpenRef.current = submission.id;
     setRequestingSubmissionId(submission.id);
     setProofRequestFields(defaultFields);
     setProofRequestMessage(buildProofRequestMessage(defaultFields));
@@ -4520,32 +4559,35 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
 
   async function sendProofRequest(e) {
     e.preventDefault();
+    const submissionId = requestingSubmissionId;
     const message = proofRequestMessage.trim();
-    if (!requestingSubmissionId || !message) {
+    if (!submissionId || !message) {
       setStatus({ text: "Add what proof you need first.", isError: true });
       return;
     }
 
+    const action = "request";
+    if (!beginReviewAction(submissionId, action)) return;
     try {
-      setIsRequestingProof(true);
       setStatus({ text: "Sending proof request...", isError: false });
-      await apiRequest(`/submissions/${requestingSubmissionId}/evidence-requests`, {
+      await apiRequest(`/submissions/${submissionId}/evidence-requests`, {
         method: "POST",
         token,
         tenantSlug,
         body: { message, requestedFields: proofRequestFields }
       });
+      proofRequestOpenRef.current = "";
       setRequestingSubmissionId("");
       setProofRequestMessage("");
       setProofRequestFields(["serial_photo", "wide_photo"]);
       await loadQueue();
-      const submission = submissions.find(item => item.id === requestingSubmissionId);
+      const submission = submissions.find(item => item.id === submissionId);
       const packetLine = submission?.sessionItem?.packetLine || "the submitted proof";
       setStatus({ text: `Proof request sent for ${packetLine}.`, isError: false });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
-      setIsRequestingProof(false);
+      finishReviewAction(submissionId, action);
     }
   }
 
@@ -4659,7 +4701,9 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
             {submission.sessionItem?.suggestedInventoryItem ? (
               <PossiblePriorMatchCard
                 item={submission.sessionItem}
-                isSaving={matchActionId === submission.id}
+                action={requestingSubmissionId === submission.id
+                  ? "request-open"
+                  : String(reviewActions.get(submission.id) || "").replace(/^match-/, "")}
                 onConfirm={() => resolveReviewMatch(submission, "confirm")}
                 onDismiss={() => resolveReviewMatch(submission, "dismiss")}
               />
@@ -4671,6 +4715,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
                 <SavedEvidencePicker
                   submission={submission}
                   enabled={Boolean(saveItemBySubmission[submission.id])}
+                  disabled={Boolean(reviewActions.get(submission.id)) || requestingSubmissionId === submission.id}
                   selectedIds={savedEvidenceBySubmission[submission.id] || []}
                   onEnabledChange={enabled => setSaveItemBySubmission(current => ({
                     ...current,
@@ -4684,29 +4729,29 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
               <button
                 className="btn btn-primary btn-small"
                 type="button"
-                disabled={reviewingSubmissionId === submission.id || isRequestingProof || Boolean(matchActionId) || Boolean(submission.sessionItem?.suggestedInventoryItem)}
+                disabled={Boolean(reviewActions.get(submission.id)) || requestingSubmissionId === submission.id || Boolean(submission.sessionItem?.suggestedInventoryItem)}
                 onClick={() => review(submission.id, "approved")}
               >
                 <CheckCircle2 aria-hidden="true" />
-                <span>{reviewingSubmissionId === submission.id ? "Updating..." : submission.sessionItem?.suggestedInventoryItem ? "Check match first" : "Approve"}</span>
+                <span>{reviewActions.get(submission.id) === "approve" ? "Approving..." : submission.sessionItem?.suggestedInventoryItem ? "Check match first" : "Approve"}</span>
               </button>
               <button
                 className="btn btn-secondary btn-small"
                 type="button"
-                disabled={reviewingSubmissionId === submission.id || isRequestingProof || Boolean(matchActionId)}
+                disabled={Boolean(reviewActions.get(submission.id)) || Boolean(requestingSubmissionId) || isAnyProofRequestPending}
                 onClick={() => openProofRequest(submission)}
               >
                 <Camera aria-hidden="true" />
-                <span>More proof</span>
+                <span>{requestingSubmissionId === submission.id ? "Request open" : "More proof"}</span>
               </button>
               <button
                 className="btn btn-danger-soft btn-small"
                 type="button"
-                disabled={reviewingSubmissionId === submission.id || isRequestingProof || Boolean(matchActionId)}
+                disabled={Boolean(reviewActions.get(submission.id)) || requestingSubmissionId === submission.id}
                 onClick={() => review(submission.id, "rejected")}
               >
                 <XCircle aria-hidden="true" />
-                <span>{reviewingSubmissionId === submission.id ? "Updating..." : "Reject"}</span>
+                <span>{reviewActions.get(submission.id) === "reject" ? "Rejecting..." : "Reject"}</span>
               </button>
             </div>
 
@@ -4719,6 +4764,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
                       type="button"
                       key={option.value}
                       aria-pressed={proofRequestFields.includes(option.value)}
+                      disabled={reviewActions.get(submission.id) === "request"}
                       onClick={() => toggleProofRequestField(option.value)}
                     >
                       {option.label}
@@ -4730,17 +4776,21 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
                   id={`proofRequest-${submission.id}`}
                   className="input proof-request-note"
                   value={proofRequestMessage}
+                  disabled={reviewActions.get(submission.id) === "request"}
                   onChange={e => setProofRequestMessage(e.target.value)}
                 />
                 <div className="button-row">
-                  <button className="btn btn-primary btn-small" type="submit" disabled={isRequestingProof}>
+                  <button className="btn btn-primary btn-small" type="submit" disabled={reviewActions.get(submission.id) === "request"}>
                     <Send aria-hidden="true" />
-                    <span>{isRequestingProof ? "Sending..." : "Send request"}</span>
+                    <span>{reviewActions.get(submission.id) === "request" ? "Sending request..." : "Send request"}</span>
                   </button>
                   <button
                     className="btn btn-secondary btn-small"
                     type="button"
+                    disabled={reviewActions.get(submission.id) === "request"}
                     onClick={() => {
+                      if (reviewActionRef.current.has(submission.id)) return;
+                      proofRequestOpenRef.current = "";
                       setRequestingSubmissionId("");
                       setProofRequestMessage("");
                     }}

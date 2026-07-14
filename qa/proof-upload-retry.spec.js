@@ -127,7 +127,7 @@ test.describe("proof upload retry and cleanup", () => {
         if (route.request().method() !== "POST") return route.continue();
         submissionAttempts += 1;
         if (submissionAttempts === 1) {
-          await new Promise(resolve => setTimeout(resolve, 350));
+          await new Promise(resolve => setTimeout(resolve, 2000));
           return route.fulfill({
             status: 503,
             contentType: "application/json",
