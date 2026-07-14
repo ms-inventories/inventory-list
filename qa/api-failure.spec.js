@@ -24,6 +24,12 @@ async function seedQaSessionBeforeLoad(page, identity = qaPlatoonAdmin) {
 }
 
 test.describe("API failure states", () => {
+  test("health only reports ready when database and storage are available", async ({ request }) => {
+    const response = await request.get(API_URL.replace(/\/api$/, "/health"));
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, database: true, storage: true });
+  });
+
   test("tenant auth screen explains API routing failures without raw fetch copy", async ({ page }) => {
     await page.route("**/api/me**", route => route.abort("failed"));
     await seedQaSessionBeforeLoad(page);

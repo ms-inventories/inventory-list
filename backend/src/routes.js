@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -1748,7 +1749,38 @@ function isAllowedOidcRedirectUri(value) {
 }
 
 export function registerRoutes(app) {
-  route(app, "get", "/health", async () => ({ ok: true }));
+  route(app, "get", "/health", async (request, reply) => {
+    let database = true;
+    let storage = true;
+
+    try {
+      await query("SELECT 1");
+    } catch (error) {
+      database = false;
+      console.error(JSON.stringify({
+        event: "health_database_failed",
+        requestId: request.requestId || null,
+        errorCode: error?.code || null,
+        errorMessage: error?.message || String(error)
+      }));
+    }
+
+    try {
+      await fs.access(config.storage.root, fsConstants.R_OK | fsConstants.W_OK);
+    } catch (error) {
+      storage = false;
+      console.error(JSON.stringify({
+        event: "health_storage_failed",
+        requestId: request.requestId || null,
+        errorCode: error?.code || null,
+        errorMessage: error?.message || String(error)
+      }));
+    }
+
+    const ok = database && storage;
+    if (!ok) reply.code(503);
+    return { ok, database, storage };
+  });
 
   route(app, "post", "/api/auth/oidc/token", async (request, reply) => {
     const body = z.object({
