@@ -48,6 +48,7 @@ import { APP_NAME } from "../branding.js";
 import { apiRequest, clearQaIdentity, getApiErrorMessage, readLastApiRequestId, saveQaIdentity } from "../lib/api.js";
 import { matchesSearch, metadataSearchText, searchTerms } from "../lib/search.js";
 import {
+  AUTH_SESSION_INVALIDATED_EVENT,
   beginOidcLogin,
   clearAuthSession,
   completeOidcRedirect,
@@ -8388,9 +8389,31 @@ export default function AdminConsole() {
       setStatus({ text: "", isError: false });
     } catch (error) {
       setMe(null);
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
     }
   }
+
+  useEffect(() => {
+    async function handleInvalidatedSession() {
+      setSession(null);
+      setMe(null);
+
+      if (appConfig.enableQaAuth) {
+        setStatus({ text: "Your sign-in expired. Try again.", isError: true });
+        return;
+      }
+
+      try {
+        setStatus({ text: "Your sign-in expired. Redirecting to Authentik...", isError: false });
+        await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
+      } catch (error) {
+        setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
+      }
+    }
+
+    window.addEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidatedSession);
+    return () => window.removeEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidatedSession);
+  }, []);
 
   useEffect(() => {
     let ignore = false;
