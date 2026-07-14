@@ -28,6 +28,7 @@ if (config.env === "production") {
 }
 
 const app = express();
+if (config.trustProxyHops > 0) app.set("trust proxy", config.trustProxyHops);
 
 function requestIdFromHeader(value) {
   const candidate = Array.isArray(value) ? value[0] : value;

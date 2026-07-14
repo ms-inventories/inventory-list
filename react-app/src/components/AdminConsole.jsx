@@ -45,7 +45,8 @@ import {
 } from "lucide-react";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "../config.js";
 import { APP_NAME } from "../branding.js";
-import { apiRequest, clearQaIdentity, getApiErrorMessage, readLastApiRequestId, saveQaIdentity } from "../lib/api.js";
+import CrewAccessDialog from "./CrewAccessDialog.jsx";
+import { apiRequest, clearQaIdentity, CREW_ACCESS_ENDED_EVENT, getApiErrorMessage, readLastApiRequestId, saveQaIdentity } from "../lib/api.js";
 import { matchesSearch, metadataSearchText, searchTerms } from "../lib/search.js";
 import {
   AUTH_SESSION_INVALIDATED_EVENT,
@@ -67,6 +68,7 @@ import {
 const roleLabels = {
   tenant_admin: "Platoon admin",
   contributor: "Contributor",
+  crew: "Crew member",
   viewer: "Viewer"
 };
 
@@ -1125,6 +1127,49 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
     photoFiles: []
   });
   const [isSaving, setIsSaving] = useState(false);
+  const uploadedPhotosRef = useRef(new Map());
+
+  async function discardUploadedPhoto(photoFile) {
+    const uploaded = uploadedPhotosRef.current.get(photoFile);
+    if (!uploaded?.photo?.uploadId) return;
+    await apiRequest(`/uploads/photos/${encodeURIComponent(uploaded.photo.uploadId)}`, {
+      method: "DELETE",
+      token,
+      tenantSlug
+    });
+    uploadedPhotosRef.current.delete(photoFile);
+  }
+
+  async function removePhoto(photoFile, photoIndex) {
+    if (isSaving) return;
+    try {
+      setIsSaving(true);
+      await discardUploadedPhoto(photoFile);
+      setForm(current => ({
+        ...current,
+        photoFiles: current.photoFiles.filter((_, index) => index !== photoIndex)
+      }));
+    } catch (error) {
+      onStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function cancelProof() {
+    if (isSaving) return;
+    try {
+      setIsSaving(true);
+      for (const photoFile of [...uploadedPhotosRef.current.keys()]) {
+        await discardUploadedPhoto(photoFile);
+      }
+      onCancel();
+    } catch (error) {
+      onStatus({ text: `${getApiErrorMessage(error)} Try discard again before closing.`, isError: true });
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   async function submitProof(e) {
     e.preventDefault();
@@ -1140,18 +1185,22 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
       const photos = [];
 
       for (const photoFile of form.photoFiles) {
-        const dataUrl = await fileToDataUrl(photoFile);
-        const uploaded = await apiRequest("/uploads/photos", {
-          method: "POST",
-          token,
-          tenantSlug,
-          body: {
-            fileName: photoFile.name,
-            mimeType: photoFile.type || "image/jpeg",
-            dataUrl,
-            kind: form.serialNumber ? "serial" : "general"
-          }
-        });
+        let uploaded = uploadedPhotosRef.current.get(photoFile);
+        if (!uploaded) {
+          const dataUrl = await fileToDataUrl(photoFile);
+          uploaded = await apiRequest("/uploads/photos", {
+            method: "POST",
+            token,
+            tenantSlug,
+            body: {
+              fileName: photoFile.name,
+              mimeType: photoFile.type || "image/jpeg",
+              dataUrl,
+              kind: form.serialNumber ? "serial" : "general"
+            }
+          });
+          uploadedPhotosRef.current.set(photoFile, uploaded);
+        }
         photos.push(uploaded.photo);
       }
 
@@ -1169,9 +1218,11 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
       });
 
       onStatus({ text: "Proof submitted.", isError: false });
+      uploadedPhotosRef.current.clear();
       onSaved();
     } catch (error) {
-      onStatus({ text: getApiErrorMessage(error), isError: true });
+      const retryCopy = uploadedPhotosRef.current.size ? " Your uploaded photos will be reused when you retry." : "";
+      onStatus({ text: `${getApiErrorMessage(error)}${retryCopy}`, isError: true });
     } finally {
       setIsSaving(false);
     }
@@ -1241,11 +1292,9 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
               <small>{formatFileSize(file.size)}</small>
               <button
                 type="button"
+                disabled={isSaving}
                 aria-label={`Remove ${file.name}`}
-                onClick={() => setForm(current => ({
-                  ...current,
-                  photoFiles: current.photoFiles.filter((_, photoIndex) => photoIndex !== index)
-                }))}
+                onClick={() => removePhoto(file, index)}
               >
                 <X aria-hidden="true" />
               </button>
@@ -1284,8 +1333,8 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
           <Send aria-hidden="true" />
           <span>{isSaving ? "Submitting..." : requestNote ? "Send response" : "Submit"}</span>
         </button>
-        <button className="btn btn-secondary" type="button" onClick={onCancel}>
-          <span>Cancel</span>
+        <button className="btn btn-secondary" type="button" disabled={isSaving} onClick={cancelProof}>
+          <span>{isSaving ? "Working..." : "Cancel"}</span>
         </button>
       </div>
     </form>
@@ -1429,7 +1478,7 @@ function SessionItemDrawer({
   function handleKeyDown(event) {
     if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
+      if (!proofOpen) onClose();
     } else if (event.key === "Tab") {
       const focusable = [...event.currentTarget.querySelectorAll(
         'button:not([disabled]), a[href], select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -1452,7 +1501,7 @@ function SessionItemDrawer({
       className="session-item-drawer-backdrop"
       role="presentation"
       onMouseDown={event => {
-        if (event.target === event.currentTarget) onClose();
+        if (!proofOpen && event.target === event.currentTarget) onClose();
       }}
     >
       <aside
@@ -1469,9 +1518,11 @@ function SessionItemDrawer({
             <h2 id="sessionItemDrawerTitle">{title}</h2>
             {packetSubtitle ? <p id="sessionItemDrawerPacketLine">{packetSubtitle}</p> : null}
           </div>
-          <button className="icon-button" type="button" aria-label="Close item details" onClick={onClose} autoFocus={!proofOpen}>
-            <X aria-hidden="true" />
-          </button>
+          {!proofOpen ? (
+            <button className="icon-button" type="button" aria-label="Close item details" onClick={onClose} autoFocus>
+              <X aria-hidden="true" />
+            </button>
+          ) : null}
         </header>
 
         <div className="session-item-drawer-body">
@@ -1758,6 +1809,7 @@ function SessionPanel({
   onUploadIntentHandled,
   onPreferredSessionItemHandled,
   onSessionChange,
+  onInviteCrew,
   onOpenReview
 }) {
   const [sessions, setSessions] = useState([]);
@@ -2405,14 +2457,22 @@ function SessionPanel({
 
     try {
       setStatus({ text: nextStatus === "closed" ? "Closing session..." : "Reopening session...", isError: false });
-      await apiRequest(`/inventory/sessions/${sessionId}`, {
+      const data = await apiRequest(`/inventory/sessions/${sessionId}`, {
         method: "PATCH",
         token,
         tenantSlug,
         body: { status: nextStatus }
       });
       const refreshed = await loadSessions(nextStatus === "closed" ? "" : sessionId);
-      if (refreshed) setStatus({ text: `Session marked ${nextStatus}.`, isError: false });
+      if (refreshed) {
+        const crewAccessRevoked = Number(data.crewAccessRevoked || 0);
+        const message = nextStatus === "closed"
+          ? crewAccessRevoked
+            ? `Session closed. ${crewAccessRevoked} temporary crew ${crewAccessRevoked === 1 ? "pass" : "passes"} removed.`
+            : "Session closed."
+          : "Session reopened.";
+        setStatus({ text: message, isError: false });
+      }
       return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -2851,9 +2911,15 @@ function SessionPanel({
                     <span style={{ width: `${sessionProgress(selectedSession)}%` }} />
                   </span>
                 </div>
-                <div className="admin-row-meta">
+                <div className="admin-row-meta session-summary-actions">
                   <span className="badge">{selectedSession.foundCount || 0} found</span>
                   <span className="badge">{selectedSession.needsReviewCount || 0} needs review</span>
+                  {canManage && selectedSession.status === "active" && onInviteCrew ? (
+                    <button className="btn btn-primary btn-small" type="button" onClick={() => onInviteCrew(selectedSession)}>
+                      <UserPlus aria-hidden="true" />
+                      <span>Invite crew</span>
+                    </button>
+                  ) : null}
                   {canManage ? (
                     Number(selectedSession.itemCount || 0) === 0 ? (
                       <button className="btn btn-danger-soft btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestDeleteSession(selectedSession)}>
@@ -6029,6 +6095,7 @@ function LeaderOverviewPanel({
   onOpenSessions,
   onOpenSession,
   onOpenUpload,
+  onInviteCrew,
   onOpenReview
 }) {
   const [sessions, setSessions] = useState([]);
@@ -6236,9 +6303,17 @@ function LeaderOverviewPanel({
               : "Start an inventory session to put current work on the home page."}</p>
           </div>
           {selectedSession ? (
-            <button className="btn btn-primary" type="button" onClick={() => onOpenSession(selectedSession.id)}>
-              <span>Open session</span>
-            </button>
+            <div className="leader-active-inventory-actions">
+              {canManage && onInviteCrew ? (
+                <button className="btn btn-primary" type="button" onClick={() => onInviteCrew(selectedSession)}>
+                  <UserPlus aria-hidden="true" />
+                  <span>Invite crew</span>
+                </button>
+              ) : null}
+              <button className={canManage ? "btn btn-secondary" : "btn btn-primary"} type="button" onClick={() => onOpenSession(selectedSession.id)}>
+                <span>Open session</span>
+              </button>
+            </div>
           ) : canManage ? (
             <button className="btn btn-primary" type="button" onClick={onCreateSession}>
               <Plus aria-hidden="true" />
@@ -7461,8 +7536,8 @@ function TenantPeoplePanel({
           </span>
           <div>
             <p className="eyebrow">{tenant?.name || `${tenantSlug} platoon`}</p>
-            <h2>People & invites</h2>
-            <p className="section-copy">Invite helpers, copy access links, and track who has joined this workspace.</p>
+            <h2>Team</h2>
+            <p className="section-copy">Use Invite crew from an active inventory for one-time access. Permanent invitations below are for people who already have a sign-in.</p>
           </div>
         </div>
       </section>
@@ -7474,8 +7549,8 @@ function TenantPeoplePanel({
               <MailPlus aria-hidden="true" />
             </span>
             <div>
-              <p className="eyebrow">New access</p>
-              <h2>Invite helper</h2>
+              <p className="eyebrow">Permanent access</p>
+              <h2>Invite existing account</h2>
             </div>
           </div>
 
@@ -7665,20 +7740,21 @@ function TenantPeoplePanel({
 
 function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const isMobileViewport = useMediaQuery("(max-width: 860px)");
+  const isCrew = me?.authKind === "crew";
   const isTenantAdmin = Boolean(me?.isPlatformAdmin || me?.membership?.role === "tenant_admin");
-  const canSubmitProof = Boolean(isTenantAdmin || me?.membership?.role === "contributor");
+  const canSubmitProof = Boolean(isCrew || isTenantAdmin || me?.membership?.role === "contributor");
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: Home },
-    { id: "tasks", label: "Inventory Sessions", icon: CalendarDays },
+    { id: "tasks", label: isCrew ? "Inventory" : "Inventory Sessions", icon: CalendarDays },
     ...(isTenantAdmin ? [{ id: "reports", label: "Reports", icon: BarChart3 }] : []),
     ...(isTenantAdmin ? [{ id: "review", label: "Review Queue", icon: ClipboardList }] : []),
-    ...(isTenantAdmin ? [{ id: "people", label: "People & Invites", icon: Users }] : []),
+    ...(isTenantAdmin ? [{ id: "people", label: "Team", icon: Users }] : []),
     ...(isTenantAdmin ? [{ id: "activity", label: "Activity Log", icon: History }] : []),
     ...(isTenantAdmin ? [{ id: "settings", label: "Workspace Settings", icon: Settings }] : [])
   ];
   const [activeTab, setActiveTab] = useState("dashboard");
   const [sessionIntent, setSessionIntent] = useState("");
-  const [preferredSessionId, setPreferredSessionId] = useState("");
+  const [preferredSessionId, setPreferredSessionId] = useState(() => me?.crew?.sessionId || "");
   const [preferredSessionItemId, setPreferredSessionItemId] = useState("");
   const [isStartInventoryOpen, setIsStartInventoryOpen] = useState(false);
   const [startInventoryForm, setStartInventoryForm] = useState(() => ({
@@ -7687,7 +7763,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }));
   const [startInventoryStatus, setStartInventoryStatus] = useState({ text: "", isError: false });
   const [leaderQuery, setLeaderQuery] = useState("");
-  const [tenant, setTenant] = useState(null);
+  const [tenant, setTenant] = useState(() => isCrew ? me?.tenant || null : null);
   const [members, setMembers] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [inviteForm, setInviteForm] = useState({ email: "", displayName: "", role: "contributor" });
@@ -7706,13 +7782,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [crewDialogSession, setCrewDialogSession] = useState(null);
   const notificationsRef = useRef(null);
   const userMenuRef = useRef(null);
   const leaderSearchInputRef = useRef(null);
   const tenantSidebarRef = useRef(null);
   const tenantMobileNavToggleRef = useRef(null);
-  const userName = me?.user?.display_name || me?.user?.email || "Signed in";
-  const userRole = me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
+  const userName = me?.user?.display_name || me?.user?.displayName || me?.user?.email || "Signed in";
+  const userRole = isCrew ? "Crew member" : me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
   const tenantSearch = {
     dashboard: {
@@ -7772,6 +7849,15 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       : `https://admin.${appConfig.baseDomain}/#/admin`);
   }
 
+  async function handleLogout() {
+    setIsUserMenuOpen(false);
+    try {
+      await onLogout();
+    } catch (error) {
+      setStatus({ text: `${getApiErrorMessage(error)} Try leaving the inventory again.`, isError: true });
+    }
+  }
+
   function selectTenantTab(tabId) {
     if (tabId !== activeTab) setLeaderQuery("");
     setActiveTab(tabId);
@@ -7802,6 +7888,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   async function loadTenant() {
+    if (isCrew) {
+      setTenant(me?.tenant || null);
+      setMembers([]);
+      setInvitations([]);
+      setStatus({ text: "", isError: false });
+      return;
+    }
+
     try {
       setStatus({ text: "Loading tenant...", isError: false });
       const tenantData = await apiRequest("/tenant", { token, tenantSlug });
@@ -7826,7 +7920,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   async function loadNotifications() {
-    if (!tenantSlug || !token) return;
+    if (isCrew || !tenantSlug || !token) return;
 
     setIsLoadingNotifications(true);
     try {
@@ -7848,7 +7942,11 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       loadTenant();
       loadNotifications();
     }
-  }, [tenantSlug, token, isTenantAdmin]);
+  }, [tenantSlug, token, isTenantAdmin, isCrew, me?.tenant?.id]);
+
+  useEffect(() => {
+    if (isCrew && me?.crew?.sessionId) setPreferredSessionId(me.crew.sessionId);
+  }, [isCrew, me?.crew?.sessionId]);
 
   async function createInvite(e) {
     e.preventDefault();
@@ -8210,7 +8308,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             >
               <RefreshCw aria-hidden="true" />
             </button>
-            <div className="leader-popover-anchor" ref={notificationsRef}>
+            {!isCrew ? <div className="leader-popover-anchor" ref={notificationsRef}>
               <button
                 className="icon-button leader-notification-button"
                 type="button"
@@ -8290,7 +8388,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                   </div>
                 </section>
               ) : null}
-            </div>
+            </div> : null}
             <div className="leader-popover-anchor" ref={userMenuRef}>
               <button
                 className="leader-user-card leader-user-trigger"
@@ -8330,17 +8428,17 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                       <Home aria-hidden="true" />
                       <span>Workspace home</span>
                     </button>
-                    <button type="button" onClick={() => window.location.assign("/#/launch")}>
+                    {!isCrew ? <button type="button" onClick={() => window.location.assign("/#/launch")}>
                       <Users aria-hidden="true" />
                       <span>Switch workspace</span>
-                    </button>
+                    </button> : null}
                     {me?.isPlatformAdmin ? (
                       <button type="button" onClick={openPlatformAdmin}>
                         <Building2 aria-hidden="true" />
                         <span>Platform admin</span>
                       </button>
                     ) : null}
-                    <details className="leader-menu-details">
+                    {!isCrew ? <details className="leader-menu-details">
                       <summary>Access details</summary>
                       <dl>
                         <div>
@@ -8356,10 +8454,15 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                           <dd>{userRole}</dd>
                         </div>
                       </dl>
-                    </details>
-                    <button type="button" onClick={onLogout}>
+                    </details> : (
+                      <div className="crew-access-menu-note">
+                        <ShieldCheck aria-hidden="true" />
+                        <span>Temporary access to this inventory only.</span>
+                      </div>
+                    )}
+                    <button type="button" onClick={handleLogout}>
                       <LogOut aria-hidden="true" />
-                      <span>Sign out</span>
+                      <span>{isCrew ? "Leave inventory" : "Sign out"}</span>
                     </button>
                   </div>
                 </section>
@@ -8385,6 +8488,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               onOpenSessions={() => openSessions()}
               onOpenSession={openActivitySession}
               onOpenUpload={() => openSessions("packet")}
+              onInviteCrew={session => setCrewDialogSession(session)}
               onOpenReview={() => selectTenantTab("review")}
             />
           ) : null}
@@ -8405,6 +8509,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               onUploadIntentHandled={() => setSessionIntent("")}
               onPreferredSessionItemHandled={() => setPreferredSessionItemId("")}
               onSessionChange={setPreferredSessionId}
+              onInviteCrew={session => setCrewDialogSession(session)}
               onOpenReview={() => selectTenantTab("review")}
             />
           ) : null}
@@ -8459,6 +8564,16 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           ) : null}
         </div>
       </main>
+
+      {crewDialogSession ? (
+        <CrewAccessDialog
+          session={crewDialogSession}
+          tenant={tenant}
+          token={token}
+          tenantSlug={tenantSlug}
+          onClose={() => setCrewDialogSession(null)}
+        />
+      ) : null}
 
       {isStartInventoryOpen ? (
         <div className="modal-backdrop" role="presentation">
@@ -8548,21 +8663,34 @@ export default function AdminConsole() {
   const [status, setStatus] = useState({ text: "Checking access...", isError: false });
   const token = getSessionAccessToken(session);
 
-  async function loadMe(activeToken = token) {
-    if (!activeToken) {
-      setMe(null);
-      setStatus({ text: "", isError: false });
-      return;
-    }
-
+  function endCrewAccess(message = "This inventory access has ended.", notice = "ended") {
+    clearAuthSession();
+    clearQaIdentity();
+    setSession(null);
+    setMe(null);
     try {
-      setStatus({ text: "Checking access...", isError: false });
+      sessionStorage.setItem("inventory.crew.notice", message);
+    } catch {
+      // Session storage is best-effort only.
+    }
+    window.location.replace(`/#/join?notice=${encodeURIComponent(notice)}`);
+  }
+
+  async function loadMe(activeToken = token, { silent = false } = {}) {
+    try {
+      if (!silent) setStatus({ text: "Checking access...", isError: false });
       const data = await apiRequest("/me", { token: activeToken, tenantSlug });
       setMe(data);
       setStatus({ text: "", isError: false });
+      return data;
     } catch (error) {
+      if (error?.code === "crew_access_ended" || error?.details?.code === "crew_access_ended") {
+        endCrewAccess();
+        return null;
+      }
       setMe(null);
-      setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
+      if (!silent) setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
+      return null;
     }
   }
 
@@ -8589,6 +8717,12 @@ export default function AdminConsole() {
   }, []);
 
   useEffect(() => {
+    const handleCrewAccessEnded = () => endCrewAccess();
+    window.addEventListener(CREW_ACCESS_ENDED_EVENT, handleCrewAccessEnded);
+    return () => window.removeEventListener(CREW_ACCESS_ENDED_EVENT, handleCrewAccessEnded);
+  }, []);
+
+  useEffect(() => {
     let ignore = false;
 
     async function handleRedirect() {
@@ -8605,7 +8739,32 @@ export default function AdminConsole() {
         if (!ignore) setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
       }
 
-      if (!token && !callbackFailed && !appConfig.enableQaAuth) {
+      if (token && !callbackFailed) {
+        if (!ignore) await loadMe(token);
+        return;
+      }
+
+      if (tenantSlug && !callbackFailed) {
+        try {
+          if (!ignore) setStatus({ text: "Checking access...", isError: false });
+          const data = await apiRequest("/me", { tenantSlug });
+          if (ignore) return;
+          if (data?.authKind === "crew") {
+            setMe(data);
+            setStatus({ text: "", isError: false });
+            return;
+          }
+          setMe(null);
+        } catch (error) {
+          if (error?.code === "crew_access_ended" || error?.details?.code === "crew_access_ended") {
+            if (!ignore) endCrewAccess();
+            return;
+          }
+          if (!ignore) setMe(null);
+        }
+      }
+
+      if (!callbackFailed && !appConfig.enableQaAuth) {
         try {
           setStatus({ text: "Redirecting to Authentik...", isError: false });
           await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
@@ -8616,7 +8775,7 @@ export default function AdminConsole() {
         }
       }
 
-      if (!ignore) await loadMe(token);
+      if (!ignore && !callbackFailed) setStatus({ text: "", isError: false });
     }
 
     handleRedirect();
@@ -8625,12 +8784,21 @@ export default function AdminConsole() {
     };
   }, []);
 
-  function logout() {
+  async function logout() {
+    const wasCrew = me?.authKind === "crew";
+    if (wasCrew) {
+      try {
+        await apiRequest("/crew/logout", { method: "POST", tenantSlug });
+      } catch (error) {
+        throw error;
+      }
+    }
     clearAuthSession();
     clearQaIdentity();
     setSession(null);
     setMe(null);
     setStatus({ text: "", isError: false });
+    if (wasCrew) endCrewAccess("You left the inventory. Open a new private invite to join again.", "left");
   }
 
   function saveManualToken() {
@@ -8704,9 +8872,9 @@ export default function AdminConsole() {
   const canUsePlatform = Boolean(me?.isPlatformAdmin);
   const canUseNewsletter = Boolean(me?.isPlatformAdmin || me?.isFrgAdmin);
   const canUseTenant = Boolean(
-    tenantSlug && (me?.isPlatformAdmin || ["tenant_admin", "contributor", "viewer"].includes(me?.membership?.role))
+    tenantSlug && (me?.authKind === "crew" || me?.isPlatformAdmin || ["tenant_admin", "contributor", "crew", "viewer"].includes(me?.membership?.role))
   );
-  const isTenantDashboard = Boolean(token && me && !isPlatformPage && canUseTenant);
+  const isTenantDashboard = Boolean(me && !isPlatformPage && canUseTenant);
   const isNewsletterDashboard = Boolean(
     token && me && canUseNewsletter && (isNewsletterPage || (isAdminHostname() && !canUsePlatform))
   );
@@ -8719,7 +8887,7 @@ export default function AdminConsole() {
         <AdminHeader me={me} tenantSlug={tenantSlug} mode={isNewsletterPage ? "newsletter" : ""} onRefresh={() => loadMe()} onLogout={logout} />
       ) : null}
 
-      {!token || !me ? (
+      {!me ? (
         <AuthPanel
           status={status}
           manualToken={manualToken}

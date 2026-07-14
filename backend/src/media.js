@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
+import { crewMediaAccessIsActive } from "./crew-auth.js";
 import { query } from "./db.js";
 
 const mediaCookiePrefix = "inventory_media_";
@@ -113,13 +114,14 @@ function decodeMediaSession(token) {
     const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
     const now = Math.floor(Date.now() / 1000);
     if (
-      payload?.version !== 1 ||
+      ![1, 2].includes(payload?.version) ||
       !payload.tenantId ||
       !payload.tenantSlug ||
       !payload.userId ||
       !Number.isInteger(payload.expiresAt) ||
       payload.expiresAt <= now
     ) return null;
+    if (payload.authKind === "crew" && (!payload.crewAuthSessionId || !payload.sessionId)) return null;
     return payload;
   } catch {
     return null;
@@ -141,12 +143,15 @@ export function issueMediaSession(response, context) {
   const tenantSlug = String(context.tenant.slug).toLowerCase();
   const maxAge = config.storage.mediaSessionTtlSeconds;
   const token = encodeMediaSession({
-    version: 1,
+    version: 2,
     tenantId: context.tenant.id,
     tenantSlug,
     userId: context.user.id,
     role: context.membership?.role || "",
     platformAdmin: Boolean(context.identity?.isPlatformAdmin),
+    authKind: context.authKind === "crew" ? "crew" : "member",
+    crewAuthSessionId: context.crew?.authSessionId || null,
+    sessionId: context.crew?.sessionId || null,
     expiresAt: Math.floor(Date.now() / 1000) + maxAge
   });
   if (!token) return;
@@ -174,6 +179,13 @@ export function buildMediaUrl(value) {
 async function authorizedMediaRecord(session, storageKey) {
   const parts = storageKey.split("/");
   const category = parts[2] || "";
+  const crewSessionId = session.authKind === "crew" ? session.sessionId : null;
+
+  if (session.authKind === "crew" && !(await crewMediaAccessIsActive({
+    authSessionId: session.crewAuthSessionId,
+    tenantId: session.tenantId,
+    sessionId: crewSessionId
+  }))) return false;
 
   if (category === "submissions") {
     const submissionResult = await query(
@@ -185,9 +197,10 @@ async function authorizedMediaRecord(session, storageKey) {
         JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
         WHERE photo.storage_key = $1
           AND inventory_session.tenant_id = $2
+          AND ($3::uuid IS NULL OR inventory_session.id = $3)
         LIMIT 1
       `,
-      [storageKey, session.tenantId]
+      [storageKey, session.tenantId, crewSessionId]
     );
     if (submissionResult.rows[0]) return { kind: "evidence" };
 
@@ -200,9 +213,18 @@ async function authorizedMediaRecord(session, storageKey) {
         WHERE upload.storage_key = $1
           AND upload.state = 'attached'
           AND item.tenant_id = $2
+          AND (
+            $3::uuid IS NULL
+            OR EXISTS (
+              SELECT 1
+              FROM inventory_session_items session_item
+              WHERE session_item.inventory_item_id = item.id
+                AND session_item.session_id = $3
+            )
+          )
         LIMIT 1
       `,
-      [storageKey, session.tenantId]
+      [storageKey, session.tenantId, crewSessionId]
     );
     if (inventoryReferenceResult.rows[0]) return { kind: "inventory_reference" };
 
@@ -213,14 +235,24 @@ async function authorizedMediaRecord(session, storageKey) {
         WHERE tenant_id = $2
           AND legacy_media_metadata = true
           AND strpos(metadata::text, $1) > 0
+          AND (
+            $3::uuid IS NULL
+            OR EXISTS (
+              SELECT 1
+              FROM inventory_session_items session_item
+              WHERE session_item.inventory_item_id = inventory_items.id
+                AND session_item.session_id = $3
+            )
+          )
         LIMIT 1
       `,
-      [storageKey, session.tenantId]
+      [storageKey, session.tenantId, crewSessionId]
     );
     return legacyInventoryReferenceResult.rows[0] ? { kind: "inventory_reference" } : null;
   }
 
   if (category === "packet-imports") {
+    if (session.authKind === "crew") return false;
     if (!session.platformAdmin && session.role !== "tenant_admin") return false;
     const result = await query(
       `

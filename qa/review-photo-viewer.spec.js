@@ -70,6 +70,10 @@ async function createViewerScenario(request, projectName) {
     headers: qaHeaders(qaAdmin),
     data: { packetLine, expectedQty: 1, locationHint: "Cage 7, upper shelf" }
   }));
+  await responseJson(await request.patch(`${API_URL}/session-items/${item.sessionItem.id}/assignment`, {
+    headers: qaHeaders(qaNco),
+    data: { memberId: "self" }
+  }));
 
   const firstPhoto = await uploadPhoto(request, {
     label: `wide-${suffix}`,

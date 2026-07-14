@@ -21,9 +21,10 @@ Each task is designed to be worked mostly independently. If a task needs to touc
 
 ## Current Priority Order
 
-1. Owner follow-up, deferred and unverified: resolve `OPS-002` credential rotation and confirm the old credential is rejected. This does not block local feature work.
-2. Continue `UX-003` now that the tenant Activity Log, mobile pass, and search pass are implemented and covered on desktop/mobile.
-3. Follow with the empty-state/action-label cleanup while preserving the current accountability regression suite.
+1. Implement `USER-MANAGEMENT-006` permanent Authentik provisioning with authoritative database membership and a least-privilege service integration.
+2. Implement `SESSION-006` verified-item reuse with leader-confirmed matches and canonical-photo selection.
+3. Continue `UX-003` plus the empty-state/action-label cleanup while preserving the current accountability regression suite.
+4. Owner follow-up, deferred and unverified: resolve `OPS-002` credential rotation and confirm the old credential is rejected. This does not block local feature work.
 
 ## QA
 
@@ -623,7 +624,7 @@ Definition of done:
 
 Goal: carry trusted location and reference photos into later inventory sessions without confusing historical proof with the permanent item record.
 
-Status: planned after temporary/permanent onboarding, defined 2026-07-14.
+Status: planned next after permanent Authentik provisioning; temporary crew onboarding is complete, 2026-07-14.
 
 Primary files:
 
@@ -774,36 +775,45 @@ Definition of done:
 
 Goal: let a leader bring temporary helpers into one inventory without requiring Authentik account administration in the field.
 
-Status: next MVP task, defined 2026-07-14.
+Status: complete and focused-QA verified, 2026-07-14. Leaders have a mobile-first generate/copy/share/list/revoke flow for private invite links plus four-digit PINs, while temporary helpers receive a host-only HttpOnly session restricted to one active inventory. Atomic closeout revocation immediately invalidates API and media access and returns the number of crew sessions revoked.
 
 Primary files:
 
-- `backend/db/`
-- `backend/src/auth.js`
+- `backend/db/016_session_crew_access.sql`
+- `backend/src/crew-auth.js`
 - `backend/src/routes.js`
+- `backend/src/media.js`
 - `react-app/src/App.jsx`
 - `react-app/src/components/AdminConsole.jsx`
-- new focused API and mobile QA specs
+- `react-app/src/components/CrewAccessDialog.jsx`
+- `react-app/src/components/CrewJoin.jsx`
+- `backend/test/crew-auth.test.mjs`
+- `qa/crew-access-api.spec.js`
+- `qa/crew-access.spec.js`
 
 Subtasks:
 
-- [ ] Generate a cryptographically random, zero-padded four-digit code labeled with the helper's name.
-- [ ] Store only a keyed digest; expire after seven days; consume exactly once under a row lock.
-- [ ] Exchange the code for a high-entropy HttpOnly session bound to one active inventory session.
-- [ ] Rate-limit and return the same response for invalid, expired, consumed, or revoked codes.
-- [ ] Allow only session read, claim/release, upload, proof submission, minimal profile, and logout.
-- [ ] Revoke every temporary grant/session atomically when the inventory session closes or is deleted.
-- [ ] Add a mobile-first `Invite crew` / `Use crew code` flow and closeout revocation count.
+- [x] Generate a high-entropy private invite link plus a random, zero-padded four-digit PIN labeled with the helper's name.
+- [x] Store only tenant-scoped keyed digests for the invite token and PIN; expire after at most seven days; consume exactly once under a row lock.
+- [x] Exchange the code for a high-entropy, host-only HttpOnly session bound to one active inventory session.
+- [x] Persistently rate-limit by fingerprint and tenant and return the same response for invalid, expired, consumed, or revoked codes.
+- [x] Allow only exact-session read, self claim/release, upload, proof submission, authorized media, minimal profile, and logout.
+- [x] Let leaders list and revoke grants without exposing consumed codes.
+- [x] Revoke every temporary grant/session atomically when the inventory session closes, including immediate API/media invalidation.
+- [x] Add a mobile-first `Invite crew` / `Use crew code` flow and closeout revocation count.
+- [x] Cover cookie/origin/auth precedence in unit tests; atomic consumption, ownership, media, and closeout in focused API/database QA; and leader/helper flows at desktop/mobile widths.
 
 Definition of done:
 
-- A helper can use a shared four-digit code once, work only the intended session, and loses access immediately at closeout.
+- A helper can use a shared private link and four-digit PIN once, work only the intended session, and loses API and media access immediately at leader revocation or closeout.
+
+Lifecycle note: this flow never creates an Authentik login. Logout, leader removal, expiry, and closeout retire the local credential and release untouched claims. The local display-name identity remains audit-only so submitted proof keeps its attribution; define anonymization/retention separately if policy later requires removing that attribution.
 
 ### USER-MANAGEMENT-006: Permanent Authentik Provisioning
 
 Goal: create a real permanent login, tenant group, and app membership from the Team screen.
 
-Status: planned after `USER-MANAGEMENT-005`; requires a least-privilege Authentik service token and verified enrollment API for the installed version.
+Status: next MVP task now that `USER-MANAGEMENT-005` is complete; requires a least-privilege Authentik service token and verified enrollment API for the installed version.
 
 Primary files:
 

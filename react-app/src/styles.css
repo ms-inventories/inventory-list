@@ -9300,6 +9300,398 @@ button {
   }
 }
 
+.crew-join-card {
+  display: grid;
+  width: min(100%, 440px);
+  gap: 16px;
+}
+
+.crew-join-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 16px;
+  background: #eef3eb;
+  color: var(--primary);
+}
+
+.crew-join-icon svg {
+  width: 27px;
+  height: 27px;
+}
+
+.crew-join-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.crew-join-form label,
+.crew-invite-form label {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.crew-code-input {
+  min-height: 68px;
+  font-size: 2rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 950;
+  letter-spacing: 0.35em;
+  text-align: center;
+}
+
+.crew-join-help {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.crew-join-status {
+  margin-top: 0;
+}
+
+.crew-join-privacy,
+.crew-access-menu-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 760;
+  line-height: 1.4;
+}
+
+.crew-join-privacy {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.crew-join-privacy svg,
+.crew-access-menu-note svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.crew-access-menu-note {
+  padding: 10px 12px;
+}
+
+.crew-access-dialog {
+  display: grid;
+  width: min(100%, 680px);
+  max-height: min(820px, calc(100dvh - 36px));
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.crew-access-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.crew-access-heading > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.crew-access-heading h2,
+.crew-access-heading p {
+  margin: 0;
+}
+
+.crew-access-heading h2 {
+  color: var(--ink);
+  font-size: 1.55rem;
+  line-height: 1.1;
+}
+
+.crew-access-heading p:not(.eyebrow) {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.crew-invite-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  padding: 14px;
+}
+
+.crew-invite-form label {
+  grid-column: 1 / -1;
+}
+
+.crew-code-result {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  border: 1px solid #b8c7b2;
+  border-radius: var(--radius);
+  background: #eef3eb;
+  padding: 18px;
+  text-align: center;
+}
+
+.crew-code-result > span,
+.crew-code-result > small {
+  color: var(--muted);
+  font-weight: 820;
+}
+
+.crew-code-result > span {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
+.crew-code {
+  color: var(--primary-strong);
+  font-size: clamp(2.5rem, 10vw, 4rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 950;
+  letter-spacing: 0.28em;
+  line-height: 1;
+  outline: none;
+  padding-left: 0.28em;
+}
+
+.crew-code:focus-visible {
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px rgba(54, 91, 62, 0.18);
+}
+
+.crew-invite-actions,
+.crew-access-footer,
+.leader-active-inventory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.crew-invite-actions {
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.crew-access-status {
+  margin: 0;
+}
+
+.crew-access-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  overflow: hidden;
+}
+
+.crew-access-list > summary {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-weight: 900;
+  list-style: none;
+  padding: 0 14px;
+}
+
+.crew-access-list > summary::-webkit-details-marker {
+  display: none;
+}
+
+.crew-access-list > summary strong {
+  color: var(--primary-strong);
+}
+
+.crew-access-list > div {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.crew-access-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.crew-access-row + .crew-access-row {
+  border-top: 1px solid var(--line);
+}
+
+.crew-access-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.crew-access-row strong,
+.crew-access-row span {
+  overflow-wrap: anywhere;
+}
+
+.crew-access-row > div span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.crew-access-row .btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.crew-access-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 16px;
+}
+
+.crew-access-footer {
+  justify-content: flex-end;
+}
+
+.session-summary-actions {
+  flex-wrap: wrap;
+}
+
+.leader-active-inventory-actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .crew-access-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .crew-access-dialog {
+    width: 100%;
+    max-height: calc(100dvh - max(8px, env(safe-area-inset-top)));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 18px 18px 0 0;
+    padding: 18px max(14px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+
+  .crew-invite-form {
+    grid-template-columns: 1fr;
+  }
+
+  .crew-invite-form .input,
+  .crew-invite-form .btn,
+  .crew-invite-actions .btn,
+  .crew-access-footer .btn {
+    width: 100%;
+    min-height: 48px;
+    justify-content: center;
+  }
+
+  .crew-access-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .crew-access-row .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 46px;
+    justify-content: center;
+  }
+
+  .leader-active-inventory-actions,
+  .session-summary-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .leader-active-inventory-actions .btn {
+    flex: 1 1 150px;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 560px) {
+  .leader-active-inventory .leader-card-header,
+  .leader-dashboard-grid .leader-card-header {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    padding: 16px;
+  }
+
+  .leader-active-inventory .leader-card-header > div,
+  .leader-dashboard-grid .leader-card-header > div {
+    min-width: 0;
+  }
+
+  .leader-active-inventory-actions,
+  .leader-dashboard-grid .leader-card-header > .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .leader-active-inventory-actions .btn,
+  .leader-dashboard-grid .leader-card-header > .btn {
+    min-height: 48px;
+    justify-content: center;
+  }
+
+  .crew-join-screen {
+    align-items: stretch;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+
+  .crew-join-card {
+    align-self: center;
+    padding: 22px 18px;
+  }
+
+  .crew-join-card h1 {
+    font-size: clamp(2rem, 11vw, 2.55rem);
+  }
+
+  .crew-code-input {
+    min-height: 72px;
+    font-size: 2.2rem;
+  }
+
+  .crew-join-form .btn {
+    min-height: 52px;
+    font-size: 1rem;
+  }
+
+  .crew-access-heading .modal-icon {
+    display: none;
+  }
+
+  .crew-code-result {
+    padding: 16px 10px;
+  }
+
+  .crew-code {
+    font-size: clamp(2.35rem, 14vw, 3.25rem);
+    letter-spacing: 0.2em;
+    padding-left: 0.2em;
+  }
+}
+
 @media print {
   @page {
     margin: 0.55in;

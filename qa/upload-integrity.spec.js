@@ -91,6 +91,13 @@ async function submitPhoto(request, identity, sessionItemId, uploadId, tenantSlu
   });
 }
 
+async function claimItem(request, identity, sessionItemId, tenantSlug = "ms") {
+  return responseJson(await request.patch(`${API_URL}/session-items/${sessionItemId}/assignment`, {
+    headers: qaHeaders(identity, tenantSlug),
+    data: { memberId: "self" }
+  }));
+}
+
 async function createSessionItems(request, identity, suffix, count, tenantSlug = "ms") {
   const session = await responseJson(await request.post(`${API_URL}/inventory/sessions`, {
     headers: qaHeaders(identity, tenantSlug),
@@ -111,6 +118,7 @@ test.describe("upload attachment integrity", () => {
   test("accepts its own captionless upload response as proof input", async ({ request }, testInfo) => {
     const suffix = `captionless-${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
     const { items } = await createSessionItems(request, qaAdmin, suffix, 1);
+    await claimItem(request, qaNco, items[0].id);
     const uploadResponse = await request.post(`${API_URL}/uploads/photos`, {
       headers: qaHeaders(qaNco),
       data: {
@@ -140,10 +148,14 @@ test.describe("upload attachment integrity", () => {
     test.setTimeout(90_000);
     const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
     const { items } = await createSessionItems(request, qaAdmin, suffix, 8);
+    for (const index of [0, 1, 2, 3, 4, 6]) {
+      await claimItem(request, qaNco, items[index].id);
+    }
 
     const ownerUpload = await uploadPhoto(request, qaNco, `owner-${suffix}`);
     const copiedByScout = await submitPhoto(request, qaScout, items[0].id, ownerUpload.uploadId);
-    await expectFailure(copiedByScout, 403, "access_denied");
+    const copiedByScoutFailure = await expectFailure(copiedByScout, 409, "conflict");
+    expect(copiedByScoutFailure.error).toBe("Claim this item before submitting proof.");
     expect((await submitPhoto(request, qaNco, items[0].id, ownerUpload.uploadId)).status()).toBe(201);
 
     await expectFailure(

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import AcceptInvite from "./components/AcceptInvite.jsx";
 import AdminConsole from "./components/AdminConsole.jsx";
+import CrewJoin from "./components/CrewJoin.jsx";
 import blackShadowLogo from "./assets/black-shadow-company.jpg";
 import { APP_NAME, ORG_NAME } from "./branding.js";
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "./config.js";
@@ -1948,6 +1949,7 @@ export default function App() {
   const hash = route.hash;
   const normalizedHash = hash.toLowerCase();
   const tenantSlug = getTenantSlugFromHostname();
+  if (normalizedHash.startsWith("#/join")) return <CrewJoin />;
   if (normalizedHash.startsWith("#/accept-invite")) return <AcceptInvite />;
   if (normalizedHash.startsWith("#/unsubscribe")) return <NewsletterUnsubscribe />;
   if (normalizedHash === "#/launch" || path.startsWith("/launch") || isOidcCallback(route.search)) return <LaunchRouter />;

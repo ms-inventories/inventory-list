@@ -204,7 +204,7 @@ test.describe("session async action states", () => {
     await closeDialog.getByRole("button", { name: "Close session", exact: true }).click();
     await expect.poll(() => closeRequests).toBe(2);
     await expect(closeDialog).toBeHidden();
-    await expect(page.getByText("Session marked closed.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Session closed.", { exact: true })).toBeVisible();
 
     const archive = page.locator(".session-archive");
     await expect(archive).toBeVisible();
@@ -223,7 +223,7 @@ test.describe("session async action states", () => {
     expect(reopenRequests).toBe(1);
 
     reopenSuccessGate.resolve();
-    await expect(page.getByText("Session marked active.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Session reopened.", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Close out", exact: true })).toBeEnabled();
   });
 });

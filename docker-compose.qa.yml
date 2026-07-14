@@ -29,6 +29,7 @@ services:
       BASE_DOMAIN: localhost
       PUBLIC_APP_URL: http://localhost:5175
       ALLOW_DEV_AUTH: "true"
+      TRUST_PROXY_HOPS: 0
       OIDC_CLIENT_ID: qa-inventory-web
       OIDC_ISSUER: http://auth.localhost/application/o/inventory-web/
       OIDC_AUDIENCE: qa-inventory-web
@@ -46,6 +47,14 @@ services:
       MEDIA_SIGNING_SECRET: cWEtb25seS1tZWRpYS1jb29raWUta2V5LTMyLWJ5dGVzIQ==
       MEDIA_SESSION_TTL_SECONDS: 300
       MEDIA_UPLOAD_STAGING_TTL_HOURS: 24
+      CREW_ACCESS_SECRET: Y3Jldy1hY2Nlc3MtcWEtb25seS1zZWNyZXQtMzItYnl0ZXMh
+      CREW_MAX_STAGED_UPLOADS_PER_SESSION: 4
+      CREW_GRANT_TTL_HOURS: 168
+      CREW_MAX_ACTIVE_GRANTS_PER_SESSION: 25
+      CREW_MAX_FAILURES_PER_GRANT: 5
+      CREW_MAX_FAILURES_PER_WINDOW: 5
+      CREW_MAX_TENANT_FAILURES_PER_WINDOW: 100
+      CREW_FAILURE_WINDOW_MINUTES: 15
       EMAIL_FROM_NAME: 876 EN Inventory QA
       EMAIL_FROM_ADDRESS: no-reply@localhost
     ports:

@@ -145,7 +145,7 @@ test.describe("session claim API", () => {
     await closeSession(request, scenario, qaAdmin);
   });
 
-  test("keeps UUID reassignment and clearing admin-only", async ({ request }, testInfo) => {
+  test("keeps UUID reassignment admin-only while owners can release their item", async ({ request }, testInfo) => {
     const suffix = testSuffix(testInfo, "authorization");
     const scenario = await createSessionItem(request, qaAdmin, suffix);
     const memberData = await responseJson(await request.get(`${API_URL}/tenant/members`, {
@@ -162,12 +162,12 @@ test.describe("session claim API", () => {
     }));
     expect(assigned.assignment.assignedToEmail).toBe(qaNco.email);
 
-    const contributorClear = await request.patch(`${API_URL}/session-items/${scenario.sessionItemId}/assignment`, {
+    const contributorClear = await responseJson(await request.patch(`${API_URL}/session-items/${scenario.sessionItemId}/assignment`, {
       headers: qaHeaders(qaNco),
       data: { memberId: null }
-    });
-    expect(contributorClear.status()).toBe(403);
-    expect(await contributorClear.json()).toMatchObject({ code: "access_denied" });
+    }));
+    expect(contributorClear.assignment.assignedTo).toBeNull();
+    expect(contributorClear.assignment.assignedToEmail).toBeNull();
 
     const contributorReassign = await request.patch(`${API_URL}/session-items/${scenario.sessionItemId}/assignment`, {
       headers: qaHeaders(qaNco),
@@ -176,9 +176,9 @@ test.describe("session claim API", () => {
     expect(contributorReassign.status()).toBe(403);
     expect(await contributorReassign.json()).toMatchObject({ code: "access_denied" });
 
-    const preserved = await sessionItem(request, scenario);
-    expect(preserved.assignedTo).toBe(assigned.assignment.assignedTo);
-    expect(preserved.assignedToEmail).toBe(qaNco.email);
+    const released = await sessionItem(request, scenario);
+    expect(released.assignedTo).toBeNull();
+    expect(released.assignedToEmail).toBeNull();
 
     const cleared = await responseJson(await request.patch(`${API_URL}/session-items/${scenario.sessionItemId}/assignment`, {
       headers: qaHeaders(qaAdmin),

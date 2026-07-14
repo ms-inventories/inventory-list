@@ -1,6 +1,6 @@
 # 876en.org Deployment Plan
 
-This is the planned Coolify + Cloudflare Tunnel deployment path. GitHub Actions is active for Coolify deploy webhooks.
+This is the active Coolify + Cloudflare Tunnel deployment path. GitHub Actions deploys from `main` through Coolify webhooks.
 
 ## Domains
 
@@ -13,9 +13,9 @@ Suggested public routes:
 | `<tenant>.876en.org` | React app | Tenant-specific platoon workspaces, such as `1st.876en.org` or `ms.876en.org` |
 | `api.876en.org` | Express API | Backend API, media URLs, platform endpoints |
 | `auth.876en.org` | Authentik | Identity provider and account login |
-| `coolify.876en.org` | Coolify | Coolify dashboard, protect with Cloudflare Access |
+| `coolify.bensonhub.com` | Coolify | Live Coolify dashboard and API control plane |
 
-If wildcard tunnel routes work cleanly in your Cloudflare account, route `*.876en.org` to the React app and let the backend resolve tenant from the subdomain. Put exact infrastructure routes above the wildcard so `api`, `auth`, and `coolify` go to the correct services.
+If wildcard tunnel routes work cleanly in your Cloudflare account, route `*.876en.org` to the React app and let the backend resolve tenant from the subdomain. Put exact `api` and `auth` routes above the wildcard. Coolify is hosted separately at `coolify.bensonhub.com`.
 
 ## Cloudflare Tunnel Route Order
 
@@ -27,7 +27,6 @@ Create the exact service routes first:
 | `www.876en.org` | empty | homepage/newsletter service |
 | `admin.876en.org` | empty | React frontend service |
 | `auth.876en.org` | empty | Authentik service |
-| `coolify.876en.org` | empty | Coolify service |
 | `api.876en.org` | empty | backend API service |
 
 Then create the wildcard tenant routes:
@@ -96,7 +95,7 @@ admin.876en.org -> frontend service
 *.876en.org -> frontend service
 ```
 
-Use exact routes for `auth.876en.org`, `coolify.876en.org`, and `api.876en.org` before the wildcard.
+Use exact routes for `auth.876en.org` and `api.876en.org` before the wildcard. Manage deployment tokens at `coolify.bensonhub.com`; `coolify.876en.org` is a reserved but currently unused alias.
 
 ### Backend API
 

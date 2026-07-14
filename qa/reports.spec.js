@@ -65,6 +65,10 @@ async function directCheck(request, itemId, status) {
 }
 
 async function submitResult(request, itemId, status, marker) {
+  await responseJson(await request.patch(`${API_URL}/session-items/${itemId}/assignment`, {
+    headers: qaHeaders(qaNco),
+    data: { memberId: "self" }
+  }));
   return (await responseJson(await request.post(`${API_URL}/session-items/${itemId}/submissions`, {
     headers: qaHeaders(qaNco),
     data: {

@@ -78,8 +78,8 @@ test.describe("page-scoped search", () => {
     await expect(reviewResults.getByText("No matching review work", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Clear search" }).click();
 
-    await openWorkspaceTab(page, "People & Invites");
-    await expect(page.getByRole("heading", { name: "People & invites" })).toBeVisible();
+    await openWorkspaceTab(page, "Team");
+    await expect(page.getByRole("heading", { name: "Team", exact: true })).toBeVisible();
     const peoplePanel = page.locator(".people-panel");
     await expect(peoplePanel.getByRole("heading", { name: "Why you can access this platoon" })).toHaveCount(0);
     await expect(peoplePanel.getByText("Expected groups", { exact: true })).toHaveCount(0);

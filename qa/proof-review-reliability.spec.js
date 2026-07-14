@@ -43,6 +43,10 @@ async function createScenario(request, suffix) {
     headers: qaHeaders(qaAdmin),
     data: { packetLine: `QA-PROOF-${suffix.toUpperCase()} TEST ITEM` }
   }));
+  await responseJson(await request.patch(`${API_URL}/session-items/${item.sessionItem.id}/assignment`, {
+    headers: qaHeaders(qaNco),
+    data: { memberId: "self" }
+  }));
   return { sessionId: session.session.id, sessionItemId: item.sessionItem.id };
 }
 

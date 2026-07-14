@@ -17,18 +17,18 @@ Use this as the working backlog before turning individual items into implementat
   - Source: live field feedback, 2026-07-14.
   - Current issue: submitting follow-up proof leaves the older pending/request-more-proof submission actionable, so the same item can reappear and require approval twice.
   - Desired behavior: only the newest proof is actionable, older evidence remains visible as history, one approval resolves the item, and stale review actions fail clearly.
-  - Status: implemented locally and QA-covered, awaiting ACP. New proof now supersedes the prior open review cycle atomically, resolves its evidence request, limits each submission to three photos, and stale/repeated review actions return a conflict instead of mutating the item again.
+  - Status: complete and QA-covered. New proof now supersedes the prior open review cycle atomically, resolves its evidence request, limits each submission to three photos, and stale/repeated review actions return a conflict instead of mutating the item again.
 
 - [x] **UI-046: Streamline session rows, proof entry, and compact admin layouts**
   - Source: desktop-with-DevTools and mobile field screenshots, 2026-07-14.
   - Current issue: the proof form is squeezed into a flex row, selecting a photo makes the surface appear to move, pending items show competing actions, item cards repeat reference data, and the platform dashboard table clips at compact desktop widths.
   - Desired behavior: one stable proof drawer, one state-specific primary action, compact item cards, secondary facts behind disclosures, and contained platform tables at phone/tablet/docked-desktop widths.
-  - Status: implemented locally and under focused responsive QA, awaiting ACP. Proof entry is drawer-only, supports three removable photo selections, pending contributors see `Awaiting review`, leaders see `Review proof`, import/details/history are disclosures, and the dashboard preview is a three-column compact table.
+  - Status: complete and under responsive QA. Proof entry is drawer-only, supports three removable photo selections, reuses already-staged photos after a failed retry, discards staged photos on remove/cancel, keeps the drawer stable during proof entry, shows contributors `Awaiting review` and leaders `Review proof`, moves secondary information into disclosures, and keeps the dashboard preview to a compact three-column table.
 
-- [ ] **UI-047: Add one-time session crew codes**
+- [x] **UI-047: Add one-time session crew codes**
   - Source: MVP field workflow, 2026-07-14.
-  - Desired behavior: a leader names a temporary helper, generates a one-time four-digit code valid for at most seven days, shares it, and the helper lands directly in that active session. Consumption is atomic and rate-limited; closing the session revokes every temporary session immediately.
-  - Status: next MVP implementation. Temporary access must be session-scoped and must not grant People, Settings, Reports, other sessions, or platform access.
+  - Desired behavior: a leader names a temporary helper, generates a private invite link plus one-time four-digit PIN valid for at most seven days, shares it, and the helper lands directly in that active session. Consumption is atomic and rate-limited; closing the session revokes every temporary session immediately.
+  - Status: complete and focused-QA verified, 2026-07-14. PINs and high-entropy invite tokens are stored only as tenant-scoped keyed digests, consumed atomically once, capped at seven days, and protected by persistent invite/fingerprint/tenant attempt limits. The exchanged host-only HttpOnly session exposes only the intended active inventory, minimal profile/logout, claim/release, upload, proof, and authorized media; People, Settings, Reports, other sessions, and platform access remain unavailable. Leaders can generate, copy/share, list, and revoke private invites from a mobile-first flow, and closeout atomically reports and revokes every temporary session. Unit, API/database, and desktop/mobile browser coverage verify concurrent single use, session isolation, field work, logout/revoke, and immediate API/media invalidation.
 
 - [ ] **UI-048: Provision permanent accounts through Authentik**
   - Source: MVP field workflow and live Authentik audit, 2026-07-14.
@@ -282,10 +282,9 @@ Use this as the working backlog before turning individual items into implementat
 
 ## Current Suggested Work Order
 
-1. Finish and publish `UI-045`/`UI-046`, then verify the production proof/review flow at phone, tablet, and docked-desktop widths.
-2. Build `UI-047` session-scoped crew codes and immediate closeout revocation.
-3. Make database membership authoritative, fix invite-email matching, and implement `UI-048` permanent Authentik provisioning behind a safe feature flag.
-4. Implement `UI-049` verified-item reuse and canonical-photo selection.
-5. Complete `UI-036`, `UI-029`, and `UI-030` while touching each remaining surface; keep `OPS-002` as an owner-only deferred verification.
+1. Publish and production-verify the completed `UI-045`/`UI-046` proof polish and `UI-047` crew-code flow at phone, tablet, and docked-desktop widths.
+2. Make database membership authoritative, fix invite-email matching, and implement `UI-048` permanent Authentik provisioning behind a safe feature flag.
+3. Implement `UI-049` verified-item reuse and canonical-photo selection.
+4. Complete `UI-036`, `UI-029`, and `UI-030` while touching each remaining surface; keep `OPS-002` as an owner-only deferred verification.
 
 This order follows the actual field event: leader starts work, brings the crew in, people claim and prove items, the leader closes the event, and the next event benefits from verified history.

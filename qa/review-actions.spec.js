@@ -49,6 +49,10 @@ async function createPendingSubmission(request, label) {
     data: { packetLine, expectedQty: 1, locationHint: "QA review shelf" }
   }));
   const sessionItemId = item.sessionItem.id;
+  await responseJson(await request.patch(`${API_URL}/session-items/${sessionItemId}/assignment`, {
+    headers: qaHeaders(qaNco),
+    data: { memberId: "self" }
+  }));
 
   const submission = await responseJson(await request.post(`${API_URL}/session-items/${sessionItemId}/submissions`, {
     headers: qaHeaders(qaNco),

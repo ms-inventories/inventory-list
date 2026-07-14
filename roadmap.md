@@ -10,7 +10,7 @@ Primary field workflow:
 
 1. A PSG, LT, or other leader opens the platoon workspace on a phone and starts or selects the active inventory.
 2. The leader scans, uploads, or pastes the day's packet and confirms the parsed rows.
-3. The leader brings helpers into that session with a one-time seven-day crew code or a permanent account.
+3. The leader brings helpers into that session with a private one-time crew invite and four-digit PIN, or a permanent account.
 4. Helpers review the same item list and claim as many nearby items as they plan to work.
 5. A helper records the result, location, serial, note, and up to three proof photos.
 6. The leader reviews the newest proof once, requests more when needed, and approves the item.
@@ -47,12 +47,12 @@ Design implication: scanning should behave like a review/import wizard. It shoul
 
 ## Recommendation
 
-The architecture decision has already been made: continue with the React/Coolify/Postgres/Authentik application and keep the static app only as a fallback. The core packet/session/review workflow is now replayable and diagnosable; the highest-value work now is:
+The architecture decision has already been made: continue with the React/Coolify/Postgres/Authentik application and keep the static app only as a fallback. The core packet/session/review workflow and session-scoped temporary crew access are now replayable and diagnosable; the highest-value work now is:
 
-1. Publish and production-verify the single-review proof lifecycle, stable proof drawer, three-photo cap, lean item cards, and compact admin dashboard.
-2. Implement session-scoped one-time crew codes with seven-day expiry, atomic consumption, strict rate limits, and immediate closeout revocation.
-3. Make database memberships authoritative and add least-privilege Authentik provisioning for permanent accounts.
-4. Promote leader-selected approved evidence into reusable known-item location/photo records for later session matching.
+1. Publish and production-verify the completed single-review proof lifecycle, stable proof drawer, three-photo cap, lean item cards, compact admin dashboard, and one-time crew-code flow at phone, tablet, and docked-desktop widths.
+2. Make database memberships authoritative and add least-privilege Authentik provisioning for permanent accounts.
+3. Promote leader-selected approved evidence into reusable known-item location/photo records for later session matching.
+4. Continue the loading, empty-state, and action-label cleanup while preserving the field workflow.
 5. Keep the historically exposed credential rotation as an owner-only deferred follow-up until the old value is confirmed rejected.
 
 ## Progress
@@ -83,6 +83,7 @@ The architecture decision has already been made: continue with the React/Coolify
 - 2026-07-11: Made active inventory the tenant-home context with a multi-session selector and exact-item routing; replaced ambiguous assignment filters with Available/My work/Team, fixed Authentik-only self-claims with race protection, and retired tenant Guidance plus group/routing diagnostics from user-facing navigation and settings.
 - 2026-07-13: Refined the field workflow around `Unclaimed`, `Mine`, `Others`, and separate Completed history; exposed Claim directly on mobile; required ownership before proof; added row-scoped assignment feedback, exact notification item routing, human-readable statuses, contributor-specific dashboard content, accessible proof controls, and stronger mobile tap/input sizing.
 - 2026-07-14: Hardened proof review so follow-up evidence supersedes the prior open review cycle, one decision resolves the item, stale reviews conflict safely, and evidence is capped at three photos; consolidated proof into a stable drawer, collapsed secondary detail/history, simplified row actions, and made the platform dashboard table compact at docked widths.
+- 2026-07-14: Completed one-time session crew access: leaders can name a helper and generate/share/revoke a private invite link plus four-digit PIN; atomic single use exchanges them for a host-only HttpOnly session restricted to one active inventory; helpers can claim/release multiple rows and submit proof but cannot enter leader or platform surfaces; closeout immediately revokes crew API and media access. Unit, focused API/database, and responsive desktop/mobile browser QA cover generation, concurrent consumption, session isolation, field work, leader revocation, logout, and closeout invalidation.
 
 ## Phase 1: Make Packet Lookup Excellent
 

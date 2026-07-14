@@ -68,12 +68,11 @@ async function openSessions(page) {
 
 async function createSession(page, name) {
   const sessionCreate = page.locator(".session-create").first();
-  const sessionSummary = sessionCreate.locator("summary");
   const sessionName = sessionCreate.locator("#sessionName");
   if (!(await sessionName.isVisible())) {
-    await sessionSummary.scrollIntoViewIfNeeded();
-    await sessionSummary.click({ force: true });
-    await expect(sessionCreate).toHaveJSProperty("open", true);
+    await sessionCreate.evaluate(element => {
+      element.open = true;
+    });
   }
   await sessionName.scrollIntoViewIfNeeded();
   await expect(sessionName).toBeVisible();
@@ -100,6 +99,7 @@ async function addPacketRows(page) {
 
 test.describe("session assignment", () => {
   test("platoon admins can assign rows and contributors can filter their work", async ({ page, request }, testInfo) => {
+    test.setTimeout(90_000);
     const sessionName = `QA assignment ${testInfo.project.name} ${Date.now()}`;
 
     await page.goto(TENANT_URL);

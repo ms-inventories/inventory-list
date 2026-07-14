@@ -75,6 +75,6 @@ caddy_ingress_network=coolify
 
 ## Notes
 
-- Put exact Cloudflare routes for `api.876en.org`, `auth.876en.org`, and `coolify.876en.org` above the wildcard route.
+- Put exact Cloudflare routes for `api.876en.org` and `auth.876en.org` above the wildcard route. The live Coolify control plane is separately hosted at `coolify.bensonhub.com`; `coolify.876en.org` remains excluded as a reserved alias.
 - If Coolify auto-generates labels, prefer its generated labels and only add manual labels if wildcard routing fails.
 - If label names collide with Coolify-generated names, change `inventory-frontend` and `inventory-api` to unique values.

@@ -5,6 +5,18 @@ import path from "node:path";
 import { z } from "zod";
 import { authenticate, authContext, ensureUser, exchangeOidcCode } from "./auth.js";
 import { config } from "./config.js";
+import {
+  authenticateCrewRequest,
+  consumeCrewCode,
+  createCrewGrant,
+  crewRequestError,
+  expireCrewAccess,
+  hasPrimaryAuthCredentials,
+  lockActiveCrewAccess,
+  releaseCrewClaims,
+  revokeCrewAccessForSession,
+  revokeCrewAuthSession
+} from "./crew-auth.js";
 import { query, withTransaction } from "./db.js";
 import {
   buildMediaUrl,
@@ -20,7 +32,7 @@ import {
   sendProofSubmittedEmail,
   sendTenantInviteEmail
 } from "./email.js";
-import { hasTenantRole, tenantContext, tenantSlugFromHost } from "./tenant.js";
+import { hasTenantRole, resolveTenant, tenantContext, tenantSlugFromHost } from "./tenant.js";
 
 const tenantRoles = ["tenant_admin", "contributor", "viewer"];
 const memberStatuses = ["active", "disabled"];
@@ -176,6 +188,21 @@ function rowToWorkspace(row) {
     status: row.status,
     role: row.role || "contributor",
     source: row.source || "database"
+  };
+}
+
+function rowToCrewAccess(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    displayName: row.display_name,
+    status: row.status,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at,
+    revokedAt: row.revoked_at,
+    revokeReason: row.revoke_reason || null,
+    createdAt: row.created_at
   };
 }
 
@@ -1115,7 +1142,9 @@ async function lockStagedMediaUpload(client, {
   tenantId,
   userId,
   purpose,
-  canUseAnyUploader = false
+  canUseAnyUploader = false,
+  crewAuthSessionId = null,
+  crewSessionId = null
 }) {
   const result = await client.query(
     `
@@ -1137,8 +1166,48 @@ async function lockStagedMediaUpload(client, {
   if (!canUseAnyUploader && upload.uploaded_by !== userId) {
     throw requestError("Photo upload belongs to another user.", 403);
   }
+  if (crewAuthSessionId && upload.crew_auth_session_id !== crewAuthSessionId) {
+    throw requestError("Photo upload belongs to another crew session.", 403);
+  }
+  if (crewAuthSessionId) {
+    await lockActiveCrewAccess(client, {
+      authSessionId: crewAuthSessionId,
+      tenantId,
+      sessionId: crewSessionId,
+      userId
+    });
+  }
   await verifyRegisteredUploadFile(upload);
   return upload;
+}
+
+async function assertCrewStagedUploadQuota(client, context) {
+  await lockActiveCrewAccess(client, {
+    authSessionId: context.crew.authSessionId,
+    tenantId: context.tenant.id,
+    sessionId: context.crew.sessionId,
+    userId: context.user.id,
+    lockAuthSessionForUpdate: true
+  });
+  const result = await client.query(
+    `
+      SELECT count(*)::int AS staged_count
+      FROM media_uploads
+      WHERE crew_auth_session_id = $1
+        AND state = 'staged'
+        AND (staged_expires_at IS NULL OR staged_expires_at > now())
+    `,
+    [context.crew.authSessionId]
+  );
+  const stagedCount = Number(result.rows[0]?.staged_count || 0);
+  if (stagedCount >= config.crewAccess.maxStagedUploadsPerAuthSession) {
+    throw crewRequestError(
+      "Finish or submit your current proof photos before uploading more.",
+      409,
+      "crew_upload_quota"
+    );
+  }
+  return stagedCount;
 }
 
 async function attachMediaUpload(client, upload, {
@@ -1509,9 +1578,43 @@ function notificationAction({ label, tab, sessionId = null, sessionItemId = null
   };
 }
 
-async function requireContext(request, reply, roles = []) {
-  const auth = await authContext(request, reply);
+async function requireContext(request, reply, roles = [], { allowCrew = false } = {}) {
+  let auth = null;
+  if (allowCrew && !hasPrimaryAuthCredentials(request)) {
+    auth = await authenticateCrewRequest(request);
+  }
+  if (!auth) auth = await authContext(request, reply);
   const context = await tenantContext(request, auth);
+
+  if (auth.authKind === "crew") {
+    if (!allowCrew || !context.tenant || context.tenant.id !== auth.crew.tenantId) {
+      reply.code(403);
+      throw new Error("Crew access is not valid for this platoon.");
+    }
+    context.authKind = "crew";
+    context.crew = auth.crew;
+    context.membership = {
+      id: `crew:${auth.crew.grantId}`,
+      tenant_id: auth.crew.tenantId,
+      user_id: auth.user.id,
+      role: "crew",
+      status: "active",
+      source: "session_code"
+    };
+    context.access = {
+      source: "session_code",
+      effectiveRole: "crew",
+      effectiveStatus: "active",
+      databaseMembership: null,
+      authentikMembership: null,
+      platformAdminOverride: false,
+      expectedTenantGroup: "",
+      expectedTenantAdminGroup: "",
+      matchedGroups: [],
+      warnings: []
+    };
+    return context;
+  }
 
   if (roles.length && !hasTenantRole(context, roles)) {
     reply.code(403);
@@ -1521,8 +1624,8 @@ async function requireContext(request, reply, roles = []) {
   return context;
 }
 
-async function requireTenantContext(request, reply, roles = []) {
-  const context = await requireContext(request, reply, roles);
+async function requireTenantContext(request, reply, roles = [], options = {}) {
+  const context = await requireContext(request, reply, roles, options);
 
   if (!context.tenant) {
     reply.code(404);
@@ -1645,6 +1748,10 @@ function statusCodeForError(error) {
 
 function publicErrorFor(error, statusCode) {
   const message = String(error?.message || "Request failed");
+
+  if (error?.publicCode && /^[a-z0-9_]+$/.test(error.publicCode)) {
+    return { code: error.publicCode, message };
+  }
 
   if (error instanceof z.ZodError) {
     return { code: "validation_failed", message: "Validation failed" };
@@ -1799,8 +1906,80 @@ export function registerRoutes(app) {
 
   route(app, "get", "/api/auth/health", async (request, reply) => getAuthHealth(request, reply));
 
+  route(app, "post", "/api/crew/consume", async (request, reply) => {
+    const tenant = await resolveTenant(request);
+    if (!tenant) {
+      reply.code(404);
+      throw new Error("Tenant not found for this hostname");
+    }
+    const consumed = await consumeCrewCode({
+      request,
+      response: request.res,
+      tenant,
+      code: request.body?.code,
+      inviteToken: request.body?.inviteToken
+    });
+    return {
+      authKind: "crew",
+      user: {
+        id: consumed.user.id,
+        email: null,
+        display_name: consumed.user.display_name,
+        displayName: consumed.user.display_name
+      },
+      tenant: rowToTenant(tenant),
+      session: {
+        id: consumed.grant.session_id,
+        name: consumed.grant.session_name,
+        status: "active"
+      },
+      crew: {
+        grantId: consumed.grant.id,
+        sessionId: consumed.grant.session_id,
+        expiresAt: consumed.authSession.expires_at
+      },
+      expiresAt: consumed.authSession.expires_at
+    };
+  });
+
+  route(app, "post", "/api/crew/logout", async (request) => {
+    await revokeCrewAuthSession(request, request.res);
+    return { ok: true };
+  });
+
   route(app, "get", "/api/me", async (request, reply) => {
-    const context = await requireContext(request, reply);
+    const context = await requireContext(request, reply, [], { allowCrew: true });
+    if (context.authKind === "crew") {
+      return {
+        authKind: "crew",
+        user: {
+          id: context.user.id,
+          email: null,
+          display_name: context.user.display_name,
+          displayName: context.user.display_name
+        },
+        identity: {
+          subject: context.identity.subject,
+          email: "",
+          displayName: context.identity.displayName
+        },
+        groups: [],
+        isPlatformAdmin: false,
+        isFrgAdmin: false,
+        tenant: rowToTenant(context.tenant),
+        membership: context.membership,
+        access: context.access,
+        workspaces: [{
+          id: context.tenant.id,
+          slug: context.tenant.slug,
+          name: context.tenant.name,
+          status: context.tenant.status,
+          role: "crew",
+          source: "session_code"
+        }],
+        crew: context.crew
+      };
+    }
     const workspaces = await listUserWorkspaces(context.identity, context.user);
 
     return {
@@ -3893,21 +4072,30 @@ export function registerRoutes(app) {
   });
 
   route(app, "get", "/api/inventory/sessions", async (request, reply) => {
-    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
-    const result = await query(
-      `
-        SELECT s.*,
-          COUNT(si.id)::int AS item_count,
-          COUNT(si.id) FILTER (WHERE si.status IN ('found', 'approved'))::int AS found_count,
-          COUNT(si.id) FILTER (WHERE si.status = 'needs_review')::int AS needs_review_count
-        FROM inventory_sessions s
-        LEFT JOIN inventory_session_items si ON si.session_id = s.id
-        WHERE s.tenant_id = $1
-        GROUP BY s.id
-        ORDER BY s.created_at DESC
-      `,
-      [context.tenant.id]
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor", "viewer"],
+      { allowCrew: true }
     );
+    const result = await withTransaction(async client => {
+      if (!context.crew) await expireCrewAccess(client, context.tenant.id);
+      return client.query(
+        `
+          SELECT s.*,
+            COUNT(si.id)::int AS item_count,
+            COUNT(si.id) FILTER (WHERE si.status IN ('found', 'approved'))::int AS found_count,
+            COUNT(si.id) FILTER (WHERE si.status = 'needs_review')::int AS needs_review_count
+          FROM inventory_sessions s
+          LEFT JOIN inventory_session_items si ON si.session_id = s.id
+          WHERE s.tenant_id = $1
+            AND ($2::uuid IS NULL OR (s.id = $2 AND s.status = 'active'))
+          GROUP BY s.id
+          ORDER BY s.created_at DESC
+        `,
+        [context.tenant.id, context.crew?.sessionId || null]
+      );
+    });
 
     return { sessions: result.rows.map(rowToSession) };
   });
@@ -3952,8 +4140,166 @@ export function registerRoutes(app) {
     return { session: rowToSession(session) };
   });
 
+  route(app, "get", "/api/inventory/sessions/:sessionId/crew-access", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const crew = await withTransaction(async client => {
+      await expireCrewAccess(client, context.tenant.id);
+      const sessionResult = await client.query(
+        "SELECT id FROM inventory_sessions WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+        [request.params.sessionId, context.tenant.id]
+      );
+      if (!sessionResult.rows[0]) return null;
+      const result = await client.query(
+        `
+          SELECT id, session_id, display_name, status, expires_at, consumed_at,
+            revoked_at, revoke_reason, created_at
+          FROM session_crew_grants
+          WHERE tenant_id = $1 AND session_id = $2
+          ORDER BY created_at DESC, id DESC
+        `,
+        [context.tenant.id, request.params.sessionId]
+      );
+      return result.rows;
+    });
+    if (!crew) {
+      reply.code(404);
+      throw new Error("Session not found");
+    }
+    return {
+      crew: crew.map(rowToCrewAccess),
+      limit: config.crewAccess.maxActiveGrantsPerSession
+    };
+  });
+
+  route(app, "post", "/api/inventory/sessions/:sessionId/crew-access", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({
+        displayName: z.string().trim().min(2).max(80)
+      }),
+      request.body
+    );
+    const created = await withTransaction(async client => {
+      const sessionResult = await client.query(
+        `
+          SELECT id, status
+          FROM inventory_sessions
+          WHERE id = $1 AND tenant_id = $2
+          FOR UPDATE
+        `,
+        [request.params.sessionId, context.tenant.id]
+      );
+      const session = sessionResult.rows[0];
+      if (!session) return null;
+      if (session.status !== "active") return { sessionInactive: true };
+      const crewGrant = await createCrewGrant(client, {
+        tenantId: context.tenant.id,
+        sessionId: session.id,
+        displayName: body.displayName,
+        createdBy: context.user.id
+      });
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "crew_access.created",
+        entityType: "session_crew_grant",
+        entityId: crewGrant.grant.id,
+        metadata: {
+          sessionId: session.id,
+          displayName: crewGrant.grant.display_name,
+          expiresAt: crewGrant.grant.expires_at
+        }
+      });
+      return crewGrant;
+    });
+    if (!created) {
+      reply.code(404);
+      throw new Error("Session not found");
+    }
+    if (created.sessionInactive) {
+      reply.code(409);
+      throw new Error("Crew passes can only be created for an active session.");
+    }
+    reply.code(201);
+    return {
+      access: rowToCrewAccess(created.grant),
+      code: created.code,
+      inviteToken: created.inviteToken
+    };
+  });
+
+  route(app, "post", "/api/inventory/sessions/:sessionId/crew-access/:grantId/revoke", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const revoked = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT crew_grant.*
+          FROM session_crew_grants crew_grant
+          JOIN inventory_sessions inventory_session ON inventory_session.id = crew_grant.session_id
+          WHERE crew_grant.id = $1 AND crew_grant.session_id = $2
+            AND crew_grant.tenant_id = $3 AND inventory_session.tenant_id = $3
+          FOR UPDATE OF crew_grant
+        `,
+        [request.params.grantId, request.params.sessionId, context.tenant.id]
+      );
+      const current = currentResult.rows[0];
+      if (!current) return null;
+      const releasedClaimCount = current.consumed_by
+        ? await releaseCrewClaims(client, {
+          tenantId: context.tenant.id,
+          sessionId: current.session_id,
+          userId: current.consumed_by,
+          actorUserId: context.user.id,
+          reason: "leader_revoked"
+        })
+        : 0;
+      if (["revoked", "expired"].includes(current.status)) return current;
+      const result = await client.query(
+        `
+          UPDATE session_crew_grants
+          SET status = 'revoked', revoked_at = now(), revoked_by = $2,
+            revoke_reason = 'leader_revoked'
+          WHERE id = $1
+          RETURNING *
+        `,
+        [current.id, context.user.id]
+      );
+      await client.query(
+        `
+          UPDATE session_crew_auth_sessions
+          SET revoked_at = COALESCE(revoked_at, now())
+          WHERE grant_id = $1
+        `,
+        [current.id]
+      );
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "crew_access.revoked",
+        entityType: "session_crew_grant",
+        entityId: current.id,
+        metadata: { sessionId: current.session_id, releasedClaimCount }
+      });
+      return result.rows[0];
+    });
+    if (!revoked) {
+      reply.code(404);
+      throw new Error("Crew pass not found");
+    }
+    return { revoked: true, access: rowToCrewAccess(revoked) };
+  });
+
   route(app, "get", "/api/inventory/sessions/:sessionId", async (request, reply) => {
-    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor", "viewer"],
+      { allowCrew: true }
+    );
+    if (context.crew && request.params.sessionId !== context.crew.sessionId) {
+      reply.code(403);
+      throw new Error("Crew access is limited to its assigned session.");
+    }
     const sessionResult = await query(
       `
         SELECT s.*,
@@ -3963,10 +4309,11 @@ export function registerRoutes(app) {
         FROM inventory_sessions s
         LEFT JOIN inventory_session_items si ON si.session_id = s.id
         WHERE s.id = $1 AND s.tenant_id = $2
+          AND ($3::boolean = false OR s.status = 'active')
         GROUP BY s.id
         LIMIT 1
       `,
-      [request.params.sessionId, context.tenant.id]
+      [request.params.sessionId, context.tenant.id, Boolean(context.crew)]
     );
 
     const session = sessionResult.rows[0];
@@ -4076,20 +4423,43 @@ export function registerRoutes(app) {
     );
 
     const updated = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT id, status
+          FROM inventory_sessions
+          WHERE id = $1 AND tenant_id = $2
+          FOR UPDATE
+        `,
+        [request.params.sessionId, context.tenant.id]
+      );
+      const current = currentResult.rows[0];
+      if (!current) return null;
       const result = await client.query(
         `
           UPDATE inventory_sessions
           SET
             name = COALESCE($1, name),
             status = COALESCE($2, status),
-            closed_at = CASE WHEN $2 = 'closed' THEN now() ELSE closed_at END
+            closed_at = CASE
+              WHEN $2 = 'closed' THEN now()
+              WHEN $2 IN ('draft', 'active') THEN NULL
+              ELSE closed_at
+            END
           WHERE id = $3 AND tenant_id = $4
           RETURNING *
         `,
         [body.name || null, body.status || null, request.params.sessionId, context.tenant.id]
       );
 
-      if (!result.rows[0]) return null;
+      let revokedCrewCount = 0;
+      if (body.status === "closed" && current.status !== "closed") {
+        revokedCrewCount = await revokeCrewAccessForSession(client, {
+          tenantId: context.tenant.id,
+          sessionId: current.id,
+          actorUserId: context.user.id,
+          reason: "session_closed"
+        });
+      }
 
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
@@ -4099,11 +4469,12 @@ export function registerRoutes(app) {
         entityId: result.rows[0].id,
         metadata: {
           sessionName: result.rows[0].name,
-          status: body.status || null
+          status: body.status || null,
+          revokedCrewCount
         }
       });
 
-      return result.rows[0];
+      return { session: result.rows[0], revokedCrewCount };
     });
 
     if (!updated) {
@@ -4111,7 +4482,10 @@ export function registerRoutes(app) {
       throw new Error("Session not found");
     }
 
-    return { session: rowToSession(updated) };
+    return {
+      session: rowToSession(updated.session),
+      crewAccessRevoked: updated.revokedCrewCount
+    };
   });
 
   route(app, "delete", "/api/inventory/sessions/:sessionId", async (request, reply) => {
@@ -4483,7 +4857,12 @@ export function registerRoutes(app) {
   });
 
   route(app, "post", "/api/uploads/photos", async (request, reply) => {
-    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor"]);
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor"],
+      { allowCrew: true }
+    );
     const body = parseBody(
       z.object({
         fileName: z.string().max(240).optional(),
@@ -4499,11 +4878,17 @@ export function registerRoutes(app) {
     if (body.purpose === "inventory_reference" && !hasTenantRole(context, ["tenant_admin"])) {
       throw requestError("Only platoon admins can stage inventory reference photos.", 403);
     }
+    if (context.crew && body.purpose !== "evidence") {
+      throw requestError("Crew access can only upload proof photos.", 403);
+    }
 
     const stored = await saveUploadedImage(context.tenant, body);
     let upload;
     try {
       upload = await withTransaction(async client => {
+        if (context.crew) {
+          await assertCrewStagedUploadQuota(client, context);
+        }
         const result = await client.query(
           `
             INSERT INTO media_uploads (
@@ -4514,9 +4899,10 @@ export function registerRoutes(app) {
               mime_type,
               size_bytes,
               purpose,
-              staged_expires_at
+              staged_expires_at,
+              crew_auth_session_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8::int * interval '1 hour'))
+            VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8::int * interval '1 hour'), $9)
             RETURNING *
           `,
           [
@@ -4527,7 +4913,8 @@ export function registerRoutes(app) {
             body.mimeType,
             stored.sizeBytes,
             body.purpose,
-            config.storage.mediaUploadStagingTtlHours
+            config.storage.mediaUploadStagingTtlHours,
+            context.crew?.authSessionId || null
           ]
         );
         await createAuditEvent(client, {
@@ -4568,8 +4955,85 @@ export function registerRoutes(app) {
     };
   });
 
+  route(app, "delete", "/api/uploads/photos/:uploadId", async (request, reply) => {
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor"],
+      { allowCrew: true }
+    );
+    const uploadId = parseBody(z.string().uuid(), request.params.uploadId);
+    const discarded = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          SELECT *
+          FROM media_uploads
+          WHERE id = $1 AND tenant_id = $2
+          FOR UPDATE
+        `,
+        [uploadId, context.tenant.id]
+      );
+      const upload = result.rows[0];
+      if (!upload) return null;
+      if (upload.uploaded_by !== context.user.id) {
+        throw requestError("Photo upload belongs to another user.", 403);
+      }
+      if (upload.state !== "staged") {
+        throw requestError("Attached photos cannot be discarded.", 409);
+      }
+      if (context.crew) {
+        if (upload.crew_auth_session_id !== context.crew.authSessionId) {
+          throw requestError("Photo upload belongs to another crew session.", 403);
+        }
+        await lockActiveCrewAccess(client, {
+          authSessionId: context.crew.authSessionId,
+          tenantId: context.tenant.id,
+          sessionId: context.crew.sessionId,
+          userId: context.user.id
+        });
+      }
+
+      if (!normalizeMediaStorageKey(upload.storage_key)) {
+        throw requestError("Photo upload is unavailable.", 409);
+      }
+      await deleteStoredFile(upload.storage_key);
+      const deleted = await client.query(
+        `
+          DELETE FROM media_uploads
+          WHERE id = $1 AND tenant_id = $2 AND uploaded_by = $3 AND state = 'staged'
+          RETURNING id
+        `,
+        [upload.id, context.tenant.id, context.user.id]
+      );
+      if (!deleted.rows[0]) throw requestError("Photo upload could not be discarded.", 409);
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "media_upload.discarded",
+        entityType: "media_upload",
+        entityId: upload.id,
+        metadata: {
+          purpose: upload.purpose,
+          mimeType: upload.mime_type,
+          sizeBytes: upload.size_bytes == null ? null : Number(upload.size_bytes)
+        }
+      });
+      return upload;
+    });
+    if (!discarded) {
+      reply.code(404);
+      throw new Error("Photo upload not found");
+    }
+    return { discarded: true, uploadId: discarded.id };
+  });
+
   route(app, "patch", "/api/session-items/:sessionItemId/assignment", async (request, reply) => {
-    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor"]);
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor"],
+      { allowCrew: true }
+    );
     const body = parseBody(
       z.object({
         memberId: z.union([z.string().uuid(), z.literal("self")]).nullable().optional()
@@ -4578,17 +5042,26 @@ export function registerRoutes(app) {
     );
     const canManageAssignments = hasTenantRole(context, ["tenant_admin"]);
     const isSelfAssignment = body.memberId === "self";
+    const isSelfRelease = body.memberId === null;
     const requestedMemberId = isSelfAssignment ? null : body.memberId || null;
 
-    if (!canManageAssignments && !isSelfAssignment) {
+    if (!canManageAssignments && !isSelfAssignment && !isSelfRelease) {
       reply.code(403);
-      throw new Error("Contributors can only claim rows for themselves.");
+      throw new Error("You can only claim or release rows for yourself.");
     }
 
     const updated = await withTransaction(async client => {
+      if (context.crew) {
+        await lockActiveCrewAccess(client, {
+          authSessionId: context.crew.authSessionId,
+          tenantId: context.tenant.id,
+          sessionId: context.crew.sessionId,
+          userId: context.user.id
+        });
+      }
       const currentResult = await client.query(
         `
-          SELECT si.id, si.assigned_to, s.status AS session_status
+          SELECT si.id, si.assigned_to, s.id AS session_id, s.status AS session_status
           FROM inventory_session_items si
           JOIN inventory_sessions s ON s.id = si.session_id
           WHERE si.id = $1
@@ -4600,7 +5073,10 @@ export function registerRoutes(app) {
 
       if (!currentResult.rows[0]) return null;
       if (currentResult.rows[0].session_status === "closed") return { sessionClosed: true };
-
+      if (context.crew && (
+        currentResult.rows[0].session_id !== context.crew.sessionId
+        || currentResult.rows[0].session_status !== "active"
+      )) return { crewSessionDenied: true };
       let assignedUser = null;
       if (isSelfAssignment) {
         if (currentResult.rows[0].assigned_to && currentResult.rows[0].assigned_to !== context.user.id) {
@@ -4614,6 +5090,11 @@ export function registerRoutes(app) {
           display_name: context.user.display_name,
           role: context.membership?.role || null
         };
+      } else if (isSelfRelease && !canManageAssignments) {
+        if (currentResult.rows[0].assigned_to && currentResult.rows[0].assigned_to !== context.user.id) {
+          reply.code(409);
+          throw new Error("This row is assigned to another user.");
+        }
       } else if (requestedMemberId) {
         const memberResult = await client.query(
           `
@@ -4686,6 +5167,10 @@ export function registerRoutes(app) {
     if (updated.sessionClosed) {
       reply.code(409);
       throw new Error("Closed sessions are read-only.");
+    }
+    if (updated.crewSessionDenied) {
+      reply.code(403);
+      throw new Error("Crew access is limited to its assigned active session.");
     }
 
     return {
@@ -4768,7 +5253,12 @@ export function registerRoutes(app) {
   });
 
   route(app, "post", "/api/session-items/:sessionItemId/submissions", async (request, reply) => {
-    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor"]);
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor"],
+      { allowCrew: true }
+    );
     const body = parseBody(
       z.object({
         status: z.enum(submissionStatuses),
@@ -4791,9 +5281,18 @@ export function registerRoutes(app) {
     }
 
     const submission = await withTransaction(async client => {
+      if (context.crew) {
+        await lockActiveCrewAccess(client, {
+          authSessionId: context.crew.authSessionId,
+          tenantId: context.tenant.id,
+          sessionId: context.crew.sessionId,
+          userId: context.user.id
+        });
+      }
       const sessionItemResult = await client.query(
         `
-          SELECT si.id, si.packet_line, s.name AS session_name, s.status AS session_status
+          SELECT si.id, si.packet_line, si.assigned_to, s.id AS session_id,
+            s.name AS session_name, s.status AS session_status
           FROM inventory_session_items si
           JOIN inventory_sessions s ON s.id = si.session_id
           WHERE si.id = $1 AND s.tenant_id = $2
@@ -4804,6 +5303,14 @@ export function registerRoutes(app) {
 
       if (!sessionItemResult.rows[0]) return null;
       if (sessionItemResult.rows[0].session_status === "closed") return { sessionClosed: true };
+      if (context.crew && (
+        sessionItemResult.rows[0].session_id !== context.crew.sessionId
+        || sessionItemResult.rows[0].session_status !== "active"
+      )) return { crewSessionDenied: true };
+      if (!hasTenantRole(context, ["tenant_admin"])
+        && sessionItemResult.rows[0].assigned_to !== context.user.id) {
+        return { assignmentRequired: true };
+      }
 
       const lockedUploads = new Map();
       for (const uploadId of [...photoUploadIds].sort()) {
@@ -4812,7 +5319,9 @@ export function registerRoutes(app) {
           tenantId: context.tenant.id,
           userId: context.user.id,
           purpose: "evidence",
-          canUseAnyUploader: hasTenantRole(context, ["tenant_admin"])
+          canUseAnyUploader: hasTenantRole(context, ["tenant_admin"]),
+          crewAuthSessionId: context.crew?.authSessionId || null,
+          crewSessionId: context.crew?.sessionId || null
         });
         lockedUploads.set(upload.id, upload);
       }
@@ -4902,6 +5411,14 @@ export function registerRoutes(app) {
     if (submission.sessionClosed) {
       reply.code(409);
       throw new Error("Closed sessions are read-only.");
+    }
+    if (submission.crewSessionDenied) {
+      reply.code(403);
+      throw new Error("Crew access is limited to its assigned active session.");
+    }
+    if (submission.assignmentRequired) {
+      reply.code(409);
+      throw new Error("Claim this item before submitting proof.");
     }
 
     runNotification("Proof submission", () => notifyTenantAdminsOfSubmission(context, submission, {

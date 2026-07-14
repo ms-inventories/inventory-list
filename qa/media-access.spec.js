@@ -73,6 +73,10 @@ test.describe("tenant media access", () => {
         headers: qaHeaders(qaAdmin),
         data: { packetLine: `QA-PROTECTED-MEDIA-${suffix.toUpperCase()}` }
       }));
+      await responseJson(await contributor.patch(`${API_URL}/session-items/${item.sessionItem.id}/assignment`, {
+        headers: qaHeaders(qaNco),
+        data: { memberId: "self" }
+      }));
 
       const uploadResponse = await contributor.post(`${API_URL}/uploads/photos`, {
         headers: qaHeaders(qaNco),

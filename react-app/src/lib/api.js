@@ -3,6 +3,7 @@ import { getSessionAccessToken, invalidateAuthSession, readAuthSession } from ".
 
 const QA_IDENTITY_KEY = "inventory.qa.identity";
 const LAST_API_REQUEST_ID_KEY = "inventory.lastApiRequestId";
+export const CREW_ACCESS_ENDED_EVENT = "inventory:crew-access-ended";
 
 export class ApiError extends Error {
   constructor(message, status = 0, details = {}) {
@@ -127,6 +128,9 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
     if (!details.requestId && responseRequestId) details.requestId = responseRequestId;
     rememberApiRequestId(details.requestId);
     if (response.status === 401 && token) invalidateAuthSession(token, "unauthorized");
+    if (response.status === 401 && details.code === "crew_access_ended" && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(CREW_ACCESS_ENDED_EVENT));
+    }
     throw new ApiError(data?.error || `Request failed (${response.status})`, response.status, details);
   }
 

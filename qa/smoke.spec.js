@@ -157,11 +157,11 @@ test.describe("QA smoke", () => {
     if (await workspaceMenu.isVisible()) {
       await workspaceMenu.click();
       await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "People & Invites" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
       await page.locator(".leader-brand").getByRole("button", { name: "Close menu" }).click();
     } else {
       await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "People & Invites" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
     }
     await expect(page.getByRole("button", { name: "Upload packet" })).toBeVisible();
   });
@@ -211,6 +211,6 @@ test.describe("QA smoke", () => {
     if (await workspaceMenu.isVisible()) await workspaceMenu.click();
     await expect(page.getByRole("button", { name: "Inventory Sessions" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Review Queue" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "People & Invites" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Team" })).toHaveCount(0);
   });
 });
