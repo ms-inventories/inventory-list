@@ -1,6 +1,6 @@
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
 const TESSERACT_CDN_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-const PDFJS_CDN_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
-const PDFJS_WORKER_CDN_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
 
 let tesseractLoadPromise = null;
 let pdfJsLoadPromise = null;
@@ -25,28 +25,13 @@ function ensureTesseractLoaded() {
 }
 
 function ensurePdfJsLoaded() {
-  if (window.pdfjsLib) {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN_URL;
-    return Promise.resolve(window.pdfjsLib);
-  }
-
   if (pdfJsLoadPromise) return pdfJsLoadPromise;
 
-  pdfJsLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = PDFJS_CDN_URL;
-    script.async = true;
-    script.onload = () => {
-      if (!window.pdfjsLib) {
-        reject(new Error("PDF reader did not load"));
-        return;
-      }
-
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN_URL;
-      resolve(window.pdfjsLib);
-    };
-    script.onerror = () => reject(new Error("Failed to load PDF reader"));
-    document.head.appendChild(script);
+  pdfJsLoadPromise = import("pdfjs-dist/build/pdf.mjs").then(pdfJsModule => {
+    const pdfjsLib = pdfJsModule?.getDocument ? pdfJsModule : pdfJsModule?.default;
+    if (!pdfjsLib?.getDocument) throw new Error("PDF reader did not load");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+    return pdfjsLib;
   });
 
   return pdfJsLoadPromise;
