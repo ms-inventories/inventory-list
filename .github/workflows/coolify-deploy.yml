@@ -22,10 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -36,36 +36,192 @@ jobs:
       - name: Check
         run: npm run check
 
-  deploy-frontend:
-    name: Deploy React app to Coolify
+  deploy:
+    name: Deploy ${{ matrix.target }} to Coolify
     runs-on: ubuntu-latest
     needs: check
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - frontend
+          - backend
     env:
       COOLIFY_FRONTEND_WEBHOOK_URL: ${{ secrets.COOLIFY_FRONTEND_WEBHOOK_URL || secrets.COOLIFY_WEBHOOK }}
-      COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN || secrets.COOLIFY_TOKEN }}
-    steps:
-      - name: Trigger frontend deployment
-        if: ${{ env.COOLIFY_FRONTEND_WEBHOOK_URL != '' }}
-        run: |
-          args=(--fail --request GET --url "$COOLIFY_FRONTEND_WEBHOOK_URL")
-          if [ -n "$COOLIFY_DEPLOY_TOKEN" ]; then
-            args+=(--header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN")
-          fi
-          curl "${args[@]}"
-
-  deploy-backend:
-    name: Deploy API to Coolify
-    runs-on: ubuntu-latest
-    needs: check
-    env:
       COOLIFY_BACKEND_WEBHOOK_URL: ${{ secrets.COOLIFY_BACKEND_WEBHOOK_URL }}
       COOLIFY_DEPLOY_TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN || secrets.COOLIFY_TOKEN }}
+      COOLIFY_DEPLOY_TIMEOUT_SECONDS: "2700"
     steps:
-      - name: Trigger backend deployment
-        if: ${{ env.COOLIFY_BACKEND_WEBHOOK_URL != '' }}
+      - name: Trigger and verify ${{ matrix.target }} deployment
+        env:
+          DEPLOY_TARGET: ${{ matrix.target }}
+          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
-          args=(--fail --request GET --url "$COOLIFY_BACKEND_WEBHOOK_URL")
-          if [ -n "$COOLIFY_DEPLOY_TOKEN" ]; then
-            args+=(--header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN")
+          set -Eeuo pipefail
+
+          case "$DEPLOY_TARGET" in
+            frontend) webhook_url="$COOLIFY_FRONTEND_WEBHOOK_URL" ;;
+            backend) webhook_url="$COOLIFY_BACKEND_WEBHOOK_URL" ;;
+            *) echo "::error::Unknown Coolify deployment target."; exit 1 ;;
+          esac
+
+          if [ -z "$webhook_url" ]; then
+            if [ "$DEPLOY_TARGET" = "backend" ]; then
+              echo "::notice::Backend deployment skipped because its webhook is not configured."
+              exit 0
+            fi
+            echo "::error::The required frontend Coolify webhook is not configured."
+            exit 1
           fi
-          curl "${args[@]}"
+
+          if [ -z "$COOLIFY_DEPLOY_TOKEN" ]; then
+            echo "::error::COOLIFY_DEPLOY_TOKEN is required to trigger and monitor Coolify deployments."
+            exit 1
+          fi
+
+          if ! api_base="$({ WEBHOOK_URL="$webhook_url" python3 - <<'PY'
+          import os
+          import sys
+          from urllib.parse import urlsplit
+
+          parsed = urlsplit(os.environ["WEBHOOK_URL"])
+          if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+              sys.exit(1)
+
+          try:
+              parsed.port
+          except ValueError:
+              sys.exit(1)
+
+          path = parsed.path.rstrip("/")
+          deploy_suffix = "/api/v1/deploy"
+          if not path.endswith(deploy_suffix):
+              sys.exit(1)
+
+          api_path = path.removesuffix("/deploy")
+          print(f"https://{parsed.netloc}{api_path}", end="")
+          PY
+          } 2>/dev/null)"; then
+            echo "::error::The Coolify webhook must be a valid HTTPS URL without embedded credentials."
+            exit 1
+          fi
+
+          trigger_response="$(mktemp)"
+          status_response="$(mktemp)"
+          trap 'rm -f "$trigger_response" "$status_response"' EXIT
+
+          if ! trigger_code="$(curl --silent --show-error \
+            --proto '=https' \
+            --connect-timeout 15 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-all-errors \
+            --request GET \
+            --header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN" \
+            --output "$trigger_response" \
+            --write-out '%{http_code}' \
+            --url "$webhook_url")"; then
+            echo "::error::Coolify did not accept the $DEPLOY_TARGET deployment request."
+            exit 1
+          fi
+
+          if [[ ! "$trigger_code" =~ ^2[0-9][0-9]$ ]]; then
+            echo "::error::Coolify rejected the $DEPLOY_TARGET deployment request (HTTP $trigger_code)."
+            exit 1
+          fi
+
+          if ! deployment_uuid="$(jq -er \
+            '(.deployment_uuid // .deployments[0].deployment_uuid) | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' \
+            "$trigger_response")"; then
+            echo "::error::Coolify accepted the request but did not return a valid deployment UUID."
+            exit 1
+          fi
+
+          short_uuid="${deployment_uuid:0:12}"
+          echo "Coolify accepted the $DEPLOY_TARGET deployment ($short_uuid). Waiting for completion."
+
+          deadline="$(( $(date +%s) + COOLIFY_DEPLOY_TIMEOUT_SECONDS ))"
+          consecutive_errors=0
+          last_status=""
+          poll_count=0
+
+          while (( $(date +%s) < deadline )); do
+            poll_count="$((poll_count + 1))"
+            if ! status_code="$(curl --silent --show-error \
+              --proto '=https' \
+              --connect-timeout 15 \
+              --max-time 45 \
+              --retry 2 \
+              --retry-all-errors \
+              --request GET \
+              --header "Authorization: Bearer $COOLIFY_DEPLOY_TOKEN" \
+              --output "$status_response" \
+              --write-out '%{http_code}' \
+              --url "$api_base/deployments/$deployment_uuid")"; then
+              status_code="000"
+            fi
+
+            if [[ ! "$status_code" =~ ^2[0-9][0-9]$ ]]; then
+              if [ "$status_code" = "401" ] || [ "$status_code" = "403" ]; then
+                echo "::error::Coolify deployment monitoring was not authorized (HTTP $status_code). Check that the API is enabled and the token has read and deploy permissions."
+                exit 1
+              fi
+
+              consecutive_errors="$((consecutive_errors + 1))"
+              echo "::warning::Could not read $DEPLOY_TARGET deployment status (HTTP $status_code; attempt $consecutive_errors of 6)."
+              if (( consecutive_errors >= 6 )); then
+                echo "::error::Coolify deployment monitoring failed repeatedly for $short_uuid."
+                exit 1
+              fi
+              sleep 10
+              continue
+            fi
+
+            if ! deployment_status="$(jq -er \
+              '.status | select(type == "string" and test("^[a-z][a-z0-9_-]{0,31}$"))' \
+              "$status_response")"; then
+              consecutive_errors="$((consecutive_errors + 1))"
+              echo "::warning::Coolify returned an unreadable deployment status (attempt $consecutive_errors of 6)."
+              if (( consecutive_errors >= 6 )); then
+                echo "::error::Coolify deployment monitoring returned invalid data repeatedly for $short_uuid."
+                exit 1
+              fi
+              sleep 10
+              continue
+            fi
+
+            consecutive_errors=0
+            if [ "$deployment_status" != "$last_status" ] || (( poll_count % 6 == 0 )); then
+              echo "Coolify $DEPLOY_TARGET deployment status: $deployment_status"
+              last_status="$deployment_status"
+            fi
+
+            case "$deployment_status" in
+              finished)
+                deployed_commit="$(jq -r '.commit // empty' "$status_response")"
+                if [[ "$deployed_commit" =~ ^[0-9a-fA-F]{7,40}$ ]] \
+                  && [[ "$EXPECTED_COMMIT" != "$deployed_commit"* ]] \
+                  && [[ "$deployed_commit" != "$EXPECTED_COMMIT"* ]]; then
+                  echo "::error::Coolify finished $short_uuid with a different Git commit than this workflow run."
+                  exit 1
+                fi
+                echo "Coolify finished the $DEPLOY_TARGET deployment successfully ($short_uuid)."
+                exit 0
+                ;;
+              failed|cancelled-by-user|cancelled_by_user|cancelled)
+                echo "::error::Coolify ended the $DEPLOY_TARGET deployment with status '$deployment_status' ($short_uuid). Review its deployment log in Coolify."
+                exit 1
+                ;;
+              queued|in_progress)
+                sleep 10
+                ;;
+              *)
+                echo "::error::Coolify returned unsupported deployment status '$deployment_status' for $short_uuid."
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "::error::Coolify did not finish the $DEPLOY_TARGET deployment within $COOLIFY_DEPLOY_TIMEOUT_SECONDS seconds ($short_uuid)."
+          exit 1
