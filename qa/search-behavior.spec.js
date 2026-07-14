@@ -48,8 +48,8 @@ test.describe("page-scoped search", () => {
     await expect(sessionSearch).toHaveValue("");
     await sessionSearch.fill("battery SEARCH-SERIAL-20-684");
     const sessionResults = page.getByRole("region", { name: "Session row results" });
-    await expect(sessionResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
-    await expect(sessionResults.getByText(/G18358 GENERATOR SET SEARCH FIXTURE/)).toHaveCount(0);
+    await expect(sessionResults.getByText("Field Radio", { exact: true })).toBeVisible();
+    await expect(sessionResults.getByText("Quiet Generator", { exact: true })).toHaveCount(0);
     const assignmentLists = page.getByRole("group", { name: "Work assignment lists" });
     const unclaimedList = assignmentLists.getByRole("button", { name: /^Unclaimed\b/ });
     const othersList = assignmentLists.getByRole("button", { name: /^Others\b/ });
@@ -57,15 +57,15 @@ test.describe("page-scoped search", () => {
     await expect(othersList).toHaveAttribute("aria-pressed", "false");
     await othersList.click();
     await expect(othersList).toHaveAttribute("aria-pressed", "true");
-    await expect(sessionResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toHaveCount(0);
+    await expect(sessionResults.getByText("Field Radio", { exact: true })).toHaveCount(0);
     await unclaimedList.click();
-    await expect(sessionResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
-    const radioSessionRow = sessionResults.locator(".session-item", { hasText: "R20684 RADIO SET SEARCH FIXTURE" });
+    await expect(sessionResults.getByText("Field Radio", { exact: true })).toBeVisible();
+    const radioSessionRow = sessionResults.locator(".session-item", { hasText: "Field Radio" });
     await expect(radioSessionRow.getByText("Needs review", { exact: true })).toBeVisible();
     await expect(radioSessionRow.getByText("needs_review", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     await expect(sessionSearch).toHaveValue("");
-    await expect(sessionResults.getByText(/G18358 GENERATOR SET SEARCH FIXTURE/)).toBeVisible();
+    await expect(sessionResults.getByText("Quiet Generator", { exact: true })).toBeVisible();
 
     await openWorkspaceTab(page, "Review Queue");
     await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
