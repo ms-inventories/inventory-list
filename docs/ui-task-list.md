@@ -136,7 +136,7 @@ Use this as the working backlog before turning individual items into implementat
 - [x] **UI-017: Pending item assignment**
   - Current issue: dashboard implies assignment/tasking, but assignment needs a complete workflow.
   - Desired behavior: tenant admin can assign rows to members; contributors see assigned rows; reassignment and "assign to me" update state.
-  - Status: completed and field-refined, 2026-07-11. The home page now follows one selected active inventory, offers a native selector when several are active, and opens the exact existing item. Work is partitioned into `Available`, `My work`, and `Team`; Claim resolves Authentik-only users correctly, prevents claim races, moves the row to My work, and opens proof entry. Admin reassignment remains available.
+  - Status: completed and mobile-refined, 2026-07-13. The home page follows one selected active inventory, defaults to the user's own work when present, and opens exact items. Actionable work is partitioned into `Unclaimed`, `Mine`, and `Others`; completed items live in a separate collapsible history. Claim is visible on mobile, has row-specific progress/duplicate protection, moves the row to Mine, and opens labeled proof entry. Proof requires ownership, while admins retain reassignment/unassignment controls.
 
 - [x] **UI-018: Review queue actions**
   - Current issue: approve/reject/request more proof exists conceptually, but needs full confidence in live behavior and status feedback.
@@ -201,12 +201,12 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-029: Empty states should always give one next action**
   - Current issue: several empty states explain what is missing but do not always include a next button.
   - Desired behavior: empty states include the next action when the user has permission, such as `Create session`, `Upload packet`, `Invite helper`.
-  - Status: audited 2026-07-11; implementation remains. The first related destination fix now opens existing dashboard session work instead of the create-session wizard.
+  - Status: in progress, 2026-07-13. Dashboard work/review empty states now clear the active search or open the relevant session/queue, and Reports can reset all filters. Remaining People/invite and lower-frequency administration empty states still need the same treatment.
 
 - [ ] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
   - Desired behavior: labels map to clear destinations: `Open workspace`, `Open session`, `Review queue`, `Import packet`, `Launch app`.
-  - Status: in progress, 2026-07-11. Dashboard existing-work actions now say `Open sessions`/`Open session`; duplicate platform `Admin view` links are removed; public/legacy entry labels now distinguish `Launch app`, `Open equipment list`, and `Open workspace`. Packet/import and remaining empty-state labels still need consolidation.
+  - Status: in progress, 2026-07-13. Existing-work destinations now consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`. Packet/import wording and remaining platform/newsletter labels still need consolidation.
 
 - [x] **UI-031: Mobile-first toolbar cleanup**
   - Current issue: desktop layout is improving, but mobile needs repeated inspection.
@@ -233,6 +233,7 @@ Use this as the working backlog before turning individual items into implementat
 
 - [ ] **UI-036: Loading and error states**
   - Desired behavior: every async button has loading text, disabled state, success state, and a useful failure message.
+  - Status: in progress, 2026-07-13. Assignment and claim actions now use row-scoped pending locks and `Claiming...`/saving feedback without freezing unrelated rows. Session lifecycle/direct-check actions already have scoped locks; remaining upload, people, and newsletter actions still need a systematic pass.
   - Status: in progress, 2026-07-11, through `UX-003`. Session direct-check and close/reopen mutations now have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; public unsubscribe and legacy viewer login also lock while pending. Remaining newsletter and multi-row action audits are documented follow-ups.
 
 ## P3: Later SaaS Depth

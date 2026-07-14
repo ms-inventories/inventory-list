@@ -1176,7 +1176,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
   }
 
   return (
-    <form className="proof-form" onSubmit={submitProof}>
+    <form id={`proof-form-${item.id}`} className="proof-form" onSubmit={submitProof}>
       {requestNote ? (
         <div className="proof-request-context">
           <strong>Platoon admin request</strong>
@@ -1184,7 +1184,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         </div>
       ) : null}
 
-      <div className="segmented-control">
+      <div className="segmented-control" role="group" aria-label="Inventory result">
         {[
           ["found", "Found"],
           ["not_found", "Not found"],
@@ -1194,6 +1194,8 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
             className={form.status === value ? "active" : ""}
             type="button"
             key={value}
+            aria-pressed={form.status === value}
+            autoFocus={value === "found"}
             onClick={() => setForm(current => ({ ...current, status: value }))}
           >
             {label}
@@ -1201,31 +1203,42 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         ))}
       </div>
 
-      <input
-        className="input"
-        value={form.locationText}
-        placeholder="Location"
-        onChange={e => setForm(current => ({ ...current, locationText: e.target.value }))}
-      />
-      <input
-        className="input"
-        value={form.serialNumber}
-        placeholder="Serial number"
-        onChange={e => setForm(current => ({ ...current, serialNumber: e.target.value }))}
-      />
-      <textarea
-        className="input proof-note"
-        value={form.note}
-        placeholder={requestNote ? "What this response shows" : "Note"}
-        onChange={e => setForm(current => ({ ...current, note: e.target.value }))}
-      />
+      <label className="proof-field">
+        <span>Location</span>
+        <input
+          className="input"
+          value={form.locationText}
+          placeholder="Where you found or checked it"
+          onChange={e => setForm(current => ({ ...current, locationText: e.target.value }))}
+        />
+      </label>
+      <label className="proof-field">
+        <span>Serial number</span>
+        <input
+          className="input"
+          value={form.serialNumber}
+          placeholder="Enter the serial number, if visible"
+          onChange={e => setForm(current => ({ ...current, serialNumber: e.target.value }))}
+        />
+      </label>
+      <label className="proof-field">
+        <span>{requestNote ? "Response note" : "Note"}</span>
+        <textarea
+          className="input proof-note"
+          value={form.note}
+          placeholder={requestNote ? "Explain how this answers the request" : "Add any useful detail"}
+          onChange={e => setForm(current => ({ ...current, note: e.target.value }))}
+        />
+      </label>
       <label className="photo-picker">
         <Camera aria-hidden="true" />
         <span>{form.photoFile ? form.photoFile.name : "Add photo"}</span>
         <input
+          className="photo-picker-input"
           type="file"
           accept="image/*"
           capture="environment"
+          aria-label={form.photoFile ? "Replace proof photo" : "Add proof photo"}
           onChange={e => setForm(current => ({ ...current, photoFile: e.target.files?.[0] || null }))}
         />
       </label>
@@ -1257,7 +1270,7 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
           <strong>Close-out report</strong>
           <small>{report.completion}% resolved</small>
         </span>
-        <span className={`status-pill ${report.session?.status}`}>{report.session?.status}</span>
+        <span className={`status-pill ${report.session?.status}`}>{formatItemStatus(report.session?.status)}</span>
       </summary>
 
       <div className="closeout-report-body">
@@ -1345,7 +1358,7 @@ function SessionItemDrawer({
   canManage,
   canSubmit,
   canClaim,
-  isSaving,
+  assignmentAction,
   directCheckAction,
   isClosed,
   status,
@@ -1372,6 +1385,7 @@ function SessionItemDrawer({
   const needsMoreProof = latest?.reviewState === "request_more_info";
   const pendingProof = latest?.reviewState === "pending";
   const isDirectCheckPending = Boolean(directCheckAction);
+  const isAssignmentPending = Boolean(assignmentAction);
   const knownImages = getInventoryItemImages(item.inventoryItem);
   const assignedName = assignedPerson(item);
 
@@ -1616,9 +1630,9 @@ function SessionItemDrawer({
 
         <footer className="session-item-drawer-actions">
           {canClaim ? (
-            <button className="btn btn-secondary btn-small" type="button" disabled={isSaving || isDirectCheckPending} onClick={onClaim}>
+            <button className="btn btn-secondary btn-small" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={onClaim}>
               <UserPlus aria-hidden="true" />
-              <span>Claim item</span>
+              <span>{assignmentAction === "claim" ? "Claiming..." : "Claim item"}</span>
             </button>
           ) : null}
           {canSubmit && !isClosed ? (
@@ -1636,7 +1650,7 @@ function SessionItemDrawer({
           {canManage ? (
             <label className="session-assignment-control">
               <span>Assign</span>
-              <select value={assignedMemberId} disabled={isSaving || isDirectCheckPending || isClosed} onChange={event => onAssign(event.target.value)}>
+              <select value={assignedMemberId} disabled={isAssignmentPending || isDirectCheckPending || isClosed} onChange={event => onAssign(event.target.value)}>
                 <option value="">Unassigned</option>
                 {assignableMembers.map(member => (
                   <option value={member.id} key={member.id}>
@@ -1648,11 +1662,11 @@ function SessionItemDrawer({
           ) : null}
           {canManage && !isClosed ? (
             <>
-              <button className="btn btn-secondary btn-small" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => onDirectCheck("approved")}>
+              <button className="btn btn-secondary btn-small" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => onDirectCheck("approved")}>
                 <CheckCircle2 aria-hidden="true" />
                 <span>{directCheckAction === "approved" ? "Marking found..." : "Found"}</span>
               </button>
-              <button className="btn btn-secondary btn-small" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => onDirectCheck("not_found")}>
+              <button className="btn btn-secondary btn-small" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => onDirectCheck("not_found")}>
                 <span>{directCheckAction === "not_found" ? "Marking not found..." : "Not found"}</span>
               </button>
             </>
@@ -1709,6 +1723,7 @@ function SessionPanel({
   const [closeSessionTarget, setCloseSessionTarget] = useState(null);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
   const [directCheckActions, setDirectCheckActions] = useState(() => new Map());
+  const [assignmentActions, setAssignmentActions] = useState(() => new Map());
   const [sessionStatusActions, setSessionStatusActions] = useState(() => new Map());
   const [printReportId, setPrintReportId] = useState("");
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
@@ -1719,7 +1734,9 @@ function SessionPanel({
   const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
+  const sessionItemFilterSessionRef = useRef("");
   const directCheckActionRef = useRef(new Map());
+  const assignmentActionRef = useRef(new Map());
   const sessionStatusActionRef = useRef(new Map());
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
 
@@ -1822,11 +1839,33 @@ function SessionPanel({
 
   useEffect(() => {
     onQueryChange("");
+    sessionItemFilterSessionRef.current = "";
     setSessionItemFilter("available");
     setProofItemId("");
     setDetailItemId("");
     setDetailPhotoViewer(null);
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (
+      !selectedSessionId
+      || detail?.session?.id !== selectedSessionId
+      || !detail?.items
+      || sessionItemFilterSessionRef.current === selectedSessionId
+    ) return;
+    const actionableItems = detail.items.filter(item => !sessionItemIsComplete(item));
+    if (!actionableItems.length) {
+      setSessionItemFilter("available");
+      return;
+    }
+    const nextFilter = actionableItems.some(item => sessionItemAssignmentBucket(item, me) === "mine")
+      ? "mine"
+      : actionableItems.some(item => sessionItemAssignmentBucket(item, me) === "available")
+        ? "available"
+        : "team";
+    sessionItemFilterSessionRef.current = selectedSessionId;
+    setSessionItemFilter(nextFilter);
+  }, [selectedSessionId, detail?.items, me?.user?.id, me?.user?.email]);
 
   useEffect(() => {
     if (!preferredSessionItemId || !detail?.items?.some(item => item.id === preferredSessionItemId)) return;
@@ -2234,8 +2273,18 @@ function SessionPanel({
   }
 
   async function updateSessionItemAssignment(sessionItemId, memberId, { claim = false } = {}) {
+    if (!sessionItemId || assignmentActionRef.current.has(sessionItemId)) return false;
+
+    const action = claim ? "claim" : "assign";
+    assignmentActionRef.current.set(sessionItemId, action);
+    setAssignmentActions(current => {
+      const next = new Map(current);
+      next.set(sessionItemId, action);
+      return next;
+    });
+
     try {
-      setIsSaving(true);
+      setStatus({ text: claim ? "Claiming item..." : "Saving assignment...", isError: false });
       await apiRequest(`/session-items/${sessionItemId}/assignment`, {
         method: "PATCH",
         token,
@@ -2243,13 +2292,16 @@ function SessionPanel({
         body: { memberId: memberId || null }
       });
       setStatus({
-        text: claim ? "Item claimed. Add proof below." : memberId ? "Row assigned." : "Row assignment cleared.",
+        text: claim ? "Item claimed. Add proof now." : memberId ? "Row assigned." : "Row assignment cleared.",
         isError: false
       });
       await loadSessionDetail(selectedSessionId, false);
       if (claim) {
         setSessionItemFilter("mine");
         setProofItemId(sessionItemId);
+        window.requestAnimationFrame(() => {
+          document.getElementById(`proof-form-${sessionItemId}`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+        });
       } else if (!memberId) {
         setSessionItemFilter("available");
       } else {
@@ -2262,7 +2314,12 @@ function SessionPanel({
       if (error?.status === 409) await loadSessionDetail(selectedSessionId, false);
       return false;
     } finally {
-      setIsSaving(false);
+      assignmentActionRef.current.delete(sessionItemId);
+      setAssignmentActions(current => {
+        const next = new Map(current);
+        next.delete(sessionItemId);
+        return next;
+      });
     }
   }
 
@@ -2396,19 +2453,31 @@ function SessionPanel({
     () => [...(detail?.items || [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
     [detail?.items]
   );
+  const actionableDetailItems = useMemo(
+    () => detailItems.filter(item => !sessionItemIsComplete(item)),
+    [detailItems]
+  );
+  const completedDetailItems = useMemo(
+    () => detailItems.filter(sessionItemIsComplete),
+    [detailItems]
+  );
   const sessionItemFilterCounts = useMemo(() => ({
-    available: detailItems.filter(item => sessionItemAssignmentBucket(item, me) === "available").length,
-    mine: detailItems.filter(item => sessionItemAssignmentBucket(item, me) === "mine").length,
-    team: detailItems.filter(item => sessionItemAssignmentBucket(item, me) === "team").length
-  }), [detailItems, me]);
+    available: actionableDetailItems.filter(item => sessionItemAssignmentBucket(item, me) === "available").length,
+    mine: actionableDetailItems.filter(item => sessionItemAssignmentBucket(item, me) === "mine").length,
+    team: actionableDetailItems.filter(item => sessionItemAssignmentBucket(item, me) === "team").length
+  }), [actionableDetailItems, me]);
   const visibleDetailItems = useMemo(
-    () => detailItems.filter(item => sessionItemAssignmentBucket(item, me) === sessionItemFilter && sessionItemMatchesQuery(item, query)),
-    [detailItems, sessionItemFilter, query, me]
+    () => actionableDetailItems.filter(item => sessionItemAssignmentBucket(item, me) === sessionItemFilter && sessionItemMatchesQuery(item, query)),
+    [actionableDetailItems, sessionItemFilter, query, me]
+  );
+  const visibleCompletedItems = useMemo(
+    () => completedDetailItems.filter(item => sessionItemMatchesQuery(item, query)),
+    [completedDetailItems, query]
   );
   const sessionItemFilterOptions = [
-    ["available", "Available"],
-    ["mine", "My work"],
-    ["team", "Team"]
+    ["available", "Unclaimed"],
+    ["mine", "Mine"],
+    ["team", "Others"]
   ];
   const sessionReport = useMemo(
     () => selectedSession ? buildSessionReport(selectedSession, detail?.items || []) : null,
@@ -2504,9 +2573,22 @@ function SessionPanel({
   const selectedSessionStatusAction = selectedSession?.id ? sessionStatusActions.get(selectedSession.id) || "" : "";
   const closeSessionAction = closeSessionTarget?.id ? sessionStatusActions.get(closeSessionTarget.id) || "" : "";
   const detailItemDirectCheckAction = detailItem?.id ? directCheckActions.get(detailItem.id) || "" : "";
+  const detailItemAssignmentAction = detailItem?.id ? assignmentActions.get(detailItem.id) || "" : "";
   const detailItemAssignedToCurrentUser = detailItem ? sessionItemAssignedToUser(detailItem, me) : false;
-  const detailCanClaim = Boolean(detailItem && canSubmit && !detailItem?.assignedTo && !selectedSessionIsClosed);
-  const detailCanSubmitProof = Boolean(detailItem && canSubmit && (canManage || detailItemAssignedToCurrentUser));
+  const detailCanClaim = Boolean(
+    detailItem
+    && canSubmit
+    && !detailItem.assignedTo
+    && !detailItem.assignedToEmail
+    && !sessionItemIsComplete(detailItem)
+    && !selectedSessionIsClosed
+  );
+  const detailCanSubmitProof = Boolean(
+    detailItem
+    && canSubmit
+    && detailItemAssignedToCurrentUser
+    && !sessionItemIsComplete(detailItem)
+  );
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -2562,7 +2644,7 @@ function SessionPanel({
           {sessionNeedsReview(session) ? (
             <span className="session-alert">{session.needsReviewCount} review</span>
           ) : null}
-          <span className={`status-pill ${session.status}`}>{session.status}</span>
+          <span className={`status-pill ${session.status}`}>{formatItemStatus(session.status)}</span>
         </span>
       </button>
     );
@@ -2785,7 +2867,7 @@ function SessionPanel({
                 </div>
               ) : null}
 
-              {detailItems.length ? (
+              {actionableDetailItems.length ? (
                 <div className="session-item-toolbar">
                   <div className="session-filter-strip session-assignment-tabs" role="group" aria-label="Work assignment lists">
                     {sessionItemFilterOptions.map(([value, label]) => (
@@ -2793,6 +2875,7 @@ function SessionPanel({
                         className={sessionItemFilter === value ? "active" : ""}
                         type="button"
                         key={value}
+                        aria-pressed={sessionItemFilter === value}
                         onClick={() => setSessionItemFilter(value)}
                       >
                         <span>{label}</span>
@@ -2829,10 +2912,12 @@ function SessionPanel({
                   const assignedName = assignedPerson(item);
                   const assignedToCurrentUser = sessionItemAssignedToUser(item, me);
                   const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
-                  const canClaim = Boolean(canSubmit && !item.assignedTo && !selectedSessionIsClosed);
-                  const canSubmitItemProof = Boolean(canSubmit && (canManage || assignedToCurrentUser));
+                  const canClaim = Boolean(canSubmit && !item.assignedTo && !item.assignedToEmail && !selectedSessionIsClosed);
+                  const canSubmitItemProof = Boolean(canSubmit && assignedToCurrentUser);
                   const directCheckAction = directCheckActions.get(item.id) || "";
+                  const assignmentAction = assignmentActions.get(item.id) || "";
                   const isDirectCheckPending = Boolean(directCheckAction);
+                  const isAssignmentPending = Boolean(assignmentAction);
                   return (
                     <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} key={item.id}>
                       <div className="session-item-main">
@@ -2878,7 +2963,7 @@ function SessionPanel({
                             <span>Assign</span>
                             <select
                               value={assignedMemberId}
-                              disabled={isSaving || isDirectCheckPending || selectedSessionIsClosed}
+                              disabled={isAssignmentPending || isDirectCheckPending || selectedSessionIsClosed}
                               onChange={event => updateSessionItemAssignment(item.id, event.target.value)}
                             >
                               <option value="">Unassigned</option>
@@ -2890,7 +2975,7 @@ function SessionPanel({
                             </select>
                           </label>
                         ) : null}
-                        <span className={`status-pill ${item.status}`}>{item.status}</span>
+                        <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
                         <button
                           className="btn btn-secondary btn-small session-row-details-action"
                           type="button"
@@ -2903,28 +2988,28 @@ function SessionPanel({
                         </button>
                         {canClaim ? (
                           <button
-                            className="btn btn-secondary btn-small session-row-secondary-action"
+                            className="btn btn-secondary btn-small session-row-claim-action"
                             type="button"
-                            disabled={isSaving || isDirectCheckPending}
+                            disabled={isAssignmentPending || isDirectCheckPending}
                             onClick={() => updateSessionItemAssignment(item.id, "self", { claim: true })}
                           >
                             <UserPlus aria-hidden="true" />
-                            <span>Claim item</span>
+                            <span>{assignmentAction === "claim" ? "Claiming..." : "Claim item"}</span>
                           </button>
                         ) : null}
                         {canManage && !selectedSessionIsClosed ? (
                           <>
-                            <button className="btn btn-secondary btn-small session-row-secondary-action" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => updateDirectCheck(item.id, "approved")}>
+                            <button className="btn btn-secondary btn-small session-row-secondary-action" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => updateDirectCheck(item.id, "approved")}>
                               <CheckCircle2 aria-hidden="true" />
                               <span>{directCheckAction === "approved" ? "Marking found..." : "Found"}</span>
                             </button>
-                            <button className="btn btn-secondary btn-small session-row-secondary-action" type="button" disabled={isSaving || isDirectCheckPending} onClick={() => updateDirectCheck(item.id, "not_found")}>
+                            <button className="btn btn-secondary btn-small session-row-secondary-action" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => updateDirectCheck(item.id, "not_found")}>
                               <span>{directCheckAction === "not_found" ? "Marking not found..." : "Not found"}</span>
                             </button>
                           </>
                         ) : null}
                         {canSubmitItemProof && selectedSession.status !== "closed" ? (
-                          <button className="btn btn-primary btn-small session-row-primary-action" type="button" disabled={isDirectCheckPending} onClick={() => setProofItemId(item.id)}>
+                          <button className="btn btn-primary btn-small session-row-primary-action" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => setProofItemId(item.id)}>
                             <Camera aria-hidden="true" />
                             <span>{needsMoreProof ? "Respond" : pendingProof ? "Add proof" : "Proof"}</span>
                           </button>
@@ -2946,7 +3031,7 @@ function SessionPanel({
                       ) : null}
                     </article>
                   );
-                }) : detailItems.length ? (
+                }) : actionableDetailItems.length ? (
                   <EmptyPanel
                     title={query.trim()
                       ? "No matching items"
@@ -2958,10 +3043,15 @@ function SessionPanel({
                     body={query.trim()
                       ? "Clear the search or try another assignment list."
                       : sessionItemFilter === "available"
-                        ? "Choose My work or Team to see claimed items."
+                        ? "Choose Mine or Others to see claimed items."
                         : sessionItemFilter === "mine"
                           ? "Claim an available item to start working it."
                           : "Items claimed by teammates will appear here."}
+                  />
+                ) : detailItems.length ? (
+                  <EmptyPanel
+                    title="All current work is complete"
+                    body="Open Completed below to review item details and submitted proof."
                   />
                 ) : (
                   <EmptyPanel
@@ -2976,6 +3066,35 @@ function SessionPanel({
                   />
                 )}
               </div>
+
+              {completedDetailItems.length ? (
+                <details className="session-completed-items" open={Boolean(query.trim() && visibleCompletedItems.length)}>
+                  <summary>
+                    <span>Completed</span>
+                    <strong>{completedDetailItems.length}</strong>
+                  </summary>
+                  <div className="session-completed-list">
+                    {visibleCompletedItems.length ? visibleCompletedItems.map(item => (
+                      <button
+                        className="session-completed-item"
+                        type="button"
+                        key={item.id}
+                        aria-label={`Open details for completed item ${itemDisplayName(item)}`}
+                        onClick={() => openItemDetail(item.id)}
+                      >
+                        <span>
+                          <strong>{itemDisplayName(item)}</strong>
+                          <small>{assignedPerson(item) ? `Completed by ${assignedPerson(item)}` : "Completed"}</small>
+                        </span>
+                        <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
+                        <ChevronRight aria-hidden="true" />
+                      </button>
+                    )) : (
+                      <p>No completed items match this search.</p>
+                    )}
+                  </div>
+                </details>
+              ) : null}
             </>
           ) : (
             <EmptyPanel
@@ -3001,7 +3120,7 @@ function SessionPanel({
         canManage={canManage}
         canSubmit={detailCanSubmitProof}
         canClaim={detailCanClaim}
-        isSaving={isSaving}
+        assignmentAction={detailItemAssignmentAction}
         directCheckAction={detailItemDirectCheckAction}
         isClosed={selectedSessionIsClosed}
         status={status}
@@ -3924,12 +4043,13 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
 
             {requestingSubmissionId === submission.id ? (
               <form className="proof-request-form" onSubmit={sendProofRequest}>
-                <div className="proof-request-chips" aria-label="Requested proof">
+                <div className="proof-request-chips" role="group" aria-label="Requested proof">
                   {proofRequestOptions.map(option => (
                     <button
                       className={proofRequestFields.includes(option.value) ? "active" : ""}
                       type="button"
                       key={option.value}
+                      aria-pressed={proofRequestFields.includes(option.value)}
                       onClick={() => toggleProofRequestField(option.value)}
                     >
                       {option.label}
@@ -5901,6 +6021,7 @@ function LeaderOverviewPanel({
   tenantSlug,
   me,
   query,
+  onQueryChange = () => {},
   canManage,
   preferredSessionId,
   onSessionChange,
@@ -5951,7 +6072,6 @@ function LeaderOverviewPanel({
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
     setPendingItems([]);
-    setAssignmentList("available");
 
     if (!sessionId) return undefined;
     if (preferredSessionId !== sessionId) onSessionChange?.(sessionId);
@@ -5968,6 +6088,13 @@ function LeaderOverviewPanel({
           .sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b))
           .map(item => ({ ...item, session: rowSession }));
         setPendingItems(rows);
+        setAssignmentList(
+          rows.some(item => sessionItemAssignmentBucket(item, me) === "mine")
+            ? "mine"
+            : rows.some(item => sessionItemAssignmentBucket(item, me) === "available")
+              ? "available"
+              : "team"
+        );
         setStatus({ text: "", isError: false });
       } catch (error) {
         if (!ignore && requestId === detailRequestRef.current) {
@@ -5980,7 +6107,7 @@ function LeaderOverviewPanel({
     return () => {
       ignore = true;
     };
-  }, [selectedSession?.id, tenantSlug, token, onSessionChange]);
+  }, [selectedSession?.id, tenantSlug, token, onSessionChange, me?.user?.id, me?.user?.email]);
 
   function itemTitle(item) {
     return item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Packet row";
@@ -5991,9 +6118,9 @@ function LeaderOverviewPanel({
   }
 
   const assignmentListOptions = [
-    ["available", "Available"],
-    ["mine", "My work"],
-    ["team", "Team"]
+    ["available", "Unclaimed"],
+    ["mine", "Mine"],
+    ["team", "Others"]
   ];
   const assignmentCounts = {
     available: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "available").length,
@@ -6038,8 +6165,8 @@ function LeaderOverviewPanel({
     <div className="leader-dashboard">
       <div className="leader-page-heading">
         <div>
-          <h1>Leader Dashboard</h1>
-          <p>Manage active inventories and review submitted proof.</p>
+          <h1>{canManage ? "Leader Dashboard" : "Inventory Dashboard"}</h1>
+          <p>{canManage ? "Manage active inventories and review submitted proof." : "Claim inventory work and submit proof from one place."}</p>
         </div>
         <div className="leader-page-actions">
           {canManage ? (
@@ -6048,16 +6175,10 @@ function LeaderOverviewPanel({
                 <Plus aria-hidden="true" />
                 <span>Start new inventory</span>
               </button>
-              <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={onOpenUpload}>
+              <button className="btn btn-secondary" type="button" onClick={onOpenUpload}>
                 <FileUp aria-hidden="true" />
                 <span>Upload packet</span>
               </button>
-              <ResponsiveActionMenu className="mobile-secondary-actions">
-                <button type="button" onClick={onOpenUpload}>
-                  <FileUp aria-hidden="true" />
-                  <span>Upload packet</span>
-                </button>
-              </ResponsiveActionMenu>
             </>
           ) : (
             <button className="btn btn-primary" type="button" onClick={onOpenSessions}>
@@ -6068,7 +6189,7 @@ function LeaderOverviewPanel({
         </div>
       </div>
 
-      <div className="leader-metric-strip" aria-label="Inventory overview">
+      <div className={`leader-metric-strip ${canManage ? "" : "contributor"}`} aria-label="Inventory overview">
         <div>
           <strong>{openSessions.length}</strong>
           <span>Open sessions</span>
@@ -6077,10 +6198,12 @@ function LeaderOverviewPanel({
           <strong>{pendingItems.length}</strong>
           <span>Open items</span>
         </div>
-        <div>
-          <strong>{reviewRowCount}</strong>
-          <span>Needs review</span>
-        </div>
+        {canManage ? (
+          <div>
+            <strong>{reviewRowCount}</strong>
+            <span>Needs review</span>
+          </div>
+        ) : null}
         <div>
           <strong>{overallProgress}%</strong>
           <span>Found</span>
@@ -6114,7 +6237,7 @@ function LeaderOverviewPanel({
           </div>
           {selectedSession ? (
             <button className="btn btn-primary" type="button" onClick={() => onOpenSession(selectedSession.id)}>
-              <span>Continue inventory</span>
+              <span>Open session</span>
             </button>
           ) : canManage ? (
             <button className="btn btn-primary" type="button" onClick={onCreateSession}>
@@ -6125,7 +6248,7 @@ function LeaderOverviewPanel({
         </div>
       </section>
 
-      <div className="leader-dashboard-grid">
+      <div className={`leader-dashboard-grid ${canManage ? "" : "single"}`}>
         <section className="leader-card" aria-label="Pending inventory results">
           <div className="leader-card-header">
             <span className="leader-card-icon">
@@ -6136,14 +6259,14 @@ function LeaderOverviewPanel({
               <p>{selectedSession ? selectedSession.name : "No active inventory selected."}</p>
             </div>
             <button className="btn btn-secondary btn-small" type="button" onClick={() => selectedSession ? onOpenSession(selectedSession.id) : onOpenSessions()}>
-              <span>View session</span>
+              <span>Open session</span>
             </button>
           </div>
 
           {selectedSession ? (
             <div className="session-filter-strip leader-work-tabs" role="group" aria-label="Dashboard work assignment lists">
               {assignmentListOptions.map(([value, label]) => (
-                <button className={assignmentList === value ? "active" : ""} type="button" key={value} onClick={() => setAssignmentList(value)}>
+                <button className={assignmentList === value ? "active" : ""} type="button" key={value} aria-pressed={assignmentList === value} onClick={() => setAssignmentList(value)}>
                   <span>{label}</span>
                   <strong>{assignmentCounts[value]}</strong>
                 </button>
@@ -6168,7 +6291,7 @@ function LeaderOverviewPanel({
                     </div>
                   </div>
                   <span>{itemLocation(item)}</span>
-                  <span className={`status-pill ${item.status}`}>{item.status}</span>
+                  <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
                   <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(item.session?.id, item.id)}>
                     <span>Open item</span>
                   </button>
@@ -6179,21 +6302,37 @@ function LeaderOverviewPanel({
                 title={hasSearchQuery
                   ? "No matching work"
                   : assignmentList === "available"
-                    ? "Nothing available to claim"
+                    ? "Nothing unclaimed"
                     : assignmentList === "mine"
                       ? "Nothing assigned to you"
-                      : "No team assignments"}
+                      : "Nothing assigned to others"}
                 body={hasSearchQuery
                   ? "Clear the dashboard search or try a different item or location."
                   : selectedSession
                     ? "Choose another assignment list or open the session to see completed items."
                     : "Start or reopen an inventory session to see current work."}
+                action={hasSearchQuery ? (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onQueryChange("")}>
+                    <RefreshCw aria-hidden="true" />
+                    <span>Reset dashboard search</span>
+                  </button>
+                ) : selectedSession ? (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(selectedSession.id)}>
+                    <span>Browse session work</span>
+                  </button>
+                ) : canManage ? (
+                  <button className="btn btn-primary btn-small" type="button" onClick={onCreateSession}>
+                    <Plus aria-hidden="true" />
+                    <span>Start inventory</span>
+                  </button>
+                ) : null}
               />
             )}
           </div>
         </section>
 
-        <section className="leader-card" aria-label="Dashboard review results">
+        {canManage ? (
+          <section className="leader-card" aria-label="Dashboard review results">
           <div className="leader-card-header">
             <span className="leader-card-icon">
               <ClipboardList aria-hidden="true" />
@@ -6202,15 +6341,13 @@ function LeaderOverviewPanel({
               <h2>Review</h2>
               <p>Leader approval required.</p>
             </div>
-            {canManage ? (
-              <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
-                <span>View all</span>
-              </button>
-            ) : null}
+            <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
+              <span>Open review queue</span>
+            </button>
           </div>
 
           <div className="leader-table">
-            {canManage && visibleSubmissions.length ? visibleSubmissions.map(submission => {
+            {visibleSubmissions.length ? visibleSubmissions.map(submission => {
               const photo = submission.photos?.[0]?.url;
               return (
                 <article className="leader-table-row review-row" key={submission.id}>
@@ -6232,12 +6369,23 @@ function LeaderOverviewPanel({
               );
             }) : (
               <EmptyPanel
-                title={canManage && hasSearchQuery ? "No matching review work" : canManage ? "No proof waiting" : "Review is leader-only"}
-                body={canManage && hasSearchQuery ? "Clear the dashboard search or try a packet line, submitter, serial, or proof note." : canManage ? "New submissions will appear here." : "Open inventory sessions to see assigned work."}
+                title={hasSearchQuery ? "No matching review work" : "No proof waiting"}
+                body={hasSearchQuery ? "Clear the dashboard search or try a packet line, submitter, serial, or proof note." : "New submissions will appear here."}
+                action={hasSearchQuery ? (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onQueryChange("")}>
+                    <RefreshCw aria-hidden="true" />
+                    <span>Reset dashboard search</span>
+                  </button>
+                ) : (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
+                    <span>Open review queue</span>
+                  </button>
+                )}
               />
             )}
           </div>
         </section>
+        ) : null}
       </div>
 
       <StatusLine status={status} />
@@ -6662,7 +6810,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
   );
 }
 
-function ReportsPanel({ token, tenantSlug, query }) {
+function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
   const [sessions, setSessions] = useState([]);
   const [rows, setRows] = useState([]);
   const [sessionFilter, setSessionFilter] = useState("all");
@@ -6688,6 +6836,13 @@ function ReportsPanel({ token, tenantSlug, query }) {
   useEffect(() => {
     loadReports();
   }, [tenantSlug, token]);
+
+  function resetReportFilters() {
+    setSessionFilter("all");
+    setLifecycleFilter("all");
+    setResultFilter("all");
+    onQueryChange("");
+  }
 
   const scopedRows = useMemo(() => rows.filter(item => {
     if (sessionFilter !== "all" && item.sessionId !== sessionFilter) return false;
@@ -6811,7 +6966,7 @@ function ReportsPanel({ token, tenantSlug, query }) {
             ["missing", "Missing"],
             ["proof", "Proof work"]
           ].map(([value, label]) => (
-            <button className={resultFilter === value ? "active" : ""} type="button" key={value} onClick={() => setResultFilter(value)}>
+            <button className={resultFilter === value ? "active" : ""} type="button" key={value} aria-pressed={resultFilter === value} onClick={() => setResultFilter(value)}>
               <span>{label}</span><strong>{resultCounts[value]}</strong>
             </button>
           ))}
@@ -6857,7 +7012,16 @@ function ReportsPanel({ token, tenantSlug, query }) {
             </article>
           );
         }) : (
-          <EmptyPanel title="No report rows" body="Adjust the session, status, proof, or workspace search filters." />
+          <EmptyPanel
+            title="No report rows"
+            body="Adjust the session, status, proof, or workspace search filters."
+            action={(
+              <button className="btn btn-secondary btn-small" type="button" onClick={resetReportFilters}>
+                <RefreshCw aria-hidden="true" />
+                <span>Reset filters</span>
+              </button>
+            )}
+          />
         )}
         {!isPrintTarget && visibleRows.length > renderedRows.length ? (
           <div className="reports-row-limit">Showing the first {renderedRows.length.toLocaleString()} rows. Export CSV or narrow the filters for the full result.</div>
@@ -7918,9 +8082,17 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   function openNotification(notification) {
-    const tab = notification?.action?.tab;
+    const action = notification?.action || {};
+    const tab = action.tab;
     if (tab === "review" && isTenantAdmin) {
       selectTenantTab("review");
+      return;
+    }
+
+    const sessionId = action.sessionId || notification?.sessionId || "";
+    const sessionItemId = action.sessionItemId || notification?.sessionItemId || "";
+    if (sessionId) {
+      openActivitySession(sessionId, sessionItemId);
       return;
     }
 
@@ -8042,7 +8214,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               <button
                 className="icon-button leader-notification-button"
                 type="button"
-                aria-label="Notifications"
+                aria-label={notificationUnreadCount ? `Notifications, ${notificationUnreadCount} unread` : "Notifications"}
                 aria-expanded={isNotificationsOpen}
                 onClick={() => {
                   const nextOpen = !isNotificationsOpen;
@@ -8205,6 +8377,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               tenantSlug={tenantSlug}
               me={me}
               query={leaderQuery}
+              onQueryChange={setLeaderQuery}
               canManage={isTenantAdmin}
               preferredSessionId={preferredSessionId}
               onSessionChange={setPreferredSessionId}
@@ -8237,7 +8410,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           ) : null}
 
           {activeTab === "reports" && isTenantAdmin ? (
-            <ReportsPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} />
+            <ReportsPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} onQueryChange={setLeaderQuery} />
           ) : null}
 
           {activeTab === "review" && isTenantAdmin ? (

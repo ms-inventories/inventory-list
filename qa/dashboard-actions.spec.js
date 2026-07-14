@@ -112,12 +112,12 @@ test.describe("dashboard action destinations", () => {
       await sessionSelector.selectOption(createdSession.id);
       await expect(sessionSelector).toHaveValue(createdSession.id);
 
-      await activeInventory.getByRole("button", { name: "Continue inventory" }).click();
+      await activeInventory.getByRole("button", { name: "Open session" }).click();
 
       await expectSessionsPageWithoutCreateDialog(page);
       await expect(
         page.locator(".session-summary").getByText(createdSession.name, { exact: true }),
-        "Continue inventory should preserve the selected active session id"
+        "Open session should preserve the selected active session id"
       ).toBeVisible();
     } finally {
       await deleteEmptySession(request, testInfo, createdSession.id);
@@ -158,7 +158,7 @@ test.describe("dashboard action destinations", () => {
     await signInAsRoot(page, testInfo);
 
     const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
-    await pendingResults.getByRole("button", { name: /^(View session|Open sessions)$/ }).click();
+    await pendingResults.getByRole("button", { name: "Open session" }).click();
 
     await expectSessionsPageWithoutCreateDialog(page);
   });

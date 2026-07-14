@@ -202,7 +202,7 @@ test.describe("session claim API", () => {
       const activeInventory = page.getByRole("region", { name: "Active inventory" });
       const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
       await selector.selectOption(scenario.sessionId);
-      await activeInventory.getByRole("button", { name: "Continue inventory" }).click();
+      await activeInventory.getByRole("button", { name: "Open session" }).click();
 
       const row = page.locator(".session-item", { hasText: `QA-CLAIM-${suffix.toUpperCase()}` });
       await expect(row).toBeVisible();
@@ -211,8 +211,22 @@ test.describe("session claim API", () => {
       await drawer.getByRole("button", { name: "Claim item" }).click();
 
       await expect(drawer.getByRole("status")).toContainText("Item claimed.");
-      await expect(drawer.locator(".proof-form")).toBeVisible();
-      await expect(page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /My work/ })).toHaveClass(/active/);
+      const proofForm = drawer.locator(".proof-form");
+      await expect(proofForm).toBeVisible();
+      const foundOutcome = proofForm.getByRole("button", { name: "Found", exact: true });
+      const missingOutcome = proofForm.getByRole("button", { name: "Not found", exact: true });
+      await expect(foundOutcome).toHaveAttribute("aria-pressed", "true");
+      await missingOutcome.click();
+      await expect(missingOutcome).toHaveAttribute("aria-pressed", "true");
+      await expect(foundOutcome).toHaveAttribute("aria-pressed", "false");
+      await expect(proofForm.getByRole("textbox", { name: "Location" })).toBeVisible();
+      await expect(proofForm.getByRole("textbox", { name: "Serial number" })).toBeVisible();
+      await expect(proofForm.getByRole("textbox", { name: "Note" })).toBeVisible();
+      const photoInput = proofForm.getByLabel("Add proof photo");
+      await expect(photoInput).toBeEnabled();
+      await photoInput.focus();
+      await expect(photoInput).toBeFocused();
+      await expect(page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Mine\b/ })).toHaveClass(/active/);
       await expect(page.getByText("Validation failed", { exact: true })).toHaveCount(0);
 
       const saved = await sessionItem(request, scenario, platformAdmin);

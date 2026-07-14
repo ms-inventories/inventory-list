@@ -193,7 +193,7 @@ test.describe("session item details", () => {
     await signInAsAdmin(page);
     await openSessions(page);
     await selectSession(page, scenario);
-    await page.getByRole("button", { name: /^Team\b/ }).click();
+    await page.getByRole("button", { name: /^Others\b/ }).click();
 
     const row = page.locator(".session-item", { hasText: scenario.packetLine });
     const detailsButton = row.getByRole("button", { name: `Open details for ${scenario.title}` });
@@ -227,9 +227,7 @@ test.describe("session item details", () => {
     await expect(viewer).toBeHidden();
     await expect(evidenceButton).toBeFocused();
 
-    await drawer.getByRole("button", { name: "Add proof" }).click();
-    await expect(drawer.getByPlaceholder("What this response shows")).toBeVisible();
-    await drawer.getByRole("button", { name: "Cancel" }).click();
+    await expect(drawer.getByRole("button", { name: /Add proof|Respond with proof/ })).toHaveCount(0);
 
     const assignment = drawer.locator("footer").getByRole("combobox");
     await expect(assignment).toHaveValue(scenario.ncoMemberId);
@@ -289,7 +287,7 @@ test.describe("session item details", () => {
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     await openSessions(page);
     await selectSession(page, scenario, { closed: true });
-    await page.getByRole("button", { name: /^Team\b/ }).click();
+    await page.getByRole("button", { name: /^Others\b/ }).click();
     await page.locator(".session-item", { hasText: scenario.packetLine }).getByRole("button", { name: `Open details for ${scenario.title}` }).click();
     drawer = page.getByRole("dialog", { name: scenario.title });
     await expect(drawer).toBeVisible();

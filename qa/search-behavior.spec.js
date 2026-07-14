@@ -25,6 +25,9 @@ test.describe("page-scoped search", () => {
     const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
     const dashboardReview = page.getByRole("region", { name: "Dashboard review results" });
     await expect(pendingResults.getByText("Field Radio", { exact: true })).toBeVisible();
+    const fieldRadioRow = pendingResults.locator(".leader-table-row", { hasText: "Field Radio" });
+    await expect(fieldRadioRow.getByText("Needs review", { exact: true })).toBeVisible();
+    await expect(fieldRadioRow.getByText("needs_review", { exact: true })).toHaveCount(0);
     await expect(dashboardReview.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
 
     const dashboardSearch = page.getByRole("searchbox", { name: "Search dashboard" });
@@ -48,10 +51,18 @@ test.describe("page-scoped search", () => {
     await expect(sessionResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
     await expect(sessionResults.getByText(/G18358 GENERATOR SET SEARCH FIXTURE/)).toHaveCount(0);
     const assignmentLists = page.getByRole("group", { name: "Work assignment lists" });
-    await assignmentLists.getByRole("button", { name: /Team/ }).click();
+    const unclaimedList = assignmentLists.getByRole("button", { name: /^Unclaimed\b/ });
+    const othersList = assignmentLists.getByRole("button", { name: /^Others\b/ });
+    await expect(unclaimedList).toHaveAttribute("aria-pressed", "true");
+    await expect(othersList).toHaveAttribute("aria-pressed", "false");
+    await othersList.click();
+    await expect(othersList).toHaveAttribute("aria-pressed", "true");
     await expect(sessionResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toHaveCount(0);
-    await assignmentLists.getByRole("button", { name: /Available/ }).click();
+    await unclaimedList.click();
     await expect(sessionResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
+    const radioSessionRow = sessionResults.locator(".session-item", { hasText: "R20684 RADIO SET SEARCH FIXTURE" });
+    await expect(radioSessionRow.getByText("Needs review", { exact: true })).toBeVisible();
+    await expect(radioSessionRow.getByText("needs_review", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     await expect(sessionSearch).toHaveValue("");
     await expect(sessionResults.getByText(/G18358 GENERATOR SET SEARCH FIXTURE/)).toBeVisible();

@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test";
 
 const TENANT_URL = process.env.QA_TENANT_URL || "http://ms.localhost:5175/#/admin";
+const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
+
+const qaAdminIdentity = {
+  sub: "qa-lead",
+  email: "qa-lead@876en.test",
+  name: "QA Platoon Admin",
+  groups: ["876en-ms", "876en-platoon-admin"]
+};
 
 const qaNcoIdentity = {
   sub: "qa-nco",
@@ -8,6 +16,24 @@ const qaNcoIdentity = {
   name: "QA NCO",
   groups: ["876en-ms"]
 };
+
+function qaHeaders(identity) {
+  return {
+    "X-Dev-Sub": identity.sub,
+    "X-Dev-Email": identity.email,
+    "X-Dev-Name": identity.name,
+    "X-Dev-Groups": identity.groups.join(","),
+    "X-Tenant-Slug": "ms"
+  };
+}
+
+async function responseJson(response) {
+  if (!response.ok()) {
+    const body = await response.text();
+    expect(response.ok(), body).toBeTruthy();
+  }
+  return response.json();
+}
 
 async function signInWithQaPersona(page, personaName) {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
@@ -73,7 +99,7 @@ async function addPacketRows(page) {
 }
 
 test.describe("session assignment", () => {
-  test("platoon admins can assign rows and contributors can filter their work", async ({ page }, testInfo) => {
+  test("platoon admins can assign rows and contributors can filter their work", async ({ page, request }, testInfo) => {
     const sessionName = `QA assignment ${testInfo.project.name} ${Date.now()}`;
 
     await page.goto(TENANT_URL);
@@ -87,7 +113,7 @@ test.describe("session assignment", () => {
       await expect(toolKitRow.locator(".session-assignment-control")).toBeHidden();
       await expect(toolKitRow.getByRole("button", { name: "Found", exact: true })).toBeHidden();
       await expect(toolKitRow.getByRole("button", { name: "Not found", exact: true })).toBeHidden();
-      await expect(toolKitRow.getByRole("button", { name: /Proof/ })).toBeVisible();
+      await expect(toolKitRow.getByRole("button", { name: "Claim item" })).toBeVisible();
       await toolKitRow.getByRole("button", { name: /Open details for/ }).click();
       const drawer = page.getByRole("dialog");
       await drawer.locator("footer").getByRole("combobox").selectOption({ label: "QA NCO" });
@@ -102,28 +128,59 @@ test.describe("session assignment", () => {
 
     await seedQaSession(page, qaNcoIdentity);
     await page.goto(TENANT_URL);
-    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
     await openSessions(page);
     await page.locator(".session-row", { hasText: sessionName }).click();
-    await page.getByRole("button", { name: /My work/ }).click();
+    await page.getByRole("button", { name: /^Mine\b/ }).click();
 
     await expect(page.getByText("Assigned to QA NCO")).toBeVisible();
     await expect(page.getByText("TOOL KIT CARPENTERS")).toBeVisible();
-    await page.getByRole("button", { name: /Available/ }).click();
+    await page.getByRole("button", { name: /^Unclaimed\b/ }).click();
     const generatorRow = page.locator(".session-item", { hasText: "TAMPER,VIBRATING" }).first();
     if (testInfo.project.name === "mobile-chrome") {
-      await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeHidden();
-      await generatorRow.getByRole("button", { name: /Open details for/ }).click();
-      const drawer = page.getByRole("dialog");
-      await drawer.getByRole("button", { name: "Claim item" }).click();
-      await expect(drawer.getByRole("status")).toContainText("Item claimed.");
-      await drawer.getByRole("button", { name: "Close item details" }).click();
+      await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeVisible();
+      await generatorRow.getByRole("button", { name: "Claim item" }).click();
+      await expect(page.getByRole("status")).toContainText("Item claimed.");
     } else {
       await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeVisible();
       await generatorRow.getByRole("button", { name: "Claim item" }).click();
     }
     await expect(generatorRow.getByText("Assigned to QA NCO")).toBeVisible();
-    await page.getByRole("button", { name: /My work/ }).click();
+    await page.getByRole("button", { name: /^Mine\b/ }).click();
     await expect(page.locator(".session-item", { hasText: "TAMPER,VIBRATING" })).toBeVisible();
+
+    const sessions = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
+      headers: qaHeaders(qaAdminIdentity)
+    }));
+    const session = sessions.sessions.find(candidate => candidate.name === sessionName);
+    expect(session?.id).toBeTruthy();
+    const detail = await responseJson(await request.get(`${API_URL}/inventory/sessions/${session.id}`, {
+      headers: qaHeaders(qaAdminIdentity)
+    }));
+    const generator = detail.items.find(item => item.packetLine.includes("TAMPER,VIBRATING"));
+    expect(generator?.id).toBeTruthy();
+    await responseJson(await request.patch(`${API_URL}/session-items/${generator.id}/direct-check`, {
+      headers: qaHeaders(qaAdminIdentity),
+      data: { status: "approved" }
+    }));
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
+    await openSessions(page);
+    await page.locator(".session-row", { hasText: sessionName }).click();
+    const sessionResults = page.getByRole("region", { name: "Session row results" });
+    for (const name of [/^Mine\b/, /^Unclaimed\b/, /^Others\b/]) {
+      await page.getByRole("button", { name }).click();
+      await expect(sessionResults.getByText(/TAMPER,VIBRATING/)).toHaveCount(0);
+    }
+    const completed = page.locator(".session-completed-items");
+    await completed.locator("summary").click();
+    await expect(completed.getByText(/TAMPER,VIBRATING/)).toBeVisible();
+    await expect(completed.getByRole("button", { name: /Open details for completed item/ })).toBeVisible();
+
+    await request.patch(`${API_URL}/inventory/sessions/${session.id}`, {
+      headers: qaHeaders(qaAdminIdentity),
+      data: { status: "closed" }
+    });
   });
 });
