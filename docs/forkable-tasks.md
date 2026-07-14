@@ -968,9 +968,9 @@ Definition of done:
 
 Goal: make newsletter administration clearer on desktop and usable on phones.
 
-Status: implemented locally and QA-covered, awaiting consolidated ACP. Coordinate before changing newsletter admin tabs, subscriber review flows, or the current shared worktree.
+Status: complete and QA-verified, 2026-07-14. Newsletter editors and subscriber review use synchronous scoped action guards, lock conflicting fields without freezing unrelated subscriber rows, retain local success/failure feedback through refreshes, and fence stale loads. Publishing is single-shot in both the UI and API, and published issues are read-only, so the saved record cannot drift from what recipients received or send a second delivery accidentally.
 
-Coordination note: newsletter admin mobile overflow, queue-first subscriber filtering, compact email status treatment, subscriber details disclosure, and public newsletter request helper copy are implemented and QA-covered.
+Coordination note: newsletter admin mobile overflow, queue-first subscriber filtering, compact email status treatment, subscriber details disclosure, public newsletter request helper copy, and duplicate-safe content/issue/review actions are implemented and QA-covered.
 
 Primary files:
 
@@ -987,6 +987,8 @@ Subtasks:
 - [x] Collapse subscriber delivery/review history behind details.
 - [x] Replace repeated delivery warning with compact status treatment.
 - [x] Shorten public signup placeholders and add helper text.
+- [x] Make save, remove, test-send, publish, refresh, and subscriber review actions duplicate-safe with local recovery feedback.
+- [x] Prevent repeated or concurrent publish requests from delivering an already-published issue again, and keep published issue content read-only.
 - [x] Verify desktop and mobile newsletter screenshots.
 
 Definition of done:
@@ -1125,7 +1127,7 @@ Definition of done:
 
 Goal: every async action should feel deliberate.
 
-Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel, leader start/session/packet-import, and Review Queue decision/request/match actions have the same duplicate protection, field/control locking, stale-response fencing, and action-specific feedback with desktop/mobile QA. Legacy viewer login and public unsubscribe also reject repeat submissions while pending. Newsletter and remaining lower-frequency multi-row pending-state follow-ups remain.
+Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel, leader start/session/packet-import, Review Queue decision/request/match, and newsletter content/issue/subscriber actions have the same duplicate protection, scoped field/control locking, stale-response fencing, and action-specific feedback with desktop/mobile QA. Newsletter publishing is also single-shot at the API boundary. Legacy viewer login and public unsubscribe reject repeat submissions while pending. Remaining lower-frequency platform/admin follow-ups remain.
 
 Primary files:
 

@@ -110,6 +110,7 @@ test.describe("QA smoke", () => {
     await expect(page.getByRole("heading", { name: "Newsletter issues", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "New issue" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Export deliveries" })).toBeVisible();
+    await page.getByRole("button", { name: /^Black Shadow Family Update/ }).click();
     await expect(page.getByRole("heading", { name: "Black Shadow Family Update" })).toBeVisible();
     await expect(page.getByText("Delivery records", { exact: true })).toBeVisible();
 
@@ -117,7 +118,7 @@ test.describe("QA smoke", () => {
     await page.getByRole("button", { name: "Send test" }).click();
     await expect(page.getByText(/Test email was not sent: smtp_not_configured|Test email sent to/)).toBeVisible();
 
-    await page.getByRole("button", { name: "Publish", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Published", exact: true })).toBeDisabled();
     await expect(page.getByText(/recipient|No delivery records yet/)).toBeVisible();
 
     await page.getByRole("button", { name: "Subscribers", exact: true }).click();

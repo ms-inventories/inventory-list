@@ -4849,13 +4849,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [subscriberStatusFilter, setSubscriberStatusFilter] = useState("pending");
   const [reviewNotes, setReviewNotes] = useState({});
   const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
-  const [isSaving, setIsSaving] = useState(false);
-  const [isPublishing, setIsPublishing] = useState(false);
-  const [isSendingTest, setIsSendingTest] = useState(false);
-  const [isSavingContent, setIsSavingContent] = useState(false);
-  const [isDeletingContent, setIsDeletingContent] = useState(false);
-  const [reviewingSubscriberId, setReviewingSubscriberId] = useState("");
-  const [reviewingSubscriberDecision, setReviewingSubscriberDecision] = useState("");
+  const [actionStatus, setActionStatus] = useState({ scope: "", text: "", isError: false });
+  const [newsletterActions, setNewsletterActions] = useState(() => new Map());
+  const newsletterActionRef = useRef(new Map());
+  const newsletterLoadRequestRef = useRef(0);
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
   const selectedContentBlock = contentBlocks.find(block => block.id === selectedContentBlockId) || null;
@@ -4895,11 +4892,49 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     ? deliveries.filter(delivery => delivery.issueId === selectedIssueId)
     : [];
   const previewLines = newsletterBodyParagraphs(form.body);
+  const contentAction = newsletterActions.get("content") || "";
+  const issueAction = newsletterActions.get("issue") || "";
+  const refreshAction = newsletterActions.get("refresh") || "";
+  const hasNewsletterAction = newsletterActions.size > 0;
 
-  async function loadNewsletter() {
+  function beginNewsletterAction(scope, action) {
+    if (!scope || newsletterActionRef.current.has(scope)) return false;
+    if (scope === "refresh" && newsletterActionRef.current.size) return false;
+    if (scope !== "refresh" && newsletterActionRef.current.has("refresh")) return false;
+    newsletterActionRef.current.set(scope, action);
+    setNewsletterActions(current => {
+      const next = new Map(current);
+      next.set(scope, action);
+      return next;
+    });
+    return true;
+  }
+
+  function finishNewsletterAction(scope, action) {
+    if (newsletterActionRef.current.get(scope) !== action) return;
+    newsletterActionRef.current.delete(scope);
+    setNewsletterActions(current => {
+      const next = new Map(current);
+      if (next.get(scope) === action) next.delete(scope);
+      return next;
+    });
+  }
+
+  function showActionStatus(scope, text, isError = false) {
+    setActionStatus({ scope, text, isError });
+  }
+
+  async function loadNewsletter({
+    quiet = false,
+    preferredContentBlockId = selectedContentBlockId,
+    preferredIssueId = selectedIssueId
+  } = {}) {
+    const requestId = newsletterLoadRequestRef.current + 1;
+    newsletterLoadRequestRef.current = requestId;
     try {
-      setStatus({ text: "Loading newsletter...", isError: false });
+      if (!quiet) setStatus({ text: "Loading newsletter...", isError: false });
       const data = await apiRequest("/newsletter/admin", { token });
+      if (requestId !== newsletterLoadRequestRef.current) return { ok: false, stale: true };
       const nextIssues = data.issues || [];
       const nextContentBlocks = data.contentBlocks || [];
       const nextSubscribers = data.subscribers || [];
@@ -4911,23 +4946,30 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setSubscriberStats(data.subscriberStats || { pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
       setDeliverySettings(data.deliverySettings || { emailConfigured: false });
 
-      const hasSelectedContentBlock = selectedContentBlockId && nextContentBlocks.some(block => block.id === selectedContentBlockId);
+      const hasSelectedContentBlock = preferredContentBlockId && nextContentBlocks.some(block => block.id === preferredContentBlockId);
       if (!hasSelectedContentBlock) {
         const firstBlock = nextContentBlocks[0] || null;
         setSelectedContentBlockId(firstBlock?.id || "");
         setContentForm(frgContentForm(firstBlock || frgContentTemplate));
+      } else if (preferredContentBlockId !== selectedContentBlockId) {
+        setSelectedContentBlockId(preferredContentBlockId);
       }
 
-      const hasSelectedIssue = selectedIssueId && nextIssues.some(issue => issue.id === selectedIssueId);
+      const hasSelectedIssue = preferredIssueId && nextIssues.some(issue => issue.id === preferredIssueId);
       if (!hasSelectedIssue) {
         const firstIssue = nextIssues[0] || null;
         setSelectedIssueId(firstIssue?.id || "");
         setForm(newsletterIssueForm(firstIssue || newsletterDraftTemplate));
+      } else if (preferredIssueId !== selectedIssueId) {
+        setSelectedIssueId(preferredIssueId);
       }
 
-      setStatus({ text: "", isError: false });
+      if (!quiet) setStatus({ text: "", isError: false });
+      return { ok: true };
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (requestId !== newsletterLoadRequestRef.current) return { ok: false, stale: true };
+      if (!quiet) setStatus({ text: getApiErrorMessage(error), isError: true });
+      return { ok: false, error };
     }
   }
 
@@ -4943,40 +4985,60 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setContentForm(current => ({ ...current, [key]: value }));
   }
 
+  function selectNewsletterSection(section) {
+    if (newsletterActionRef.current.size) return;
+    setActiveSection(section);
+    setActionStatus({ scope: "", text: "", isError: false });
+    setStatus({ text: "", isError: false });
+  }
+
   function selectContentBlock(block) {
+    if (newsletterActionRef.current.size) return;
     setSelectedContentBlockId(block.id);
     setContentForm(frgContentForm(block));
+    setActionStatus(current => current.scope === "content" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
   }
 
   function startNewContentBlock() {
+    if (newsletterActionRef.current.size) return;
     setSelectedContentBlockId("");
     setContentForm(frgContentForm());
     setActiveSection("content");
+    setActionStatus(current => current.scope === "content" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "New public content block ready", isError: false });
   }
 
   function selectIssue(issue) {
+    if (newsletterActionRef.current.size) return;
     setSelectedIssueId(issue.id);
     setForm(newsletterIssueForm(issue));
+    setActionStatus(current => current.scope === "issue" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
   }
 
   function startNewDraft() {
+    if (newsletterActionRef.current.size) return;
     setSelectedIssueId("");
     setForm(newsletterIssueForm());
+    setActionStatus(current => current.scope === "issue" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "New draft ready", isError: false });
   }
 
   async function saveContentBlock(event) {
     event.preventDefault();
-    setIsSavingContent(true);
+    const scope = "content";
+    const action = "save";
+    if (!beginNewsletterAction(scope, action)) return;
+    const contentBlockId = selectedContentBlockId;
+    showActionStatus(scope, contentBlockId ? "Saving block..." : "Creating block...");
+    setStatus({ text: "", isError: false });
     try {
       const payload = frgContentPayload(contentForm);
       const data = await apiRequest(
-        selectedContentBlockId ? `/newsletter/admin/content-blocks/${selectedContentBlockId}` : "/newsletter/admin/content-blocks",
+        contentBlockId ? `/newsletter/admin/content-blocks/${contentBlockId}` : "/newsletter/admin/content-blocks",
         {
-          method: selectedContentBlockId ? "PATCH" : "POST",
+          method: contentBlockId ? "PATCH" : "POST",
           token,
           body: payload
         }
@@ -4990,32 +5052,45 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       });
       setSelectedContentBlockId(savedBlock.id);
       setContentForm(frgContentForm(savedBlock));
-      setStatus({ text: savedBlock.status === "published" ? "Public content published" : "Public content saved", isError: false });
-      await loadNewsletter();
+      const refreshed = await loadNewsletter({ quiet: true, preferredContentBlockId: savedBlock.id });
+      if (!refreshed.ok && !refreshed.stale) {
+        showActionStatus(scope, `${savedBlock.status === "published" ? "Published" : "Saved"}, but the latest list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
+      } else {
+        showActionStatus(scope, savedBlock.status === "published" ? "Public content published." : "Public content saved.");
+      }
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      showActionStatus(scope, getApiErrorMessage(error), true);
     } finally {
-      setIsSavingContent(false);
+      finishNewsletterAction(scope, action);
     }
   }
 
   async function deleteContentBlock() {
     if (!selectedContentBlockId) return;
-    setIsDeletingContent(true);
+    const scope = "content";
+    const action = "delete";
+    if (!beginNewsletterAction(scope, action)) return;
+    const contentBlockId = selectedContentBlockId;
+    showActionStatus(scope, "Removing block...");
+    setStatus({ text: "", isError: false });
     try {
-      await apiRequest(`/newsletter/admin/content-blocks/${selectedContentBlockId}`, {
+      await apiRequest(`/newsletter/admin/content-blocks/${contentBlockId}`, {
         method: "DELETE",
         token
       });
-      setContentBlocks(current => current.filter(block => block.id !== selectedContentBlockId));
+      setContentBlocks(current => current.filter(block => block.id !== contentBlockId));
       setSelectedContentBlockId("");
       setContentForm(frgContentForm());
-      setStatus({ text: "Public content removed", isError: false });
-      await loadNewsletter();
+      const refreshed = await loadNewsletter({ quiet: true, preferredContentBlockId: "" });
+      if (!refreshed.ok && !refreshed.stale) {
+        showActionStatus(scope, `Block removed, but the latest list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
+      } else {
+        showActionStatus(scope, "Public content removed.");
+      }
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      showActionStatus(scope, getApiErrorMessage(error), true);
     } finally {
-      setIsDeletingContent(false);
+      finishNewsletterAction(scope, action);
     }
   }
 
@@ -5032,13 +5107,18 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
   async function saveIssue(event) {
     event.preventDefault();
-    setIsSaving(true);
+    const scope = "issue";
+    const action = "save";
+    if (!beginNewsletterAction(scope, action)) return;
+    const issueId = selectedIssueId;
+    showActionStatus(scope, issueId ? "Saving issue..." : "Creating draft...");
+    setStatus({ text: "", isError: false });
     try {
       const payload = newsletterPayload(form);
       const data = await apiRequest(
-        selectedIssueId ? `/newsletter/admin/issues/${selectedIssueId}` : "/newsletter/admin/issues",
+        issueId ? `/newsletter/admin/issues/${issueId}` : "/newsletter/admin/issues",
         {
-          method: selectedIssueId ? "PATCH" : "POST",
+          method: issueId ? "PATCH" : "POST",
           token,
           body: payload
         }
@@ -5052,23 +5132,32 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       });
       setSelectedIssueId(savedIssue.id);
       setForm(newsletterIssueForm(savedIssue));
-      setStatus({ text: selectedIssueId ? "Newsletter issue saved" : "Draft created", isError: false });
+      showActionStatus(scope, issueId ? "Newsletter issue saved." : "Draft created.");
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      showActionStatus(scope, getApiErrorMessage(error), true);
     } finally {
-      setIsSaving(false);
+      finishNewsletterAction(scope, action);
     }
   }
 
   async function publishIssue() {
     if (!selectedIssueId) {
-      setStatus({ text: "Save the draft before publishing.", isError: true });
+      showActionStatus("issue", "Save the draft before publishing.", true);
+      return;
+    }
+    if (selectedIssue?.status === "published") {
+      showActionStatus("issue", "This issue is already published. No additional email was sent.");
       return;
     }
 
-    setIsPublishing(true);
+    const scope = "issue";
+    const action = "publish";
+    if (!beginNewsletterAction(scope, action)) return;
+    const issueId = selectedIssueId;
+    showActionStatus(scope, "Publishing issue...");
+    setStatus({ text: "", isError: false });
     try {
-      const data = await apiRequest(`/newsletter/admin/issues/${selectedIssueId}/publish`, {
+      const data = await apiRequest(`/newsletter/admin/issues/${issueId}/publish`, {
         method: "POST",
         token
       });
@@ -5076,48 +5165,58 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       const delivery = data.delivery || {};
       setIssues(current => current.map(issue => issue.id === publishedIssue.id ? publishedIssue : issue));
       setForm(newsletterIssueForm(publishedIssue));
-      setStatus({
-        text: `Published. Delivered ${delivery.sent || 0}, skipped ${delivery.skipped || 0}, failed ${delivery.failed || 0}.`,
-        isError: false
-      });
-      await loadNewsletter();
+      const refreshed = await loadNewsletter({ quiet: true, preferredIssueId: publishedIssue.id });
+      const resultText = data.alreadyPublished
+        ? "This issue was already published. No additional email was sent."
+        : `Published. Delivered ${delivery.sent || 0}, skipped ${delivery.skipped || 0}, failed ${delivery.failed || 0}.`;
+      if (!refreshed.ok && !refreshed.stale) {
+        showActionStatus(scope, `${resultText} The latest delivery list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
+      } else {
+        showActionStatus(scope, resultText);
+      }
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      showActionStatus(scope, getApiErrorMessage(error), true);
     } finally {
-      setIsPublishing(false);
+      finishNewsletterAction(scope, action);
     }
   }
 
   async function sendTestIssue() {
     if (!selectedIssueId) {
-      setStatus({ text: "Save the issue before sending a test.", isError: true });
+      showActionStatus("issue", "Save the issue before sending a test.", true);
       return;
     }
 
     const email = testEmail.trim();
     if (!email) {
-      setStatus({ text: "Enter a test email address.", isError: true });
+      showActionStatus("issue", "Enter a test email address.", true);
       return;
     }
 
-    setIsSendingTest(true);
+    const scope = "issue";
+    const action = "test";
+    if (!beginNewsletterAction(scope, action)) return;
+    const issueId = selectedIssueId;
+    showActionStatus(scope, "Sending test email...");
+    setStatus({ text: "", isError: false });
     try {
-      const data = await apiRequest(`/newsletter/admin/issues/${selectedIssueId}/test-send`, {
+      const data = await apiRequest(`/newsletter/admin/issues/${issueId}/test-send`, {
         method: "POST",
         token,
         body: { email }
       });
       const result = data.testSend || {};
-      setStatus({
-        text: result.sent
+      showActionStatus(
+        scope,
+        result.sent
           ? `Test email sent to ${data.email || email}.`
           : `Test email was not sent: ${result.reason || result.error || "delivery unavailable"}.`,
-        isError: !result.sent && result.reason !== "smtp_not_configured"
-      });
+        !result.sent && result.reason !== "smtp_not_configured"
+      );
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      showActionStatus(scope, getApiErrorMessage(error), true);
     } finally {
-      setIsSendingTest(false);
+      finishNewsletterAction(scope, action);
     }
   }
 
@@ -5197,8 +5296,12 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
 
   async function reviewSubscriber(subscriberId, decision) {
-    setReviewingSubscriberId(subscriberId);
-    setReviewingSubscriberDecision(decision);
+    const scope = `subscriber:${subscriberId}`;
+    if (!beginNewsletterAction(scope, decision)) return;
+    const subscriber = subscribers.find(item => item.id === subscriberId);
+    const subscriberLabel = subscriber?.displayName || subscriber?.email || "Subscriber";
+    showActionStatus("subscribers", `${decision === "approved" ? "Approving" : "Rejecting"} ${subscriberLabel}...`);
+    setStatus({ text: "", isError: false });
     try {
       const note = String(reviewNotes[subscriberId] || "").trim();
       const data = await apiRequest(`/newsletter/admin/subscribers/${subscriberId}/review`, {
@@ -5214,22 +5317,34 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         delete next[subscriberId];
         return next;
       });
-      setStatus({
-        text: `${decision === "approved" ? "Subscriber approved for newsletter delivery." : "Subscriber request rejected."}${notificationStatusText(data.notification)}`,
-        isError: false
-      });
-      await loadNewsletter();
+      const refreshed = await loadNewsletter({ quiet: true });
+      const resultText = `${subscriberLabel} ${decision === "approved" ? "was approved for newsletter delivery." : "was rejected."}${notificationStatusText(data.notification)}`;
+      if (!refreshed.ok && !refreshed.stale) {
+        showActionStatus("subscribers", `${resultText} The latest subscriber list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
+      } else {
+        showActionStatus("subscribers", resultText);
+      }
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      showActionStatus("subscribers", getApiErrorMessage(error), true);
     } finally {
-      setReviewingSubscriberId("");
-      setReviewingSubscriberDecision("");
+      finishNewsletterAction(scope, decision);
     }
   }
 
   async function refreshNewsletter() {
-    await loadNewsletter();
-    onRefresh?.();
+    const scope = "refresh";
+    const action = "refresh";
+    if (!beginNewsletterAction(scope, action)) return;
+    setActionStatus({ scope: "", text: "", isError: false });
+    try {
+      const result = await loadNewsletter();
+      if (result.ok) {
+        setStatus({ text: "Newsletter refreshed.", isError: false });
+        onRefresh?.();
+      }
+    } finally {
+      finishNewsletterAction(scope, action);
+    }
   }
 
   const sectionMeta = {
@@ -5269,15 +5384,15 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         </div>
 
         <nav className="platform-nav" aria-label="Newsletter admin">
-          <button className={activeSection === "content" ? "active" : ""} type="button" onClick={() => setActiveSection("content")}>
+          <button className={activeSection === "content" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("content")}>
             <Megaphone aria-hidden="true" />
             <span>Public content</span>
           </button>
-          <button className={activeSection === "issues" ? "active" : ""} type="button" onClick={() => setActiveSection("issues")}>
+          <button className={activeSection === "issues" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("issues")}>
             <FileText aria-hidden="true" />
             <span>Issues</span>
           </button>
-          <button className={activeSection === "subscribers" ? "active" : ""} type="button" onClick={() => setActiveSection("subscribers")}>
+          <button className={activeSection === "subscribers" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("subscribers")}>
             <Users aria-hidden="true" />
             <span>Subscribers</span>
           </button>
@@ -5294,9 +5409,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         </nav>
 
         <div className="platform-sidebar-foot">
-          <button type="button" onClick={refreshNewsletter}>
+          <button type="button" disabled={hasNewsletterAction} onClick={refreshNewsletter}>
             <RefreshCw aria-hidden="true" />
-            <span>Refresh</span>
+            <span>{refreshAction ? "Refreshing..." : "Refresh"}</span>
           </button>
         </div>
       </aside>
@@ -5305,7 +5420,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         <header className="platform-topbar">
           <div />
           <div className="leader-user-actions">
-            <button className="icon-button" type="button" onClick={refreshNewsletter} aria-label="Refresh newsletter">
+            <button className="icon-button" type="button" disabled={hasNewsletterAction} onClick={refreshNewsletter} aria-label={refreshAction ? "Refreshing newsletter" : "Refresh newsletter"}>
               <RefreshCw aria-hidden="true" />
             </button>
             <div className="leader-user-card">
@@ -5341,7 +5456,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                 <span>View public site</span>
               </a>
               {activeSection === "content" ? (
-                <button className="btn btn-primary" type="button" onClick={startNewContentBlock}>
+                <button className="btn btn-primary" type="button" disabled={Boolean(contentAction)} onClick={startNewContentBlock}>
                   <Plus aria-hidden="true" />
                   <span>New block</span>
                 </button>
@@ -5352,7 +5467,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     <Download aria-hidden="true" />
                     <span>Export deliveries</span>
                   </button>
-                  <button className="btn btn-primary" type="button" onClick={startNewDraft}>
+                  <button className="btn btn-primary" type="button" disabled={Boolean(issueAction)} onClick={startNewDraft}>
                     <Plus aria-hidden="true" />
                     <span>New issue</span>
                   </button>
@@ -5486,6 +5601,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       className={block.id === selectedContentBlockId ? "newsletter-issue-button active" : "newsletter-issue-button"}
                       type="button"
                       key={block.id}
+                      disabled={Boolean(contentAction)}
                       onClick={() => selectContentBlock(block)}
                     >
                       <span>
@@ -5502,7 +5618,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
               <section className="platform-table-card newsletter-editor-card">
                 <div className="newsletter-editor-layout">
-                  <form className="newsletter-editor-form" onSubmit={saveContentBlock}>
+                  <form className="newsletter-editor-form" onSubmit={saveContentBlock} aria-busy={Boolean(contentAction)}>
                     <div className="newsletter-editor-heading">
                       <div>
                         <p className="eyebrow">{selectedContentBlock ? contentTypeLabel(selectedContentBlock.blockType) : "Public content"}</p>
@@ -5510,6 +5626,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       </div>
                       {selectedContentBlock ? <span className={`status-pill ${selectedContentBlock.status}`}>{selectedContentBlock.status}</span> : null}
                     </div>
+
+                    <StatusLine status={actionStatus.scope === "content" ? actionStatus : { text: "", isError: false }} />
+
+                    <fieldset className="newsletter-editor-fieldset" disabled={Boolean(contentAction)}>
 
                     <div className="newsletter-form-row">
                       <div>
@@ -5617,17 +5737,18 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     </div>
 
                     <div className="button-row">
-                      <button className="btn btn-primary" type="submit" disabled={isSavingContent}>
+                      <button className="btn btn-primary" type="submit">
                         <FileText aria-hidden="true" />
-                        <span>{isSavingContent ? "Saving..." : selectedContentBlockId ? "Save block" : "Create block"}</span>
+                        <span>{contentAction === "save" ? (selectedContentBlockId ? "Saving block..." : "Creating block...") : selectedContentBlockId ? "Save block" : "Create block"}</span>
                       </button>
                       {selectedContentBlockId ? (
-                        <button className="btn btn-danger-soft" type="button" onClick={deleteContentBlock} disabled={isDeletingContent}>
+                        <button className="btn btn-danger-soft" type="button" onClick={deleteContentBlock}>
                           <Trash2 aria-hidden="true" />
-                          <span>{isDeletingContent ? "Removing..." : "Remove"}</span>
+                          <span>{contentAction === "delete" ? "Removing block..." : "Remove"}</span>
                         </button>
                       ) : null}
                     </div>
+                    </fieldset>
                   </form>
 
                   <aside className="newsletter-preview frg-content-preview" aria-label="Public content preview">
@@ -5673,6 +5794,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     className={issue.id === selectedIssueId ? "newsletter-issue-button active" : "newsletter-issue-button"}
                     type="button"
                     key={issue.id}
+                    disabled={Boolean(issueAction)}
                     onClick={() => selectIssue(issue)}
                   >
                     <span>
@@ -5689,7 +5811,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
             <section className="platform-table-card newsletter-editor-card">
               <div className="newsletter-editor-layout">
-                <form className="newsletter-editor-form" onSubmit={saveIssue}>
+                <form className="newsletter-editor-form" onSubmit={saveIssue} aria-busy={Boolean(issueAction)}>
                   <div className="newsletter-editor-heading">
                     <div>
                       <p className="eyebrow">{selectedIssue?.status || "Draft"}</p>
@@ -5698,12 +5820,21 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     {selectedIssue ? <span className={`status-pill ${selectedIssue.status}`}>{selectedIssue.status}</span> : null}
                   </div>
 
+                  <StatusLine status={actionStatus.scope === "issue" ? actionStatus : { text: "", isError: false }} />
+
+                  {selectedIssue?.status === "published" ? (
+                    <p className="muted-copy">Published issues are read-only. Create a new issue for the next update.</p>
+                  ) : null}
+
+                  <fieldset className="newsletter-editor-fieldset" disabled={Boolean(issueAction)}>
+
                   <label className="field-label" htmlFor="newsletterTitle">Title</label>
                   <input
                     id="newsletterTitle"
                     className="input"
                     value={form.title}
                     placeholder="Company newsletter title"
+                    disabled={selectedIssue?.status === "published"}
                     onChange={event => updateForm("title", event.target.value)}
                     required
                   />
@@ -5716,6 +5847,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                         className="input"
                         value={form.editionLabel}
                         placeholder="July family update"
+                        disabled={selectedIssue?.status === "published"}
                         onChange={event => updateForm("editionLabel", event.target.value)}
                       />
                     </div>
@@ -5726,6 +5858,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                         className="input"
                         value={form.summary}
                         placeholder="One-line overview"
+                        disabled={selectedIssue?.status === "published"}
                         onChange={event => updateForm("summary", event.target.value)}
                       />
                     </div>
@@ -5737,18 +5870,19 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     className="input newsletter-body-input"
                     value={form.body}
                     placeholder="Write the newsletter update..."
+                    disabled={selectedIssue?.status === "published"}
                     onChange={event => updateForm("body", event.target.value)}
                     required
                   />
 
                   <div className="button-row">
-                    <button className="btn btn-secondary" type="submit" disabled={isSaving}>
+                    <button className="btn btn-secondary" type="submit" disabled={selectedIssue?.status === "published"}>
                       <FileText aria-hidden="true" />
-                      <span>{isSaving ? "Saving..." : selectedIssueId ? "Save issue" : "Create draft"}</span>
+                      <span>{issueAction === "save" ? (selectedIssueId ? "Saving issue..." : "Creating draft...") : selectedIssueId ? "Save issue" : "Create draft"}</span>
                     </button>
-                    <button className="btn btn-primary" type="button" onClick={publishIssue} disabled={!selectedIssueId || isPublishing}>
+                    <button className="btn btn-primary" type="button" onClick={publishIssue} disabled={!selectedIssueId || selectedIssue?.status === "published"}>
                       <Send aria-hidden="true" />
-                      <span>{isPublishing ? "Publishing..." : "Publish"}</span>
+                      <span>{issueAction === "publish" ? "Publishing..." : selectedIssue?.status === "published" ? "Published" : "Publish"}</span>
                     </button>
                   </div>
 
@@ -5763,13 +5897,14 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                         placeholder="name@example.com"
                         onChange={event => setTestEmail(event.target.value)}
                       />
-                      <button className="btn btn-secondary" type="button" onClick={sendTestIssue} disabled={!selectedIssueId || isSendingTest}>
+                      <button className="btn btn-secondary" type="button" onClick={sendTestIssue} disabled={!selectedIssueId}>
                         <MailPlus aria-hidden="true" />
-                        <span>{isSendingTest ? "Sending..." : "Send test"}</span>
+                        <span>{issueAction === "test" ? "Sending test..." : "Send test"}</span>
                       </button>
                     </div>
                     <small>Send one proof email before publishing. This does not publish the issue or add delivery records.</small>
                   </div>
+                  </fieldset>
                 </form>
 
                 <aside className="newsletter-preview" aria-label="Newsletter preview">
@@ -5840,6 +5975,8 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               </button>
             </div>
 
+            <StatusLine status={actionStatus.scope === "subscribers" ? actionStatus : { text: "", isError: false }} />
+
             <div className="newsletter-subscriber-toolbar">
               <div className="platform-search" role="search">
                 <Search aria-hidden="true" />
@@ -5871,7 +6008,8 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                 {filteredSubscribers.map(subscriber => {
                   const canApprove = subscriber.status === "pending" || subscriber.status === "rejected";
                   const canReject = subscriber.status === "pending";
-                  const isReviewing = reviewingSubscriberId === subscriber.id;
+                  const subscriberAction = newsletterActions.get(`subscriber:${subscriber.id}`) || "";
+                  const isReviewing = Boolean(subscriberAction);
                   const noteValue = reviewNotes[subscriber.id] ?? "";
                   const details = [
                     subscriber.reviewNote ? ["Review note", subscriber.reviewNote] : null,
@@ -5884,7 +6022,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                   ].filter(Boolean);
 
                   return (
-                  <article className="admin-list-row" key={subscriber.id}>
+                  <article className="admin-list-row" key={subscriber.id} aria-busy={isReviewing}>
                     <div className="newsletter-subscriber-main">
                       <strong>{subscriber.displayName || subscriber.email}</strong>
                       <span>{subscriber.email}</span>
@@ -5909,6 +6047,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                           <textarea
                             className="input"
                             value={noteValue}
+                            disabled={isReviewing}
                             placeholder="Private note for this request..."
                             maxLength={600}
                             onChange={event => updateReviewNote(subscriber.id, event.target.value)}
@@ -5927,7 +6066,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                           onClick={() => reviewSubscriber(subscriber.id, "approved")}
                         >
                           <CheckCircle2 aria-hidden="true" />
-                          <span>{isReviewing && reviewingSubscriberDecision === "approved" ? "Approving..." : "Approve"}</span>
+                          <span>{subscriberAction === "approved" ? "Approving..." : "Approve"}</span>
                         </button>
                       ) : null}
                       {canReject ? (
@@ -5938,7 +6077,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                           onClick={() => reviewSubscriber(subscriber.id, "rejected")}
                         >
                           <XCircle aria-hidden="true" />
-                          <span>{isReviewing && reviewingSubscriberDecision === "rejected" ? "Rejecting..." : "Reject"}</span>
+                          <span>{subscriberAction === "rejected" ? "Rejecting..." : "Reject"}</span>
                         </button>
                       ) : null}
                     </div>

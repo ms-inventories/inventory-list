@@ -2169,6 +2169,12 @@ button {
   color: #fff;
 }
 
+.platform-nav button:disabled,
+.platform-sidebar-foot button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .platform-nav button.active {
   border-color: rgba(255, 255, 255, 0.14);
   background: var(--platform-blue);
@@ -2888,6 +2894,11 @@ button {
   background: #f5f8ff;
 }
 
+.newsletter-issue-button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .newsletter-issue-button strong,
 .newsletter-issue-button small {
   display: block;
@@ -2918,6 +2929,14 @@ button {
   align-content: start;
   gap: 10px;
   min-width: 0;
+}
+
+.newsletter-editor-fieldset {
+  display: contents;
+  min-inline-size: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
 }
 
 .newsletter-editor-heading,

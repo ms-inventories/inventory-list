@@ -2880,6 +2880,7 @@ export function registerRoutes(app) {
             body = $4,
             updated_at = now()
           WHERE id = $5
+            AND status <> 'published'
           RETURNING *
         `,
         [
@@ -2906,6 +2907,14 @@ export function registerRoutes(app) {
     });
 
     if (!updated) {
+      const existing = await query(
+        "SELECT status FROM newsletter_issues WHERE id = $1 LIMIT 1",
+        [request.params.issueId]
+      );
+      if (existing.rows[0]?.status === "published") {
+        reply.code(409);
+        throw new Error("Published newsletter issues are read-only. Create a new issue instead.");
+      }
       reply.code(404);
       throw new Error("Newsletter issue not found");
     }
@@ -2916,7 +2925,22 @@ export function registerRoutes(app) {
   route(app, "post", "/api/newsletter/admin/issues/:issueId/publish", async (request, reply) => {
     const auth = await requireFrgAdmin(request, reply);
 
-    const published = await withTransaction(async client => {
+    const publishResult = await withTransaction(async client => {
+      const existing = await client.query(
+        `
+          SELECT *
+          FROM newsletter_issues
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [request.params.issueId]
+      );
+
+      if (!existing.rows[0]) return null;
+      if (existing.rows[0].status === "published") {
+        return { issue: existing.rows[0], publishedNow: false };
+      }
+
       const result = await client.query(
         `
           UPDATE newsletter_issues
@@ -2933,8 +2957,6 @@ export function registerRoutes(app) {
         [auth.user.id, request.params.issueId]
       );
 
-      if (!result.rows[0]) return null;
-
       await createAuditEvent(client, {
         tenantId: null,
         actorUserId: auth.user.id,
@@ -2944,16 +2966,28 @@ export function registerRoutes(app) {
         metadata: { title: result.rows[0].title }
       });
 
-      return result.rows[0];
+      return { issue: result.rows[0], publishedNow: true };
     });
 
-    if (!published) {
+    if (!publishResult) {
       reply.code(404);
       throw new Error("Newsletter issue not found");
     }
 
-    const delivery = await deliverNewsletterIssue(published);
-    return { issue: rowToNewsletterIssue(published, { includeBody: true }), delivery };
+    if (!publishResult.publishedNow) {
+      return {
+        issue: rowToNewsletterIssue(publishResult.issue, { includeBody: true }),
+        delivery: { sent: 0, skipped: 0, failed: 0 },
+        alreadyPublished: true
+      };
+    }
+
+    const delivery = await deliverNewsletterIssue(publishResult.issue);
+    return {
+      issue: rowToNewsletterIssue(publishResult.issue, { includeBody: true }),
+      delivery,
+      alreadyPublished: false
+    };
   });
 
   route(app, "post", "/api/newsletter/admin/issues/:issueId/test-send", async (request, reply) => {

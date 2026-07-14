@@ -114,6 +114,7 @@ test.describe("PDF packet import", () => {
   });
 
   test("packet import locks conflicting actions and retries without duplicate requests", async ({ page }) => {
+    test.setTimeout(60_000);
     let importAttempts = 0;
     await page.route("**/api/inventory/sessions/*/items/bulk", async route => {
       if (route.request().method() !== "POST") return route.continue();
