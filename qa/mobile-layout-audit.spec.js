@@ -294,3 +294,45 @@ test.describe("mobile layout audit", () => {
     await expectContained(page.locator(".app-frame"));
   });
 });
+
+test.describe("intermediate session layout", () => {
+  test.beforeEach(({}, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium", "Intermediate desktop widths are covered once in Chromium.");
+  });
+
+  test("keeps session rows and actions inside 900px and 1024px viewports", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await seedQaRootSession(page);
+    await page.goto("http://qa-search-desktop.localhost:5175/#/admin");
+    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Inventory Sessions", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    const session = page.locator(".session-row", { hasText: "Search behavior fixture" });
+    await expect(session).toBeVisible();
+    await session.click();
+    await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
+    await page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /Available/ }).click();
+
+    const row = page.locator(".session-item", { hasText: "G18358 GENERATOR SET SEARCH FIXTURE" });
+    const actions = row.locator(".session-item-actions");
+    const details = row.getByRole("button", { name: /Open details for/ });
+
+    for (const width of [1024, 900]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(row).toBeVisible();
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
+      await expectInsideHorizontally(row, actions);
+      expect(await row.evaluate(element => getComputedStyle(element).flexDirection)).toBe("column");
+      await expect(row.locator(".session-assignment-control")).toBeVisible();
+      await expect(details).toBeVisible();
+    }
+
+    await details.click();
+    const drawer = page.getByRole("dialog");
+    await expectWithinViewport(page, drawer);
+    await page.keyboard.press("Escape");
+    await expect(drawer).toBeHidden();
+    await expect(details).toBeFocused();
+  });
+});

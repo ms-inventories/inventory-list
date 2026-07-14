@@ -6714,6 +6714,37 @@ button {
   justify-content: flex-end;
 }
 
+/* Docked developer tools, tablets, and compact laptops leave enough room for
+   desktop navigation but not for a two-column session workspace plus every
+   row action. Stack the workspace and its row controls before they can force
+   the document wider than the viewport. */
+@media (min-width: 861px) and (max-width: 1180px) {
+  .session-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .session-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .session-item-main > div {
+    min-width: 0;
+  }
+
+  .session-item-actions {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
+  .session-assignment-control {
+    max-width: 100%;
+  }
+}
+
 @media (max-width: 860px) {
   html,
   body {
