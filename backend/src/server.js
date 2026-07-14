@@ -8,6 +8,10 @@ import { registerRoutes } from "./routes.js";
 
 assertProductionConfig();
 
+if (config.env === "production" && config.storage.mediaSigningSecretIsEphemeral) {
+  console.warn("MEDIA_SIGNING_SECRET is not configured; using a process-local signing key. Set a persistent secret before scaling beyond one API instance.");
+}
+
 const app = express();
 
 function requestIdFromHeader(value) {
