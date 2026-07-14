@@ -10,7 +10,7 @@
     "migrate": "node src/migrate.js",
     "seed:qa": "node src/seed-qa.js",
     "cleanup:media": "node src/cleanup-media.js",
-    "check": "node --check src/server.js && node --check src/config.js && node --check src/db.js && node --check src/auth.js && node --check src/crew-auth.js && node --check src/email.js && node --check src/media.js && node --check src/tenant.js && node --check src/routes.js && node --check src/migrate.js && node --check src/cleanup-media.js && node --check src/seed-qa.js && node --test test/*.test.mjs"
+    "check": "node --check src/server.js && node --check src/config.js && node --check src/db.js && node --check src/auth.js && node --check src/authentik.js && node --check src/crew-auth.js && node --check src/email.js && node --check src/media.js && node --check src/provisioning-state.js && node --check src/tenant.js && node --check src/routes.js && node --check src/migrate.js && node --check src/cleanup-media.js && node --check src/seed-qa.js && node --test test/*.test.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
