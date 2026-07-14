@@ -108,6 +108,34 @@ async function createSessionItems(request, identity, suffix, count, tenantSlug =
 }
 
 test.describe("upload attachment integrity", () => {
+  test("accepts its own captionless upload response as proof input", async ({ request }, testInfo) => {
+    const suffix = `captionless-${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
+    const { items } = await createSessionItems(request, qaAdmin, suffix, 1);
+    const uploadResponse = await request.post(`${API_URL}/uploads/photos`, {
+      headers: qaHeaders(qaNco),
+      data: {
+        fileName: `${suffix}.jpg`,
+        mimeType: "image/jpeg",
+        dataUrl: PHOTO_DATA_URL,
+        kind: "general",
+        purpose: "evidence"
+      }
+    });
+    expect(uploadResponse.status()).toBe(201);
+    const uploaded = await uploadResponse.json();
+    expect(uploaded.photo.caption).toBeNull();
+
+    const submission = await request.post(`${API_URL}/session-items/${items[0].id}/submissions`, {
+      headers: qaHeaders(qaNco),
+      data: {
+        status: "found",
+        note: "Captionless upload contract QA",
+        photos: [uploaded.photo]
+      }
+    });
+    expect(submission.status(), await submission.text()).toBe(201);
+  });
+
   test("binds opaque uploads once and rejects copied, foreign, mismatched, and concurrent reuse", async ({ request, playwright }, testInfo) => {
     test.setTimeout(90_000);
     const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
