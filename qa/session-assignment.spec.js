@@ -146,6 +146,10 @@ test.describe("session assignment", () => {
       await generatorRow.getByRole("button", { name: "Claim item" }).click();
     }
     await expect(generatorRow.getByText("Assigned to QA NCO")).toBeVisible();
+    const claimedProofForm = generatorRow.locator(".proof-form");
+    await expect(claimedProofForm).toBeVisible();
+    await claimedProofForm.getByRole("button", { name: "Cancel" }).click();
+    await expect(generatorRow.locator("[data-proof-item-id]")).toBeFocused();
     await page.getByRole("button", { name: /^Mine\b/ }).click();
     await expect(page.locator(".session-item", { hasText: "TAMPER,VIBRATING" })).toBeVisible();
 
@@ -177,6 +181,10 @@ test.describe("session assignment", () => {
     await completed.locator("summary").click();
     await expect(completed.getByText(/TAMPER,VIBRATING/)).toBeVisible();
     await expect(completed.getByRole("button", { name: /Open details for completed item/ })).toBeVisible();
+    const sessionSearch = page.getByRole("searchbox", { name: "Search current session rows" });
+    await sessionSearch.fill("TAMPER,VIBRATING");
+    await expect(page.getByText("No matching items", { exact: true })).toHaveCount(0);
+    await expect(completed.getByText(/TAMPER,VIBRATING/)).toBeVisible();
 
     await request.patch(`${API_URL}/inventory/sessions/${session.id}`, {
       headers: qaHeaders(qaAdminIdentity),

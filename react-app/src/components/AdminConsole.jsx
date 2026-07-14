@@ -1636,7 +1636,7 @@ function SessionItemDrawer({
             </button>
           ) : null}
           {canSubmit && !isClosed ? (
-            <button className="btn btn-primary btn-small" type="button" disabled={isDirectCheckPending} onClick={onOpenProof}>
+            <button data-proof-item-id={item.id} className="btn btn-primary btn-small" type="button" disabled={isDirectCheckPending} onClick={onOpenProof}>
               <Camera aria-hidden="true" />
               <span>{needsMoreProof ? "Respond with proof" : "Add proof"}</span>
             </button>
@@ -1731,6 +1731,7 @@ function SessionPanel({
   const packetTextareaRef = useRef(null);
   const detailItemTriggerRef = useRef(null);
   const detailPhotoTriggerRef = useRef(null);
+  const proofTriggerRef = useRef(null);
   const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
@@ -2276,6 +2277,7 @@ function SessionPanel({
     if (!sessionItemId || assignmentActionRef.current.has(sessionItemId)) return false;
 
     const action = claim ? "claim" : "assign";
+    if (claim) proofTriggerRef.current = document.activeElement;
     assignmentActionRef.current.set(sessionItemId, action);
     setAssignmentActions(current => {
       const next = new Map(current);
@@ -2523,6 +2525,22 @@ function SessionPanel({
     detailItemTriggerRef.current = document.activeElement;
     setProofItemId("");
     setDetailItemId(itemId);
+  }
+
+  function openProof(itemId) {
+    proofTriggerRef.current = document.activeElement;
+    setProofItemId(itemId);
+  }
+
+  function closeProof() {
+    const itemId = proofItemId;
+    setProofItemId("");
+    window.requestAnimationFrame(() => {
+      const target = proofTriggerRef.current?.isConnected
+        ? proofTriggerRef.current
+        : document.querySelector(`[data-proof-item-id="${itemId}"]`);
+      target?.focus?.();
+    });
   }
 
   function closeItemDetail() {
@@ -3009,7 +3027,7 @@ function SessionPanel({
                           </>
                         ) : null}
                         {canSubmitItemProof && selectedSession.status !== "closed" ? (
-                          <button className="btn btn-primary btn-small session-row-primary-action" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => setProofItemId(item.id)}>
+                          <button data-proof-item-id={item.id} className="btn btn-primary btn-small session-row-primary-action" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => openProof(item.id)}>
                             <Camera aria-hidden="true" />
                             <span>{needsMoreProof ? "Respond" : pendingProof ? "Add proof" : "Proof"}</span>
                           </button>
@@ -3021,7 +3039,7 @@ function SessionPanel({
                           token={token}
                           tenantSlug={tenantSlug}
                           requestNote={needsMoreProof ? submission.reviewNote : ""}
-                          onCancel={() => setProofItemId("")}
+                          onCancel={closeProof}
                           onSaved={() => {
                             setProofItemId("");
                             loadSessions(selectedSessionId);
@@ -3031,7 +3049,7 @@ function SessionPanel({
                       ) : null}
                     </article>
                   );
-                }) : actionableDetailItems.length ? (
+                }) : query.trim() && visibleCompletedItems.length ? null : actionableDetailItems.length ? (
                   <EmptyPanel
                     title={query.trim()
                       ? "No matching items"
@@ -3132,7 +3150,7 @@ function SessionPanel({
         onAssign={memberId => updateSessionItemAssignment(detailItem.id, memberId)}
         onClaim={() => updateSessionItemAssignment(detailItem.id, "self", { claim: true })}
         onDirectCheck={nextStatus => updateDirectCheck(detailItem.id, nextStatus)}
-        onOpenProof={() => setProofItemId(detailItem.id)}
+        onOpenProof={() => openProof(detailItem.id)}
         onOpenReview={canManage && onOpenReview ? () => {
           setProofItemId("");
           setDetailPhotoViewer(null);
@@ -3140,7 +3158,7 @@ function SessionPanel({
           onOpenReview();
         } : null}
         onOpenPhoto={openDetailPhotoViewer}
-        onProofCancel={() => setProofItemId("")}
+        onProofCancel={closeProof}
         onProofSaved={() => {
           setProofItemId("");
           loadSessions(selectedSessionId);
@@ -6093,7 +6111,7 @@ function LeaderOverviewPanel({
             ? "mine"
             : rows.some(item => sessionItemAssignmentBucket(item, me) === "available")
               ? "available"
-              : "team"
+              : rows.length ? "team" : "available"
         );
         setStatus({ text: "", isError: false });
       } catch (error) {
