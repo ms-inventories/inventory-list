@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { errors } from "jose";
-import { authenticate } from "../src/auth.js";
+import { authenticate, ensureUser } from "../src/auth.js";
 
 const bearerRequest = {
   headers: {
@@ -69,4 +69,156 @@ test("JWKS, discovery, and network failures remain server errors", async () => {
       providerError.code || providerError.message
     );
   }
+});
+
+function scriptedClient(responses) {
+  const calls = [];
+  return {
+    calls,
+    async query(text, params) {
+      calls.push({ text, params });
+      const response = responses.shift();
+      assert.ok(response, `Unexpected query: ${text}`);
+      return typeof response === "function" ? response(text, params) : response;
+    }
+  };
+}
+
+test("ensureUser resolves an existing subject before changing its email", async () => {
+  const client = scriptedClient([
+    {
+      rows: [{
+        id: "subject-user",
+        authentik_subject: "authentik-subject",
+        email: "old@example.test",
+        display_name: "Old name"
+      }]
+    },
+    (_text, params) => ({
+      rows: [{
+        id: params[0],
+        authentik_subject: params[1],
+        email: params[2],
+        display_name: params[3]
+      }]
+    })
+  ]);
+
+  const user = await ensureUser({
+    subject: "authentik-subject",
+    email: " New@Example.Test ",
+    displayName: "New name"
+  }, client);
+
+  assert.equal(user.id, "subject-user");
+  assert.equal(user.email, "new@example.test");
+  assert.deepEqual(client.calls[0].params, ["authentik-subject", "new@example.test"]);
+});
+
+test("ensureUser links an invited email placeholder with no identity subject", async () => {
+  const client = scriptedClient([
+    {
+      rows: [{
+        id: "invited-user",
+        authentik_subject: null,
+        email: "invitee@example.test",
+        display_name: "Invitee"
+      }]
+    },
+    {
+      rows: [{
+        id: "invited-user",
+        authentik_subject: "new-subject",
+        email: "invitee@example.test",
+        display_name: "Invitee"
+      }]
+    }
+  ]);
+
+  const user = await ensureUser({
+    subject: "new-subject",
+    email: "invitee@example.test",
+    displayName: "Invitee"
+  }, client);
+
+  assert.equal(user.authentik_subject, "new-subject");
+  assert.match(client.calls[1].text, /authentik_subject IS NULL/);
+});
+
+test("ensureUser fails closed when an email belongs to a different non-null subject", async () => {
+  const client = scriptedClient([{
+    rows: [{
+      id: "other-user",
+      authentik_subject: "other-subject",
+      email: "shared@example.test",
+      display_name: "Other"
+    }]
+  }]);
+
+  await assert.rejects(
+    ensureUser({
+      subject: "attacker-subject",
+      email: "SHARED@example.test",
+      displayName: "Attacker"
+    }, client),
+    error => error?.statusCode === 409 && error?.code === "identity_conflict"
+  );
+  assert.equal(client.calls.length, 1);
+});
+
+test("ensureUser fails closed when subject and email resolve to different local users", async () => {
+  const client = scriptedClient([{
+    rows: [
+      {
+        id: "subject-user",
+        authentik_subject: "known-subject",
+        email: "old@example.test",
+        display_name: "Known"
+      },
+      {
+        id: "email-user",
+        authentik_subject: null,
+        email: "target@example.test",
+        display_name: "Target"
+      }
+    ]
+  }]);
+
+  await assert.rejects(
+    ensureUser({
+      subject: "known-subject",
+      email: "target@example.test",
+      displayName: "Known"
+    }, client),
+    error => error?.statusCode === 409 && error?.code === "identity_conflict"
+  );
+});
+
+test("ensureUser fails closed when legacy case variants duplicate an email", async () => {
+  const client = scriptedClient([{
+    rows: [
+      {
+        id: "upper-email-user",
+        authentik_subject: null,
+        email: "Invitee@Example.Test",
+        display_name: "Invitee one"
+      },
+      {
+        id: "lower-email-user",
+        authentik_subject: null,
+        email: "invitee@example.test",
+        display_name: "Invitee two"
+      }
+    ]
+  }]);
+
+  await assert.rejects(
+    ensureUser({
+      subject: "new-subject",
+      email: "invitee@example.test",
+      displayName: "Invitee"
+    }, client),
+    error => error?.statusCode === 409 && error?.code === "identity_conflict"
+  );
+  assert.equal(client.calls.length, 1);
 });

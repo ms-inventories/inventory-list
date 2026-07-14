@@ -52,7 +52,8 @@ export const config = {
     platformAdminGroup: String(process.env.PLATFORM_ADMIN_GROUP || "876en-admins").toLowerCase(),
     frgAdminGroup: String(process.env.FRG_ADMIN_GROUP || "876en-frg-admins").toLowerCase(),
     tenantAdminGroup: String(process.env.TENANT_ADMIN_GROUP || "876en-platoon-admin").toLowerCase(),
-    tenantGroupPrefix: String(process.env.TENANT_GROUP_PREFIX || "876en-").toLowerCase()
+    tenantGroupPrefix: String(process.env.TENANT_GROUP_PREFIX || "876en-").toLowerCase(),
+    tenantGroupFallbackEnabled: String(process.env.AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED ?? "true").toLowerCase() !== "false"
   },
   storage: {
     driver: process.env.STORAGE_DRIVER || "local",

@@ -226,11 +226,18 @@ function getTenantGroupSlugs(identity) {
     .sort();
 }
 
-async function listUserWorkspaces(identity, user) {
+export async function listUserWorkspaces(
+  identity,
+  user,
+  {
+    queryFn = query,
+    allowGroupFallback = config.oidc.tenantGroupFallbackEnabled
+  } = {}
+) {
   if (!user?.id) return [];
 
   if (identity?.isPlatformAdmin) {
-    const result = await query(
+    const result = await queryFn(
       `
         SELECT id, slug, name, status, 'tenant_admin' AS role, 'platform_admin' AS source
         FROM tenants
@@ -241,39 +248,58 @@ async function listUserWorkspaces(identity, user) {
     return result.rows.map(rowToWorkspace);
   }
 
-  const groupSlugs = getTenantGroupSlugs(identity);
+  const groupSlugs = allowGroupFallback ? getTenantGroupSlugs(identity) : [];
   const hasTenantAdminGroup = (identity?.groups || [])
     .map(group => String(group || "").trim().toLowerCase())
     .includes(String(config.oidc.tenantAdminGroup || "").toLowerCase());
 
-  const result = await query(
+  const result = await queryFn(
     `
-      SELECT DISTINCT ON (t.slug)
+      SELECT
         t.id,
         t.slug,
         t.name,
         t.status,
-        COALESCE(
-          m.role,
-          CASE WHEN $3::boolean THEN 'tenant_admin' ELSE 'contributor' END
-        ) AS role,
-        CASE WHEN m.id IS NULL THEN 'authentik' ELSE 'database' END AS source
+        m.id AS membership_id,
+        m.role AS membership_role,
+        m.status AS membership_status
       FROM tenants t
       LEFT JOIN tenant_memberships m
         ON m.tenant_id = t.id
        AND m.user_id = $1
-       AND m.status = 'active'
       WHERE t.status = 'active'
         AND (
           m.id IS NOT NULL
-          OR t.slug = ANY($2::text[])
+          OR ($3::boolean AND t.slug = ANY($2::text[]))
         )
-      ORDER BY t.slug, m.id NULLS LAST
+      ORDER BY t.name, t.slug
     `,
-    [user.id, groupSlugs, hasTenantAdminGroup]
+    [user.id, groupSlugs, Boolean(allowGroupFallback)]
   );
 
-  return result.rows.map(rowToWorkspace);
+  return result.rows.flatMap(row => {
+    if (row.membership_id) {
+      if (row.membership_status !== "active") return [];
+      return [rowToWorkspace({
+        ...row,
+        role: row.membership_role,
+        source: "database"
+      })];
+    }
+
+    if (!allowGroupFallback || !groupSlugs.includes(row.slug)) return [];
+    return [rowToWorkspace({
+      ...row,
+      role: hasTenantAdminGroup ? "tenant_admin" : "contributor",
+      source: "authentik"
+    })];
+  });
+}
+
+export function invitationEmailMatches(invitationEmail, authenticatedEmail) {
+  const normalize = value => String(value || "").trim().toLowerCase();
+  const intendedEmail = normalize(invitationEmail);
+  return Boolean(intendedEmail) && intendedEmail === normalize(authenticatedEmail);
 }
 
 function authHealthResponse({ identity = null, context = null, requestedTenantSlug = "", workspaces = [], code = "ok" }) {
@@ -3817,7 +3843,7 @@ export function registerRoutes(app) {
         return null;
       }
 
-      if (invite.email !== auth.user.email && !auth.identity.isPlatformAdmin) {
+      if (!invitationEmailMatches(invite.email, auth.user.email)) {
         return { forbidden: true };
       }
 

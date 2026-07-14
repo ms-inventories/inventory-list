@@ -65,14 +65,6 @@ export async function getTenantMembership(tenantId, userId) {
   return result.rows[0] ? { ...result.rows[0], source: "database" } : null;
 }
 
-function roleRank(role) {
-  return {
-    viewer: 1,
-    contributor: 2,
-    tenant_admin: 3
-  }[role] || 0;
-}
-
 function groupMembershipForTenant(tenant, userId, identity) {
   if (!tenant || !identity) return null;
 
@@ -113,20 +105,26 @@ function groupMembershipForTenant(tenant, userId, identity) {
   };
 }
 
-function mergeMembership(databaseMembership, authentikMembership) {
-  const activeDatabaseMembership = databaseMembership?.status === "active" ? databaseMembership : null;
+export function resolveEffectiveMembership(
+  databaseMembership,
+  authentikMembership,
+  {
+    isPlatformAdmin = false,
+    allowGroupFallback = config.oidc.tenantGroupFallbackEnabled
+  } = {}
+) {
+  // Platform administration is the only identity-provider role that can
+  // override a database membership. This preserves emergency/platform access.
+  if (isPlatformAdmin) return authentikMembership;
 
-  if (!activeDatabaseMembership) return authentikMembership;
-  if (!authentikMembership) return activeDatabaseMembership;
-  if (roleRank(authentikMembership.role) <= roleRank(activeDatabaseMembership.role)) return activeDatabaseMembership;
+  // Once an explicit membership exists, its exact database state and role are
+  // authoritative. In particular, invited and disabled rows must not be
+  // resurrected by a stale Authentik group.
+  if (databaseMembership) {
+    return databaseMembership.status === "active" ? databaseMembership : null;
+  }
 
-  return {
-    ...activeDatabaseMembership,
-    role: authentikMembership.role,
-    source: authentikMembership.source,
-    matchedGroups: authentikMembership.matchedGroups,
-    platformAdminOverride: authentikMembership.platformAdminOverride
-  };
+  return allowGroupFallback ? authentikMembership : null;
 }
 
 function accessMembership(membership) {
@@ -157,23 +155,19 @@ function buildAccessDetails(tenant, identity, databaseMembership, authentikMembe
     });
   }
 
-  if (databaseMembership?.status && databaseMembership.status !== "active" && authentikMembership) {
+  if (databaseMembership?.status && databaseMembership.status !== "active" && authentikMembership && !identity?.isPlatformAdmin) {
     warnings.push({
       type: "inactive_database_membership",
-      severity: "warning",
-      message: `Database membership is ${databaseMembership.status}, but Authentik still grants access.`
+      severity: "info",
+      message: `Database membership is ${databaseMembership.status}; Authentik group access is blocked.`
     });
   }
 
   if (databaseMembership?.status === "active" && authentikMembership && databaseMembership.role !== authentikMembership.role) {
-    const databaseRank = roleRank(databaseMembership.role);
-    const authentikRank = roleRank(authentikMembership.role);
     warnings.push({
       type: "role_mismatch",
-      severity: "warning",
-      message: authentikRank > databaseRank
-        ? "Authentik grants a higher role than the database membership."
-        : "Database membership grants a higher role than the Authentik group."
+      severity: "info",
+      message: `Database role ${databaseMembership.role} is authoritative; Authentik group role ${authentikMembership.role} is ignored.`
     });
   }
 
@@ -189,7 +183,11 @@ function buildAccessDetails(tenant, identity, databaseMembership, authentikMembe
     warnings.push({
       type: "tenant_access_missing",
       severity: "warning",
-      message: "No active database membership or matching Authentik group grants access."
+      message: databaseMembership
+        ? "The database membership is not active."
+        : config.oidc.tenantGroupFallbackEnabled
+          ? "No active database membership or matching Authentik group grants access."
+          : "No active database membership grants access."
     });
   }
 
@@ -217,7 +215,9 @@ export async function tenantContext(request, auth) {
   const tenant = await resolveTenant(request);
   const databaseMembership = tenant ? await getTenantMembership(tenant.id, auth.user.id) : null;
   const authentikMembership = groupMembershipForTenant(tenant, auth.user.id, auth.identity);
-  const membership = mergeMembership(databaseMembership, authentikMembership);
+  const membership = resolveEffectiveMembership(databaseMembership, authentikMembership, {
+    isPlatformAdmin: Boolean(auth.identity?.isPlatformAdmin)
+  });
   const access = buildAccessDetails(tenant, auth.identity, databaseMembership, authentikMembership, membership);
 
   return {

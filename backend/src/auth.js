@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, errors, jwtVerify } from "jose";
 import { config } from "./config.js";
-import { query } from "./db.js";
+import { withTransaction } from "./db.js";
 
 let jwksPromise = null;
 let discoveryPromise = null;
@@ -281,23 +281,121 @@ export async function authenticate(request, verifyToken = verifyBearerToken) {
   }
 }
 
-export async function ensureUser(identity) {
-  if (!identity?.email) throw new Error("Authenticated user has no email claim");
+function identityError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.code = statusCode === 409 ? "identity_conflict" : "identity_incomplete";
+  return error;
+}
 
-  const result = await query(
+function normalizeIdentityEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+async function findIdentityUsers(client, subject, email) {
+  const result = await client.query(
+    `
+      SELECT id, authentik_subject, email, display_name
+      FROM app_users
+      WHERE authentik_subject = $1 OR lower(email) = $2
+      ORDER BY CASE WHEN authentik_subject = $1 THEN 0 ELSE 1 END, id
+      FOR UPDATE
+    `,
+    [subject, email]
+  );
+  return result.rows;
+}
+
+async function updateIdentityUser(client, userId, { subject, email, displayName, requireUnlinked = false }) {
+  const result = await client.query(
+    `
+      UPDATE app_users
+      SET authentik_subject = $2,
+        email = $3,
+        display_name = COALESCE($4, display_name),
+        last_seen_at = now()
+      WHERE id = $1
+        ${requireUnlinked ? "AND authentik_subject IS NULL" : ""}
+      RETURNING id, authentik_subject, email, display_name
+    `,
+    [userId, subject, email, displayName]
+  );
+  return result.rows[0] || null;
+}
+
+async function reconcileIdentityUsers(client, rows, identity) {
+  const subjectUser = rows.find(row => row.authentik_subject === identity.subject) || null;
+  const emailUsers = rows.filter(row => normalizeIdentityEmail(row.email) === identity.email);
+  if (emailUsers.length > 1) {
+    throw identityError("Authenticated email matches more than one local account", 409);
+  }
+  const emailUser = emailUsers[0] || null;
+
+  if (subjectUser) {
+    if (emailUser && emailUser.id !== subjectUser.id) {
+      throw identityError("Authenticated identity conflicts with an existing email account", 409);
+    }
+    return updateIdentityUser(client, subjectUser.id, identity);
+  }
+
+  if (emailUser) {
+    if (emailUser.authentik_subject && emailUser.authentik_subject !== identity.subject) {
+      throw identityError("Authenticated email is already linked to a different identity", 409);
+    }
+
+    // A subject-less user is an explicit local invitation placeholder. Link it
+    // only after confirming that no different non-null subject owns the email.
+    const linked = await updateIdentityUser(client, emailUser.id, { ...identity, requireUnlinked: true });
+    if (!linked) throw identityError("Authenticated email is already linked to a different identity", 409);
+    return linked;
+  }
+
+  return null;
+}
+
+async function ensureUserWithClient(identity, client) {
+  const normalized = {
+    subject: String(identity?.subject || "").trim(),
+    email: normalizeIdentityEmail(identity?.email),
+    displayName: String(identity?.displayName || "").trim() || null
+  };
+
+  if (!normalized.subject) throw identityError("Authenticated user has no subject claim", 422);
+  if (!normalized.email) throw identityError("Authenticated user has no email claim", 422);
+
+  const existing = await reconcileIdentityUsers(
+    client,
+    await findIdentityUsers(client, normalized.subject, normalized.email),
+    normalized
+  );
+  if (existing) return existing;
+
+  const inserted = await client.query(
     `
       INSERT INTO app_users (authentik_subject, email, display_name, last_seen_at)
       VALUES ($1, $2, $3, now())
-      ON CONFLICT (email) DO UPDATE SET
-        authentik_subject = COALESCE(app_users.authentik_subject, EXCLUDED.authentik_subject),
-        display_name = COALESCE(EXCLUDED.display_name, app_users.display_name),
-        last_seen_at = now()
+      ON CONFLICT DO NOTHING
       RETURNING id, authentik_subject, email, display_name
     `,
-    [identity.subject, identity.email, identity.displayName]
+    [normalized.subject, normalized.email, normalized.displayName]
   );
+  if (inserted.rows[0]) return inserted.rows[0];
 
-  return result.rows[0];
+  // A concurrent login may have inserted the subject or email between the
+  // initial lookup and insert. Re-read it under lock and apply the same checks.
+  const raced = await reconcileIdentityUsers(
+    client,
+    await findIdentityUsers(client, normalized.subject, normalized.email),
+    normalized
+  );
+  if (raced) return raced;
+
+  throw identityError("Unable to establish authenticated user identity", 409);
+}
+
+export async function ensureUser(identity, client = null) {
+  if (client) return ensureUserWithClient(identity, client);
+  return withTransaction(transactionClient => ensureUserWithClient(identity, transactionClient));
 }
 
 export async function authContext(request, reply) {

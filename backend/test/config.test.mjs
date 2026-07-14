@@ -50,3 +50,28 @@ test("production crew access rejects ephemeral fallback and accepts persistent c
   assert.equal(dedicated.status, 0, dedicated.stderr);
   assert.equal(dedicated.stdout, "ok");
 });
+
+test("Authentik tenant-group fallback defaults on and can be disabled explicitly", () => {
+  const script = `
+    import { config } from ${JSON.stringify(configUrl)};
+    process.stdout.write(String(config.oidc.tenantGroupFallbackEnabled));
+  `;
+  const baseEnvironment = { ...process.env, NODE_ENV: "test" };
+  delete baseEnvironment.AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED;
+
+  const defaultResult = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: path.resolve("."),
+    env: baseEnvironment,
+    encoding: "utf8"
+  });
+  assert.equal(defaultResult.status, 0, defaultResult.stderr);
+  assert.equal(defaultResult.stdout, "true");
+
+  const disabledResult = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: path.resolve("."),
+    env: { ...baseEnvironment, AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED: "false" },
+    encoding: "utf8"
+  });
+  assert.equal(disabledResult.status, 0, disabledResult.stderr);
+  assert.equal(disabledResult.stdout, "false");
+});
