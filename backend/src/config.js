@@ -1,6 +1,12 @@
 import "dotenv/config";
+import crypto from "node:crypto";
 
 const environment = process.env.NODE_ENV || "development";
+const baseDomain = String(process.env.BASE_DOMAIN || "876en.org").toLowerCase();
+const configuredMediaSigningSecret = String(process.env.MEDIA_SIGNING_SECRET || "").trim();
+const generatedMediaSigningSecret = configuredMediaSigningSecret
+  ? ""
+  : crypto.randomBytes(32).toString("base64url");
 
 function splitCsv(value) {
   return String(value || "")
@@ -29,7 +35,7 @@ export const config = {
   env: environment,
   port: Number(process.env.PORT || 3000),
   databaseUrl: process.env.DATABASE_URL || "",
-  baseDomain: String(process.env.BASE_DOMAIN || "876en.org").toLowerCase(),
+  baseDomain,
   publicAppUrl: String(process.env.PUBLIC_APP_URL || `https://${process.env.BASE_DOMAIN || "876en.org"}`).replace(/\/+$/, ""),
   platformAdminEmails: splitCsv(process.env.PLATFORM_ADMIN_EMAILS).map(email => email.toLowerCase()),
   platformAdminSubjects: splitCsv(process.env.PLATFORM_ADMIN_SUBJECTS).map(subject => subject.toLowerCase()),
@@ -49,8 +55,9 @@ export const config = {
   storage: {
     driver: process.env.STORAGE_DRIVER || "local",
     root: process.env.STORAGE_ROOT || "/data/inventory-uploads",
-    publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || "",
-    mediaSigningSecret: String(process.env.MEDIA_SIGNING_SECRET || "").trim(),
+    publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || (environment === "production" ? `https://api.${baseDomain}/media` : ""),
+    mediaSigningSecret: configuredMediaSigningSecret || generatedMediaSigningSecret,
+    mediaSigningSecretIsEphemeral: !configuredMediaSigningSecret,
     mediaSessionTtlSeconds: boundedInteger(process.env.MEDIA_SESSION_TTL_SECONDS, 300, 30, 3600),
     mediaUploadStagingTtlHours: boundedInteger(process.env.MEDIA_UPLOAD_STAGING_TTL_HOURS, 24, 1, 168)
   },
