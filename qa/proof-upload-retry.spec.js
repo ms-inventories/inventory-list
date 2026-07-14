@@ -127,6 +127,7 @@ test.describe("proof upload retry and cleanup", () => {
         if (route.request().method() !== "POST") return route.continue();
         submissionAttempts += 1;
         if (submissionAttempts === 1) {
+          await new Promise(resolve => setTimeout(resolve, 350));
           return route.fulfill({
             status: 503,
             contentType: "application/json",
@@ -138,14 +139,26 @@ test.describe("proof upload retry and cleanup", () => {
 
       const { drawer, proofForm } = await openProofForm(page, scenario);
       await proofForm.getByLabel("Add proof photos").setInputFiles(photoFile("retry-proof.jpg"));
-      await proofForm.getByRole("button", { name: "Submit", exact: true }).click();
+      const submitButton = proofForm.getByRole("button", { name: "Submit proof", exact: true });
+      await submitButton.click();
+
+      await expect(proofForm.getByRole("button", { name: "Submitting...", exact: true })).toBeDisabled();
+      await expect(proofForm.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+      await expect(proofForm.getByPlaceholder("Where you found or checked it")).toBeDisabled();
+      await expect.poll(() => submissionAttempts).toBe(1);
+      await proofForm.evaluate(form => {
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      await page.waitForTimeout(50);
+      expect(submissionAttempts).toBe(1);
 
       await expect(page.getByRole("alert").first()).toContainText("Temporary proof failure");
       await expect(page.getByRole("alert").first()).toContainText("uploaded photos will be reused when you retry");
       expect(photoUploadRequests).toBe(1);
       expect(submissionAttempts).toBe(1);
 
-      await proofForm.getByRole("button", { name: "Submit", exact: true }).click();
+      await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
       await expect(drawer).toBeHidden();
       expect(photoUploadRequests).toBe(1);
       expect(submissionAttempts).toBe(2);
@@ -162,6 +175,12 @@ test.describe("proof upload retry and cleanup", () => {
 
     try {
       await seedBrowserIdentity(page, identity);
+      await page.route("**/api/uploads/photos/*", async route => {
+        if (route.request().method() === "DELETE") {
+          await new Promise(resolve => setTimeout(resolve, 350));
+        }
+        await route.continue();
+      });
       await page.route(`**/api/session-items/${scenario.sessionItemId}/submissions`, async route => {
         if (route.request().method() !== "POST") return route.continue();
         return route.fulfill({
@@ -185,21 +204,26 @@ test.describe("proof upload retry and cleanup", () => {
       const { drawer, proofForm } = await openProofForm(page, scenario);
       const firstPhoto = "remove-staged-proof.jpg";
       await proofForm.getByLabel("Add proof photos").setInputFiles(photoFile(firstPhoto));
-      await proofForm.getByRole("button", { name: "Submit", exact: true }).click();
+      await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
       await expect(page.getByRole("alert").first()).toContainText("Forced proof validation failure");
       await expect.poll(() => stagedUploadIds.length).toBe(1);
 
       await proofForm.getByRole("button", { name: `Remove ${firstPhoto}` }).click();
+      await expect(proofForm.getByRole("button", { name: `Removing ${firstPhoto}` })).toBeDisabled();
+      await expect(proofForm.getByText("Removing photo...", { exact: true })).toBeVisible();
+      await expect(proofForm.getByRole("button", { name: "Submit proof", exact: true })).toBeDisabled();
       await expect(proofForm.getByRole("list", { name: "Selected proof photos" })).toHaveCount(0);
       await expect.poll(() => discardedUploadIds).toEqual([stagedUploadIds[0]]);
 
       const secondPhoto = "cancel-staged-proof.jpg";
       await proofForm.getByLabel("Add proof photos").setInputFiles(photoFile(secondPhoto));
-      await proofForm.getByRole("button", { name: "Submit", exact: true }).click();
+      await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
       await expect(page.getByRole("alert").first()).toContainText("Forced proof validation failure");
       await expect.poll(() => stagedUploadIds.length).toBe(2);
 
       await proofForm.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(proofForm.getByRole("button", { name: "Canceling...", exact: true })).toBeDisabled();
+      await expect(proofForm.getByRole("button", { name: "Submit proof", exact: true })).toBeDisabled();
       await expect(drawer).toBeHidden();
       await expect.poll(() => discardedUploadIds).toEqual(stagedUploadIds);
 

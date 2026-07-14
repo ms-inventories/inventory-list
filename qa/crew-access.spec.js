@@ -130,7 +130,7 @@ test.describe("temporary crew access", () => {
       const proofForm = proofDrawer.locator(".proof-form");
       await proofForm.getByRole("button", { name: "Not found", exact: true }).click();
       await proofForm.getByRole("textbox", { name: "Location" }).fill("Temporary crew QA location");
-      await proofForm.getByRole("button", { name: "Submit", exact: true }).click();
+      await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
       await expect(proofDrawer).toBeHidden();
 
       await page.getByRole("button", { name: "Open user menu" }).click();

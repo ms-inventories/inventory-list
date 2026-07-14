@@ -1248,8 +1248,23 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
     note: "",
     photoFiles: []
   });
-  const [isSaving, setIsSaving] = useState(false);
+  const [pendingAction, setPendingAction] = useState("");
+  const isSaving = Boolean(pendingAction);
+  const pendingActionRef = useRef("");
   const uploadedPhotosRef = useRef(new Map());
+
+  function beginAction(action) {
+    if (pendingActionRef.current) return false;
+    pendingActionRef.current = action;
+    setPendingAction(action);
+    return true;
+  }
+
+  function finishAction(action) {
+    if (pendingActionRef.current !== action) return;
+    pendingActionRef.current = "";
+    setPendingAction("");
+  }
 
   async function discardUploadedPhoto(photoFile) {
     const uploaded = uploadedPhotosRef.current.get(photoFile);
@@ -1263,9 +1278,9 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
   }
 
   async function removePhoto(photoFile, photoIndex) {
-    if (isSaving) return;
+    const action = `remove:${photoIndex}`;
+    if (!beginAction(action)) return;
     try {
-      setIsSaving(true);
       await discardUploadedPhoto(photoFile);
       setForm(current => ({
         ...current,
@@ -1274,14 +1289,14 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
     } catch (error) {
       onStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
-      setIsSaving(false);
+      finishAction(action);
     }
   }
 
   async function cancelProof() {
-    if (isSaving) return;
+    const action = "cancel";
+    if (!beginAction(action)) return;
     try {
-      setIsSaving(true);
       for (const photoFile of [...uploadedPhotosRef.current.keys()]) {
         await discardUploadedPhoto(photoFile);
       }
@@ -1289,20 +1304,22 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
     } catch (error) {
       onStatus({ text: `${getApiErrorMessage(error)} Try discard again before closing.`, isError: true });
     } finally {
-      setIsSaving(false);
+      finishAction(action);
     }
   }
 
   async function submitProof(e) {
     e.preventDefault();
+    if (pendingActionRef.current) return;
 
     if (form.status === "found" && !form.photoFiles.length) {
       onStatus({ text: "Add a photo for found items.", isError: true });
       return;
     }
 
+    const action = "submit";
+    if (!beginAction(action)) return;
     try {
-      setIsSaving(true);
       onStatus({ text: "Submitting proof...", isError: false });
       const photos = [];
 
@@ -1346,7 +1363,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
       const retryCopy = uploadedPhotosRef.current.size ? " Your uploaded photos will be reused when you retry." : "";
       onStatus({ text: `${getApiErrorMessage(error)}${retryCopy}`, isError: true });
     } finally {
-      setIsSaving(false);
+      finishAction(action);
     }
   }
 
@@ -1389,6 +1406,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
             key={value}
             aria-pressed={form.status === value}
             autoFocus={value === "found"}
+            disabled={isSaving}
             onClick={() => setForm(current => ({ ...current, status: value }))}
           >
             {label}
@@ -1400,6 +1418,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         <span>Location</span>
         <input
           className="input"
+          disabled={isSaving}
           value={form.locationText}
           placeholder="Where you found or checked it"
           onChange={e => setForm(current => ({ ...current, locationText: e.target.value }))}
@@ -1409,6 +1428,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         <span>Serial number</span>
         <input
           className="input"
+          disabled={isSaving}
           value={form.serialNumber}
           placeholder="Enter the serial number, if visible"
           onChange={e => setForm(current => ({ ...current, serialNumber: e.target.value }))}
@@ -1418,6 +1438,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         <span>{requestNote ? "Response note" : "Note"}</span>
         <textarea
           className="input proof-note"
+          disabled={isSaving}
           value={form.note}
           placeholder={requestNote ? "Explain how this answers the request" : "Add any useful detail"}
           onChange={e => setForm(current => ({ ...current, note: e.target.value }))}
@@ -1433,7 +1454,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
               <button
                 type="button"
                 disabled={isSaving}
-                aria-label={`Remove ${file.name}`}
+                aria-label={pendingAction === `remove:${index}` ? `Removing ${file.name}` : `Remove ${file.name}`}
                 onClick={() => removePhoto(file, index)}
               >
                 <X aria-hidden="true" />
@@ -1442,16 +1463,20 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
           ))}
         </div>
       ) : null}
-      <label className={`photo-picker ${form.photoFiles.length >= 3 ? "disabled" : ""}`}>
+      <label className={`photo-picker ${form.photoFiles.length >= 3 || isSaving ? "disabled" : ""}`}>
         <Camera aria-hidden="true" />
-        <span>{form.photoFiles.length ? `Add another photo (${form.photoFiles.length}/3)` : "Add photos (up to 3)"}</span>
+        <span>{pendingAction.startsWith("remove:")
+          ? "Removing photo..."
+          : form.photoFiles.length
+            ? `Add another photo (${form.photoFiles.length}/3)`
+            : "Add photos (up to 3)"}</span>
         <input
           className="photo-picker-input"
           type="file"
           accept="image/*"
           capture="environment"
           multiple
-          disabled={form.photoFiles.length >= 3}
+          disabled={form.photoFiles.length >= 3 || isSaving}
           aria-label={form.photoFiles.length ? "Add another proof photo" : "Add proof photos"}
           onChange={event => {
             const selectedFiles = [...(event.target.files || [])];
@@ -1471,10 +1496,10 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
       <div className="button-row">
         <button className="btn btn-primary" type="submit" disabled={isSaving}>
           <Send aria-hidden="true" />
-          <span>{isSaving ? "Submitting..." : requestNote ? "Send response" : "Submit"}</span>
+          <span>{pendingAction === "submit" ? "Submitting..." : requestNote ? "Send response" : "Submit proof"}</span>
         </button>
         <button className="btn btn-secondary" type="button" disabled={isSaving} onClick={cancelProof}>
-          <span>{isSaving ? "Working..." : "Cancel"}</span>
+          <span>{pendingAction === "cancel" ? "Canceling..." : "Cancel"}</span>
         </button>
       </div>
     </form>
@@ -4253,7 +4278,7 @@ function SavedEvidencePicker({
   );
 }
 
-function ReviewPanel({ token, tenantSlug, query = "" }) {
+function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSearch, onOpenSessions }) {
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading review queue...", isError: false });
   const [requestingSubmissionId, setRequestingSubmissionId] = useState("");
@@ -4673,6 +4698,14 @@ function ReviewPanel({ token, tenantSlug, query = "" }) {
           <EmptyPanel
             title={hasSearchQuery ? "No matching review work" : "Nothing to review"}
             body={hasSearchQuery ? "Clear the search or try a packet line, session, submitter, serial, location, or proof note." : "Submitted proof will appear here."}
+            action={hasSearchQuery ? (
+              <button className="btn btn-secondary btn-small" type="button" onClick={() => {
+                if (onClearSearch) onClearSearch();
+                else onQueryChange?.("");
+              }}>Clear search</button>
+            ) : (
+              <button className="btn btn-primary btn-small" type="button" onClick={onOpenSessions}>Open inventory sessions</button>
+            )}
           />
         )}
       </div>
@@ -8011,6 +8044,7 @@ function TenantPeoplePanel({
   invitations,
   query = "",
   onQueryChange,
+  onClearSearch,
   onOpenSessions,
   memberForm,
   onMemberFormChange,
@@ -8062,7 +8096,8 @@ function TenantPeoplePanel({
   }
 
   function clearPeopleSearch() {
-    onQueryChange?.("");
+    if (onClearSearch) onClearSearch();
+    else onQueryChange?.("");
   }
 
   return (
@@ -9240,7 +9275,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           ) : null}
 
           {activeTab === "review" && isTenantAdmin ? (
-            <ReviewPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} />
+            <ReviewPanel
+              token={token}
+              tenantSlug={tenantSlug}
+              query={leaderQuery}
+              onQueryChange={setLeaderQuery}
+              onClearSearch={clearLeaderSearch}
+              onOpenSessions={() => openSessions()}
+            />
           ) : null}
 
           {activeTab === "people" && isTenantAdmin ? (
@@ -9251,6 +9293,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               invitations={invitations}
               query={leaderQuery}
               onQueryChange={setLeaderQuery}
+              onClearSearch={clearLeaderSearch}
               onOpenSessions={() => openSessions()}
               memberForm={memberForm}
               onMemberFormChange={setMemberForm}

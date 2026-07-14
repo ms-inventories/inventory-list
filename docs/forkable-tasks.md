@@ -1125,7 +1125,7 @@ Definition of done:
 
 Goal: every async action should feel deliberate.
 
-Status: in progress, 2026-07-11. The async-action audit is complete. Session Found/Not found and close/reopen mutations now use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Legacy viewer login and public unsubscribe also reject repeat submissions while pending. Newsletter and remaining multi-row scalar pending-state follow-ups remain.
+Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel actions now have the same duplicate protection, field/control locking, and action-specific feedback with desktop/mobile QA. Legacy viewer login and public unsubscribe also reject repeat submissions while pending. Newsletter, packet upload, and remaining lower-frequency multi-row pending-state follow-ups remain.
 
 Primary files:
 

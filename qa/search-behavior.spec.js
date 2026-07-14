@@ -76,7 +76,9 @@ test.describe("page-scoped search", () => {
     await expect(reviewResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
     await reviewSearch.fill("missing-review-result");
     await expect(reviewResults.getByText("No matching review work", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Clear search" }).click();
+    await reviewResults.getByRole("button", { name: "Clear search" }).click();
+    await expect(reviewSearch).toBeFocused();
+    await expect(reviewResults.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
 
     await openWorkspaceTab(page, "Team");
     await expect(page.getByRole("heading", { name: "Team", exact: true })).toBeVisible();

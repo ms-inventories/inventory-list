@@ -229,12 +229,12 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-029: Empty states should always give one next action**
   - Current issue: several empty states explain what is missing but do not always include a next button.
   - Desired behavior: empty states include the next action when the user has permission, such as `Create session`, `Upload packet`, `Invite helper`.
-  - Status: in progress, 2026-07-14. Dashboard work/review empty states clear the active search or open the relevant session/queue, Reports can reset all filters, and Team now clears unmatched searches or opens the permanent teammate form with focus. When permanent provisioning is unavailable, Team sends the leader to inventory sessions for temporary crew access instead of presenting unusable fields. Lower-frequency administration empty states still need the same treatment.
+  - Status: in progress, 2026-07-14. Dashboard work/review empty states clear the active search or open the relevant session/queue, the full Review queue now clears unmatched searches with focus restoration or opens inventory sessions when no proof is waiting, Reports can reset all filters, and Team clears unmatched searches or opens the permanent teammate form with focus. When permanent provisioning is unavailable, Team sends the leader to inventory sessions for temporary crew access instead of presenting unusable fields. Lower-frequency administration empty states still need the same treatment.
 
 - [ ] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
   - Desired behavior: labels map to clear destinations: `Open workspace`, `Open session`, `Review queue`, `Import packet`, `Launch app`.
-  - Status: in progress, 2026-07-13. Existing-work destinations now consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`. Packet/import wording and remaining platform/newsletter labels still need consolidation.
+  - Status: in progress, 2026-07-14. Existing-work destinations now consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`; and proof entry uses the explicit `Submit proof` label. Packet/import wording and remaining platform/newsletter labels still need consolidation.
 
 - [x] **UI-031: Mobile-first toolbar cleanup**
   - Current issue: desktop layout is improving, but mobile needs repeated inspection.
@@ -262,7 +262,7 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-036: Loading and error states**
   - Desired behavior: every async button has loading text, disabled state, success state, and a useful failure message.
   - Status: in progress, 2026-07-13. Assignment and claim actions now use row-scoped pending locks and `Claiming...`/saving feedback without freezing unrelated rows. Session lifecycle/direct-check actions already have scoped locks; remaining upload, people, and newsletter actions still need a systematic pass.
-  - Status: in progress, 2026-07-14, through `UX-003`. Session direct-check and close/reopen mutations have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; public unsubscribe and legacy viewer login also lock while pending. Team provisioning polls recover with bounded backoff, member operations remain row-scoped, and legacy copy/resend/revoke actions now identify the exact in-progress operation. Remaining upload, newsletter, and lower-frequency multi-row actions still need a systematic pass.
+  - Status: in progress, 2026-07-14, through `UX-003`. Session direct-check and close/reopen mutations have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; proof submit/remove/cancel actions now use synchronous duplicate guards, lock conflicting fields and controls, and expose action-specific loading labels on desktop and mobile. Public unsubscribe and legacy viewer login also lock while pending. Team provisioning polls recover with bounded backoff, member operations remain row-scoped, and legacy copy/resend/revoke actions identify the exact in-progress operation. Remaining packet upload, newsletter, and lower-frequency multi-row actions still need a systematic pass.
 
 ## P3: Later SaaS Depth
 

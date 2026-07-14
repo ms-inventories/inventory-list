@@ -230,7 +230,7 @@ test.describe("verified item reuse UI", () => {
         && new URL(response.url()).pathname === `/api/session-items/${active.sessionItemId}/submissions`
         && response.ok()
       ));
-      await proofForm.getByRole("button", { name: "Submit", exact: true }).click();
+      await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
       const uploadedPhoto = (await (await uploadResponsePromise).json()).photo;
       const submitted = await (await submissionResponsePromise).json();
       await expect(drawer).toBeHidden();
