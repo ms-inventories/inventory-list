@@ -115,8 +115,51 @@ test("exact email lookup uses the Authentik filter and distinguishes zero, one, 
   assert.equal(calls[1].options.headers.Authorization, `Bearer ${token}`);
 });
 
+test("immutable UUID lookup uses the exact Authentik UUID filter", async () => {
+  const userUuid = "db7a5d19-32f5-4d86-a7c8-87951129ad05";
+  const user = { pk: 42, uuid: userUuid, email: "person@example.test" };
+  const { fetchImpl, calls } = mockFetch(
+    json({ results: [user] }),
+    json({ results: [{ ...user, uuid: "91e8139a-c2ff-4dc1-b423-016a6738a877" }] })
+  );
+  const authentik = client(fetchImpl);
+
+  assert.deepEqual(await authentik.findUserByUuid(userUuid.toUpperCase()), user);
+  assert.equal(await authentik.findUserByUuid(userUuid), null);
+  assert.equal(calls[0].url.pathname, "/api/v3/core/users/");
+  assert.equal(calls[0].url.searchParams.get("uuid"), userUuid);
+  assert.equal(calls[0].url.searchParams.get("page_size"), "2");
+});
+
+test("numeric user lookup uses the Authentik API primary key", async () => {
+  const user = {
+    pk: 42,
+    uuid: "db7a5d19-32f5-4d86-a7c8-87951129ad05",
+    email: "person@example.test"
+  };
+  const { fetchImpl, calls } = mockFetch(json(user));
+
+  assert.deepEqual(await client(fetchImpl).getUserById(42), user);
+  assert.equal(calls[0].url.pathname, "/api/v3/core/users/42/");
+  assert.equal(calls[0].options.method, "GET");
+
+  await assert.rejects(
+    client(async () => {
+      throw new Error("validation should happen before fetch");
+    }).getUserById(0),
+    assertClientError("authentik_config_invalid")
+  );
+});
+
 test("group lookup accepts only the exact requested name and rejects duplicates", async () => {
-  const exact = { pk: groupId, name: "876en-ms", users: [] };
+  const exact = {
+    pk: groupId,
+    name: "876en-ms",
+    users: [],
+    is_superuser: false,
+    parents: [],
+    roles: []
+  };
   const { fetchImpl, calls } = mockFetch(
     json({ results: [{ ...exact, name: "876en-ms-admin" }] }),
     json({ results: [exact] }),
@@ -134,6 +177,7 @@ test("group lookup accepts only the exact requested name and rejects duplicates"
   assert.equal(calls[0].url.pathname, "/api/v3/core/groups/");
   assert.equal(calls[0].url.searchParams.get("name"), "876en-ms");
   assert.equal(calls[0].url.searchParams.get("include_users"), "false");
+  assert.equal(calls[0].url.searchParams.get("include_parents"), "true");
 });
 
 test("createOrLinkUser reuses an exact identity and creates a missing internal user", async () => {
@@ -210,7 +254,14 @@ test("create payload flags must be actual booleans", async () => {
 });
 
 test("ensureGroup is idempotent and recovers from a concurrent create", async () => {
-  const group = { pk: groupId, name: "876en-ms", users: [] };
+  const group = {
+    pk: groupId,
+    name: "876en-ms",
+    users: [],
+    is_superuser: false,
+    parents: [],
+    roles: []
+  };
   const existingMock = mockFetch(json({ results: [group] }));
   assert.deepEqual(
     await client(existingMock.fetchImpl).ensureGroup({ name: group.name }),
@@ -230,6 +281,13 @@ test("ensureGroup is idempotent and recovers from a concurrent create", async ()
     { group, created: false }
   );
   assert.equal(raceMock.calls[1].options.method, "POST");
+  assert.deepEqual(JSON.parse(raceMock.calls[1].options.body), {
+    name: group.name,
+    is_superuser: false,
+    attributes: { inventory_managed: true },
+    parents: [],
+    roles: []
+  });
 });
 
 test("group membership actions match the 2026.5.3 API and wrappers avoid redundant calls", async () => {

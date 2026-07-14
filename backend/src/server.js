@@ -6,6 +6,10 @@ import express from "express";
 import { assertProductionConfig, config } from "./config.js";
 import { closePool, query } from "./db.js";
 import { registerMediaRoutes } from "./media.js";
+import {
+  startProvisioningWorker,
+  stopProvisioningWorker
+} from "./provisioning.js";
 import { registerRoutes } from "./routes.js";
 
 assertProductionConfig();
@@ -74,13 +78,20 @@ registerRoutes(app);
 
 const server = app.listen(config.port, "0.0.0.0", () => {
   console.log(`inventory-list-api listening on ${config.port}`);
+  startProvisioningWorker();
 });
 
-const close = async signal => {
-  console.log(`shutting down from ${signal}`);
-  await new Promise(resolve => server.close(resolve));
-  await closePool();
-  process.exit(0);
+let closing = null;
+const close = signal => {
+  if (closing) return closing;
+  closing = (async () => {
+    console.log(`shutting down from ${signal}`);
+    await new Promise(resolve => server.close(resolve));
+    await stopProvisioningWorker();
+    await closePool();
+    process.exit(0);
+  })();
+  return closing;
 };
 
 process.on("SIGINT", close);

@@ -64,6 +64,8 @@ With the QA stack running:
 npm run qa:test
 ```
 
+The suite defaults to four Playwright workers to keep the local Docker frontend/API proxies stable. Override it for a specific run with `npm run qa:test -- --workers=2` (or another intentional value).
+
 The smoke suite covers:
 
 - Public landing page.

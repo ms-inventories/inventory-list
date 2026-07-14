@@ -194,6 +194,8 @@ The proof emails are best-effort. The API saves the inventory action first, then
 
 ## Authentik
 
+Permanent account creation uses a separate, disabled-by-default management integration. Follow [Permanent Authentik Provisioning](authentik-provisioning.md) for the least-privilege service account, recovery Email Stage UUID, Coolify values, activation smoke test, and rollback. Never store a human Authentik administrator password in the app.
+
 Suggested host:
 
 ```text
@@ -226,7 +228,7 @@ App groups:
 876en-ms
 ```
 
-Tenant access can come from Authentik groups or app database memberships. A user in `876en-ms` can work the MS tenant. A user in both `876en-ms` and `876en-platoon-admin` can administer the MS tenant. A user in `876en-admins` can jump into every tenant for support.
+An explicit app database membership is authoritative for that tenant's role and disabled status. Authentik tenant groups remain a compatibility fallback only when no database membership row exists, controlled by `AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED`. A user in `876en-admins` can still use the audited platform-support override.
 
 Production requires either `PLATFORM_ADMIN_EMAILS` or `PLATFORM_ADMIN_SUBJECTS` even if you also use the `876en-admins` group. Put your first supply/root admin email here when Authentik emits an email claim. If admin diagnostics show no groups or the email is not what you expected, copy the `Subject`, set `PLATFORM_ADMIN_SUBJECTS` to that value, redeploy the backend, and sign in again. This is the bootstrap/support escape hatch while Authentik group claims are being polished.
 

@@ -1,9 +1,14 @@
 import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, errors, jwtVerify } from "jose";
 import { config } from "./config.js";
 import { withTransaction } from "./db.js";
+import {
+  kickProvisioningWorker,
+  satisfyEnrollmentFromVerifiedLogin
+} from "./provisioning.js";
 
 let jwksPromise = null;
 let discoveryPromise = null;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const rejectedBearerTokenErrorCodes = new Set([
   "ERR_JOSE_ALG_NOT_ALLOWED",
@@ -221,6 +226,11 @@ async function verifyBearerToken(token, idToken = "") {
   groups = uniqueStrings(payloads.flatMap(payload => getPayloadGroups(payload)));
 
   const email = getIdentityText(payloads, ["email", "preferred_username"]).toLowerCase();
+  const providerUserUuid = normalizeProviderUserUuid(
+    config.oidc.subjectIsUserUuid
+      ? subject
+      : getIdentityText(payloads, [config.oidc.immutableUserIdClaim])
+  );
   const isPlatformAdmin = includesAnyGroup(groups, [config.oidc.platformAdminGroup, "876en-admins"])
     || config.platformAdminEmails.includes(email)
     || config.platformAdminSubjects.includes(normalizedSubject);
@@ -229,6 +239,7 @@ async function verifyBearerToken(token, idToken = "") {
 
   return {
     subject,
+    providerUserUuid,
     email,
     displayName: getIdentityText(payloads, ["name", "preferred_username", "email"]),
     groups,
@@ -248,6 +259,11 @@ function getDevIdentity(request) {
   const groups = normalizeGroupList(getHeaderValue(request, "x-dev-groups"));
   const normalizedSubject = String(subject).toLowerCase();
   const normalizedEmail = String(email).toLowerCase();
+  const providerUserUuid = normalizeProviderUserUuid(
+    config.oidc.subjectIsUserUuid
+      ? subject
+      : getHeaderValue(request, "x-dev-user-uuid")
+  );
   const isPlatformAdmin = includesAnyGroup(groups, [config.oidc.platformAdminGroup, "876en-admins"])
     || config.platformAdminEmails.includes(normalizedEmail)
     || config.platformAdminSubjects.includes(normalizedSubject);
@@ -256,6 +272,7 @@ function getDevIdentity(request) {
 
   return {
     subject: String(subject),
+    providerUserUuid,
     email: normalizedEmail,
     displayName: String(getHeaderValue(request, "x-dev-name") || email),
     groups,
@@ -288,43 +305,90 @@ function identityError(message, statusCode) {
   return error;
 }
 
+function normalizeProviderUserUuid(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return UUID_PATTERN.test(normalized) ? normalized : "";
+}
+
 function normalizeIdentityEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-async function findIdentityUsers(client, subject, email) {
+async function findIdentityUsers(client, subject, email, providerUserUuid) {
   const result = await client.query(
     `
-      SELECT id, authentik_subject, email, display_name
+      SELECT id, authentik_subject, email, display_name,
+        authentik_user_pk, authentik_user_uuid, authentik_oidc_user_uuid,
+        authentik_enrollment_sent_at, authentik_enrollment_job_id
       FROM app_users
-      WHERE authentik_subject = $1 OR lower(email) = $2
-      ORDER BY CASE WHEN authentik_subject = $1 THEN 0 ELSE 1 END, id
+      WHERE authentik_subject = $1
+        OR lower(email) = $2
+        OR (
+          $3::uuid IS NOT NULL
+          AND (
+            authentik_user_uuid = $3::uuid
+            OR authentik_oidc_user_uuid = $3::uuid
+          )
+        )
+      ORDER BY id
       FOR UPDATE
     `,
-    [subject, email]
+    [subject, email, providerUserUuid || null]
   );
   return result.rows;
 }
 
-async function updateIdentityUser(client, userId, { subject, email, displayName, requireUnlinked = false }) {
+async function updateIdentityUser(client, userId, {
+  subject,
+  email,
+  displayName,
+  providerUserUuid,
+  requireUnlinked = false
+}) {
   const result = await client.query(
     `
       UPDATE app_users
       SET authentik_subject = $2,
         email = $3,
         display_name = COALESCE($4, display_name),
+        authentik_oidc_user_uuid = COALESCE(authentik_oidc_user_uuid, $5::uuid),
         last_seen_at = now()
       WHERE id = $1
         ${requireUnlinked ? "AND authentik_subject IS NULL" : ""}
-      RETURNING id, authentik_subject, email, display_name
+      RETURNING id, authentik_subject, email, display_name, authentik_user_pk,
+        authentik_user_uuid, authentik_oidc_user_uuid,
+        authentik_enrollment_sent_at, authentik_enrollment_job_id
     `,
-    [userId, subject, email, displayName]
+    [userId, subject, email, displayName, providerUserUuid || null]
   );
   return result.rows[0] || null;
 }
 
+function assertImmutableIdentity(row, identity) {
+  const managementUuid = normalizeProviderUserUuid(row?.authentik_user_uuid);
+  const oidcUuid = normalizeProviderUserUuid(row?.authentik_oidc_user_uuid);
+  if (!managementUuid && !oidcUuid) return;
+  if (!identity.providerUserUuid) {
+    throw identityError("Authenticated identity has no immutable user identifier", 422);
+  }
+  if (
+    (managementUuid && managementUuid !== identity.providerUserUuid)
+    || (oidcUuid && oidcUuid !== identity.providerUserUuid)
+  ) {
+    throw identityError("Authenticated identity does not match the provisioned account", 409);
+  }
+}
+
 async function reconcileIdentityUsers(client, rows, identity) {
   const subjectUser = rows.find(row => row.authentik_subject === identity.subject) || null;
+  const immutableUsers = identity.providerUserUuid
+    ? rows.filter(row => [row.authentik_user_uuid, row.authentik_oidc_user_uuid]
+      .some(value => normalizeProviderUserUuid(value) === identity.providerUserUuid))
+    : [];
+  if (immutableUsers.length > 1) {
+    throw identityError("Authenticated identity matches more than one local account", 409);
+  }
+  const immutableUser = immutableUsers[0] || null;
   const emailUsers = rows.filter(row => normalizeIdentityEmail(row.email) === identity.email);
   if (emailUsers.length > 1) {
     throw identityError("Authenticated email matches more than one local account", 409);
@@ -332,13 +396,34 @@ async function reconcileIdentityUsers(client, rows, identity) {
   const emailUser = emailUsers[0] || null;
 
   if (subjectUser) {
+    assertImmutableIdentity(subjectUser, identity);
+    if (immutableUser && immutableUser.id !== subjectUser.id) {
+      throw identityError("Authenticated identity conflicts with an existing account", 409);
+    }
     if (emailUser && emailUser.id !== subjectUser.id) {
       throw identityError("Authenticated identity conflicts with an existing email account", 409);
     }
     return updateIdentityUser(client, subjectUser.id, identity);
   }
 
+  if (immutableUser) {
+    assertImmutableIdentity(immutableUser, identity);
+    if (immutableUser.authentik_subject && immutableUser.authentik_subject !== identity.subject) {
+      throw identityError("Authenticated identity is already linked to a different subject", 409);
+    }
+    if (emailUser && emailUser.id !== immutableUser.id) {
+      throw identityError("Authenticated identity conflicts with an existing email account", 409);
+    }
+    const linked = await updateIdentityUser(client, immutableUser.id, {
+      ...identity,
+      requireUnlinked: !immutableUser.authentik_subject
+    });
+    if (!linked) throw identityError("Authenticated identity is already linked to a different subject", 409);
+    return linked;
+  }
+
   if (emailUser) {
+    assertImmutableIdentity(emailUser, identity);
     if (emailUser.authentik_subject && emailUser.authentik_subject !== identity.subject) {
       throw identityError("Authenticated email is already linked to a different identity", 409);
     }
@@ -357,7 +442,8 @@ async function ensureUserWithClient(identity, client) {
   const normalized = {
     subject: String(identity?.subject || "").trim(),
     email: normalizeIdentityEmail(identity?.email),
-    displayName: String(identity?.displayName || "").trim() || null
+    displayName: String(identity?.displayName || "").trim() || null,
+    providerUserUuid: normalizeProviderUserUuid(identity?.providerUserUuid)
   };
 
   if (!normalized.subject) throw identityError("Authenticated user has no subject claim", 422);
@@ -365,19 +451,28 @@ async function ensureUserWithClient(identity, client) {
 
   const existing = await reconcileIdentityUsers(
     client,
-    await findIdentityUsers(client, normalized.subject, normalized.email),
+    await findIdentityUsers(
+      client,
+      normalized.subject,
+      normalized.email,
+      normalized.providerUserUuid
+    ),
     normalized
   );
   if (existing) return existing;
 
   const inserted = await client.query(
     `
-      INSERT INTO app_users (authentik_subject, email, display_name, last_seen_at)
-      VALUES ($1, $2, $3, now())
+      INSERT INTO app_users (
+        authentik_subject, email, display_name, authentik_oidc_user_uuid, last_seen_at
+      )
+      VALUES ($1, $2, $3, $4::uuid, now())
       ON CONFLICT DO NOTHING
-      RETURNING id, authentik_subject, email, display_name
+      RETURNING id, authentik_subject, email, display_name, authentik_user_pk,
+        authentik_user_uuid, authentik_oidc_user_uuid,
+        authentik_enrollment_sent_at, authentik_enrollment_job_id
     `,
-    [normalized.subject, normalized.email, normalized.displayName]
+    [normalized.subject, normalized.email, normalized.displayName, normalized.providerUserUuid || null]
   );
   if (inserted.rows[0]) return inserted.rows[0];
 
@@ -385,7 +480,12 @@ async function ensureUserWithClient(identity, client) {
   // initial lookup and insert. Re-read it under lock and apply the same checks.
   const raced = await reconcileIdentityUsers(
     client,
-    await findIdentityUsers(client, normalized.subject, normalized.email),
+    await findIdentityUsers(
+      client,
+      normalized.subject,
+      normalized.email,
+      normalized.providerUserUuid
+    ),
     normalized
   );
   if (raced) return raced;
@@ -407,5 +507,12 @@ export async function authContext(request, reply) {
 
   request.authenticatedSubject = identity.subject || "";
   const user = await ensureUser(identity);
+  const hasManagementIdentity = Number.isSafeInteger(Number(user.authentik_user_pk))
+    && Number(user.authentik_user_pk) > 0
+    && UUID_PATTERN.test(String(user.authentik_user_uuid || ""));
+  if (hasManagementIdentity && (!user.authentik_enrollment_sent_at || user.authentik_enrollment_job_id)) {
+    const enrollment = await satisfyEnrollmentFromVerifiedLogin(user.id);
+    if (enrollment.workRequested) kickProvisioningWorker();
+  }
   return { identity, user };
 }

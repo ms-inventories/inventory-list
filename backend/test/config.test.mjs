@@ -75,3 +75,115 @@ test("Authentik tenant-group fallback defaults on and can be disabled explicitly
   assert.equal(disabledResult.status, 0, disabledResult.stderr);
   assert.equal(disabledResult.stdout, "false");
 });
+
+test("Authentik provisioning is inert by default and validates every required setting when enabled", () => {
+  const disabled = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "false",
+    AUTHENTIK_API_ORIGIN: "",
+    AUTHENTIK_API_TOKEN: "",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "",
+    AUTHENTIK_MANAGED_USER_PATH: ""
+  });
+  assert.equal(disabled.status, 0, disabled.stderr);
+
+  const missing = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "http://auth.example.test",
+    AUTHENTIK_API_TOKEN: "",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "not-a-uuid",
+    AUTHENTIK_MANAGED_USER_PATH: ""
+  });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /AUTHENTIK_API_ORIGIN/);
+  assert.match(missing.stderr, /AUTHENTIK_API_TOKEN/);
+  assert.match(missing.stderr, /AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID/);
+  assert.match(missing.stderr, /AUTHENTIK_MANAGED_USER_PATH/);
+
+  const configured = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "https://auth.example.test",
+    AUTHENTIK_API_TOKEN: "least-privilege-service-token",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "61aa7317-087f-4ed0-b446-485b6934b145",
+    AUTHENTIK_MANAGED_USER_PATH: "users/inventory",
+    AUTHENTIK_BASE_GROUP: "876en",
+    AUTHENTIK_TENANT_GROUP_PREFIX: "876en-"
+  });
+  assert.equal(configured.status, 0, configured.stderr);
+
+  const tooLong = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "https://auth.example.test",
+    AUTHENTIK_API_TOKEN: "least-privilege-service-token",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "61aa7317-087f-4ed0-b446-485b6934b145",
+    AUTHENTIK_MANAGED_USER_PATH: "users/inventory",
+    AUTHENTIK_BASE_GROUP: "876en",
+    AUTHENTIK_TENANT_GROUP_PREFIX: "876en-",
+    AUTHENTIK_RECOVERY_TOKEN_DURATION: "days=8"
+  });
+  assert.equal(tooLong.status, 1);
+  assert.match(tooLong.stderr, /days=1 through days=7/);
+
+  const unsafeLease = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "https://auth.example.test",
+    AUTHENTIK_API_TOKEN: "least-privilege-service-token",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "61aa7317-087f-4ed0-b446-485b6934b145",
+    AUTHENTIK_MANAGED_USER_PATH: "users/inventory",
+    AUTHENTIK_BASE_GROUP: "876en",
+    AUTHENTIK_TENANT_GROUP_PREFIX: "876en-",
+    AUTHENTIK_API_TIMEOUT_MS: "30000",
+    AUTHENTIK_PROVISIONING_LEASE_SECONDS: "30"
+  });
+  assert.equal(unsafeLease.status, 1);
+  assert.match(unsafeLease.stderr, /at least three AUTHENTIK_API_TIMEOUT_MS intervals plus 5 seconds/);
+
+  const safeLease = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "https://auth.example.test",
+    AUTHENTIK_API_TOKEN: "least-privilege-service-token",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "61aa7317-087f-4ed0-b446-485b6934b145",
+    AUTHENTIK_MANAGED_USER_PATH: "users/inventory",
+    AUTHENTIK_BASE_GROUP: "876en",
+    AUTHENTIK_TENANT_GROUP_PREFIX: "876en-",
+    AUTHENTIK_API_TIMEOUT_MS: "30000",
+    AUTHENTIK_PROVISIONING_LEASE_SECONDS: "95"
+  });
+  assert.equal(safeLease.status, 0, safeLease.stderr);
+
+  const privilegedBase = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "https://auth.example.test",
+    AUTHENTIK_API_TOKEN: "least-privilege-service-token",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "61aa7317-087f-4ed0-b446-485b6934b145",
+    AUTHENTIK_MANAGED_USER_PATH: "users/inventory",
+    AUTHENTIK_BASE_GROUP: "876en-admins",
+    AUTHENTIK_TENANT_GROUP_PREFIX: "876en-"
+  });
+  assert.equal(privilegedBase.status, 1);
+  assert.match(privilegedBase.stderr, /must not be privileged or tenant-scoped/);
+
+  const configuredPrivilegedBase = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "https://auth.example.test",
+    AUTHENTIK_API_TOKEN: "least-privilege-service-token",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "61aa7317-087f-4ed0-b446-485b6934b145",
+    AUTHENTIK_MANAGED_USER_PATH: "users/inventory",
+    AUTHENTIK_BASE_GROUP: "custom-admins",
+    AUTHENTIK_TENANT_GROUP_PREFIX: "876en-",
+    PLATFORM_ADMIN_GROUP: "custom-admins"
+  });
+  assert.equal(configuredPrivilegedBase.status, 1);
+  assert.match(configuredPrivilegedBase.stderr, /must not be privileged or tenant-scoped/);
+
+  const tenantScopedBase = checkProductionConfig({
+    AUTHENTIK_PROVISIONING_ENABLED: "true",
+    AUTHENTIK_API_ORIGIN: "https://auth.example.test",
+    AUTHENTIK_API_TOKEN: "least-privilege-service-token",
+    AUTHENTIK_RECOVERY_EMAIL_STAGE_UUID: "61aa7317-087f-4ed0-b446-485b6934b145",
+    AUTHENTIK_MANAGED_USER_PATH: "users/inventory",
+    AUTHENTIK_BASE_GROUP: "876en-ms",
+    AUTHENTIK_TENANT_GROUP_PREFIX: "876en-"
+  });
+  assert.equal(tenantScopedBase.status, 1);
+  assert.match(tenantScopedBase.stderr, /must not be privileged or tenant-scoped/);
+});

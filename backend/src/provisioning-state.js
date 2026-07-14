@@ -16,6 +16,34 @@ const safeFailures = Object.freeze({
     message: "This Authentik identity is already linked to another app user.",
     retryable: false
   }),
+  identity_inactive: Object.freeze({
+    message: "The linked Authentik account is inactive. An administrator must reactivate it before setup can continue.",
+    retryable: false
+  }),
+  immutable_identity_missing: Object.freeze({
+    message: "This existing account must sign in once before permanent access can be assigned.",
+    retryable: false
+  }),
+  identity_not_found: Object.freeze({
+    message: "The linked Authentik account could not be found. An administrator must restore or relink it.",
+    retryable: false
+  }),
+  group_conflict: Object.freeze({
+    message: "The matching Authentik group is not tagged for this workspace. An administrator must verify it.",
+    retryable: false
+  }),
+  unsafe_group: Object.freeze({
+    message: "An Authentik access group has a parent, assigned role, or superuser privilege. An administrator must remove that privilege before setup can continue.",
+    retryable: false
+  }),
+  enrollment_pending: Object.freeze({
+    message: "Account setup is being finished by another request. Provisioning will retry automatically.",
+    retryable: true
+  }),
+  enrollment_delivery_unknown: Object.freeze({
+    message: "The account setup email may have been sent, but delivery could not be confirmed. Check the inbox, then retry manually if another email is needed.",
+    retryable: false
+  }),
   provider_not_configured: Object.freeze({
     message: "Permanent account provisioning is not configured yet.",
     retryable: false

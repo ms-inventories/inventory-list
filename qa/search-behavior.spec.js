@@ -86,7 +86,7 @@ test.describe("page-scoped search", () => {
     await expect(peoplePanel.getByText("Matched groups", { exact: true })).toHaveCount(0);
     await expect(peoplePanel.getByText("Authentik", { exact: true })).toHaveCount(0);
     await expect(peoplePanel.locator("code").filter({ hasText: /^876en-/ })).toHaveCount(0);
-    const peopleSearch = page.getByRole("searchbox", { name: "Search people and invitations" });
+    const peopleSearch = page.getByRole("searchbox", { name: "Search teammates" });
     await expect(peopleSearch).toHaveValue("");
     await peopleSearch.fill("qa search helper contributor");
     const peopleResults = page.getByRole("region", { name: "People results" });

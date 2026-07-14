@@ -301,10 +301,34 @@ export function createAuthentikClient({
     );
   }
 
+  async function findUserByUuid(userUuid) {
+    const exactUuid = uuid(userUuid).toLowerCase();
+    const payload = await request("/core/users/", {
+      query: { uuid: exactUuid, page_size: 2 },
+      expectedStatus: 200
+    });
+    return exactMatch(
+      listResults(payload),
+      user => String(user?.uuid || "").trim().toLowerCase() === exactUuid,
+      "user"
+    );
+  }
+
+  async function getUserById(userId) {
+    return objectResult(await request(`/core/users/${positiveInteger(userId)}/`, {
+      expectedStatus: 200
+    }));
+  }
+
   async function findGroupByName(name) {
     const exactName = requiredText(name, 255);
     const payload = await request("/core/groups/", {
-      query: { name: exactName, page_size: 2, include_users: false },
+      query: {
+        name: exactName,
+        page_size: 2,
+        include_users: false,
+        include_parents: true
+      },
       expectedStatus: 200
     });
     return exactMatch(
@@ -366,7 +390,9 @@ export function createAuthentikClient({
     const payload = compactObject([
       ["name", requiredText(name, 255)],
       ["is_superuser", booleanValue(isSuperuser)],
-      ["attributes", safeAttributes(attributes)]
+      ["attributes", safeAttributes(attributes)],
+      ["parents", []],
+      ["roles", []]
     ]);
     return objectResult(await request("/core/groups/", {
       method: "POST",
@@ -457,6 +483,8 @@ export function createAuthentikClient({
   return Object.freeze({
     origin: canonicalOrigin,
     findUserByEmail,
+    findUserByUuid,
+    getUserById,
     findGroupByName,
     createUser,
     createOrLinkUser,

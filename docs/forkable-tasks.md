@@ -813,7 +813,7 @@ Lifecycle note: this flow never creates an Authentik login. Logout, leader remov
 
 Goal: create a real permanent login, tenant group, and app membership from the Team screen.
 
-Status: next MVP task now that `USER-MANAGEMENT-005` is complete; requires a least-privilege Authentik service token and verified enrollment API for the installed version.
+Status: implementation and deployment foundation is in place behind a disabled-by-default feature flag, including authoritative database membership, intended-email matching, the additive identity/job schema, bounded Authentik 2026.5.3 client, durable reconciliation, API/UI states, and safe retry handling. Production activation remains pending a dedicated least-privilege service token, recovery Email Stage UUID, signed-in phone/desktop verification, and cleanup of the tagged test identity. Do not mark complete until that pass succeeds.
 
 Primary files:
 
@@ -824,17 +824,18 @@ Primary files:
 
 Subtasks:
 
-- [ ] Make explicit database membership authoritative for tenant role and disabled status.
-- [ ] Require intended-email matching when accepting the legacy invite, including platform admins.
-- [ ] Add idempotent provisioning jobs that create/link an Authentik identity and exact tenant group.
-- [ ] Create an active per-tenant `Team member` or `Leader` membership and send enrollment/password setup from Authentik.
-- [ ] Persist Authentik identity ID plus an app-managed marker; retry partial failures without duplicating people.
-- [ ] Reconcile role/disable changes safely and expose provisioning failures without leaking credentials.
-- [ ] Create and clean up only tagged integration-test identities.
+- [x] Make explicit database membership authoritative for tenant role and disabled status.
+- [x] Require intended-email matching when accepting the legacy invite, including platform admins.
+- [x] Add idempotent provisioning jobs that create/link an Authentik identity and exact tenant group.
+- [x] Implement per-tenant `Team member` or `Leader` membership plus Authentik enrollment behind the feature flag.
+- [x] Persist Authentik identity ID plus an app-managed marker; retry partial failures without duplicating people.
+- [x] Reconcile role/disable changes safely and expose provisioning failures without leaking credentials.
+- [ ] Configure the dedicated Authentik service token and recovery Email Stage UUID, then activate production.
+- [ ] Complete signed-in phone/desktop verification and clean up only the tagged integration-test identity.
 
 Definition of done:
 
-- A leader can enter name/email once, Authentik sends enrollment, and the new person signs in with the correct tenant-scoped role.
+- A leader can enter name/email once, Authentik sends enrollment, and the new person signs in with the correct tenant-scoped role; the production smoke test and tagged-record cleanup are recorded.
 
 ### USER-MANAGEMENT-003: Authentik Group Sync Status
 

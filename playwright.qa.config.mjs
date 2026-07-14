@@ -5,6 +5,7 @@ const frontendUrl = process.env.QA_FRONTEND_URL || "http://localhost:5175";
 export default defineConfig({
   testDir: "./qa",
   outputDir: "qa-artifacts/test-results",
+  workers: 4,
   timeout: 30_000,
   expect: {
     timeout: 10_000

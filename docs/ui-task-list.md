@@ -34,7 +34,7 @@ Use this as the working backlog before turning individual items into implementat
   - Source: MVP field workflow and live Authentik audit, 2026-07-14.
   - Current issue: the current invite creates only a database membership; a person without an existing Authentik identity cannot sign in to accept it.
   - Desired behavior: a leader enters name/email and selects `Team member` or `Leader`; the backend idempotently creates or links the Authentik identity, assigns the tenant group automatically, creates the authoritative per-tenant membership, and sends the enrollment email.
-  - Status: blocked on creating a least-privilege Authentik service token and verifying the installed instance's enrollment/provider API. Human administrator credentials must not be stored in the app.
+  - Status: implementation/deployment foundation is in place behind `AUTHENTIK_PROVISIONING_ENABLED=false`: database authority, identity/job persistence, the bounded Authentik 2026.5.3 client, durable reconciliation, safe API states, and the streamlined Team UI are implemented. Production completion is still pending a dedicated least-privilege service token, recovery Email Stage UUID, signed-in phone/desktop verification, and cleanup of the tagged test identity. Human administrator credentials must not be stored in the app.
 
 - [ ] **UI-049: Reuse verified item records across sessions**
   - Source: MVP field workflow, 2026-07-14.

@@ -91,7 +91,11 @@ test("ensureUser resolves an existing subject before changing its email", async 
         id: "subject-user",
         authentik_subject: "authentik-subject",
         email: "old@example.test",
-        display_name: "Old name"
+        display_name: "Old name",
+        authentik_user_pk: 42,
+        authentik_user_uuid: "db7a5d19-32f5-4d86-a7c8-87951129ad05",
+        authentik_enrollment_sent_at: "2026-07-14T12:00:00Z",
+        authentik_enrollment_job_id: null
       }]
     },
     (_text, params) => ({
@@ -99,7 +103,11 @@ test("ensureUser resolves an existing subject before changing its email", async 
         id: params[0],
         authentik_subject: params[1],
         email: params[2],
-        display_name: params[3]
+        display_name: params[3],
+        authentik_user_pk: 42,
+        authentik_user_uuid: "db7a5d19-32f5-4d86-a7c8-87951129ad05",
+        authentik_enrollment_sent_at: "2026-07-14T12:00:00Z",
+        authentik_enrollment_job_id: null
       }]
     })
   ]);
@@ -107,12 +115,20 @@ test("ensureUser resolves an existing subject before changing its email", async 
   const user = await ensureUser({
     subject: "authentik-subject",
     email: " New@Example.Test ",
-    displayName: "New name"
+    displayName: "New name",
+    providerUserUuid: "db7a5d19-32f5-4d86-a7c8-87951129ad05"
   }, client);
 
   assert.equal(user.id, "subject-user");
   assert.equal(user.email, "new@example.test");
-  assert.deepEqual(client.calls[0].params, ["authentik-subject", "new@example.test"]);
+  assert.equal(user.authentik_enrollment_sent_at, "2026-07-14T12:00:00Z");
+  assert.equal(user.authentik_enrollment_job_id, null);
+  assert.deepEqual(client.calls[0].params, [
+    "authentik-subject",
+    "new@example.test",
+    "db7a5d19-32f5-4d86-a7c8-87951129ad05"
+  ]);
+  assert.match(client.calls[0].text, /ORDER BY id\s+FOR UPDATE/i);
 });
 
 test("ensureUser links an invited email placeholder with no identity subject", async () => {
@@ -143,6 +159,71 @@ test("ensureUser links an invited email placeholder with no identity subject", a
 
   assert.equal(user.authentik_subject, "new-subject");
   assert.match(client.calls[1].text, /authentik_subject IS NULL/);
+});
+
+test("ensureUser rejects email reuse when the OIDC UUID differs from the provisioned account", async () => {
+  const provisionedUuid = "db7a5d19-32f5-4d86-a7c8-87951129ad05";
+  const differentUuid = "91e8139a-c2ff-4dc1-b423-016a6738a877";
+  const client = scriptedClient([{
+    rows: [{
+      id: "invited-user",
+      authentik_subject: null,
+      email: "invitee@example.test",
+      display_name: "Invitee",
+      authentik_user_uuid: provisionedUuid,
+      authentik_oidc_user_uuid: null
+    }]
+  }]);
+
+  await assert.rejects(
+    ensureUser({
+      subject: "replacement-subject",
+      email: "invitee@example.test",
+      displayName: "Replacement",
+      providerUserUuid: differentUuid
+    }, client),
+    error => error?.statusCode === 409 && error?.code === "identity_conflict"
+  );
+  assert.equal(client.calls.length, 1);
+});
+
+test("ensureUser links by immutable UUID when the Authentik email changed", async () => {
+  const providerUserUuid = "db7a5d19-32f5-4d86-a7c8-87951129ad05";
+  const client = scriptedClient([
+    {
+      rows: [{
+        id: "provisioned-user",
+        authentik_subject: null,
+        email: "old@example.test",
+        display_name: "Existing name",
+        authentik_user_uuid: providerUserUuid,
+        authentik_oidc_user_uuid: null
+      }]
+    },
+    {
+      rows: [{
+        id: "provisioned-user",
+        authentik_subject: "stable-subject",
+        email: "new@example.test",
+        display_name: "Existing name",
+        authentik_oidc_user_uuid: providerUserUuid
+      }]
+    }
+  ]);
+
+  const user = await ensureUser({
+    subject: "stable-subject",
+    email: "new@example.test",
+    displayName: "New token name",
+    providerUserUuid
+  }, client);
+
+  assert.equal(user.id, "provisioned-user");
+  assert.deepEqual(
+    client.calls[0].params,
+    ["stable-subject", "new@example.test", providerUserUuid]
+  );
+  assert.equal(client.calls[1].params[4], providerUserUuid);
 });
 
 test("ensureUser fails closed when an email belongs to a different non-null subject", async () => {

@@ -156,6 +156,9 @@ test.describe("mobile layout audit", () => {
     const createDialog = page.getByRole("dialog", { name: "Create platoon" });
     await expectWithinViewport(page, createDialog);
     await expectContained(createDialog);
+    await expect(createDialog.getByText(/add its leader after permanent account setup is connected/i)).toBeVisible();
+    await expect(createDialog.getByLabel("Platoon admin email")).toBeDisabled();
+    await expect(createDialog.getByLabel("Platoon admin name")).toBeDisabled();
     await createDialog.getByRole("button", { name: "Cancel" }).click();
 
     await openPlatformView(page, "Users");
@@ -171,6 +174,31 @@ test.describe("mobile layout audit", () => {
     await expect(accessRow.getByRole("button", { name: "Copy link" })).toBeVisible();
     await expect(accessRow.getByRole("link", { name: /admin view/i })).toHaveCount(0);
     await expectContained(page.locator("main"));
+  });
+
+  test("permanent Team access stays compact and honest when provisioning is not connected", async ({ page }) => {
+    await seedQaRootSession(page);
+    await page.goto(TENANT_URL);
+    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+
+    await openWorkspaceView(page, "Team");
+    await expect(page.getByRole("heading", { name: "Team", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Add permanent teammate" })).toBeVisible();
+    await expect(page.getByText("Permanent account setup is not connected yet.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add teammate" })).toBeDisabled();
+
+    const peoplePanel = page.locator(".people-panel");
+    await expectContained(peoplePanel);
+    expect(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+
+    const legacyLinks = page.locator(".legacy-links-card");
+    await expect(legacyLinks.getByText("Legacy sign-in links", { exact: true })).toBeVisible();
+    await expect(legacyLinks).not.toHaveAttribute("open", "");
+
+    const manage = page.locator(".team-member-manage > summary").first();
+    await expectMinTargetSize(manage, { height: 44 });
+    await manage.click();
+    await expect(page.locator(".team-member-manage .member-role-select").first()).toBeVisible();
   });
 
   test("platform workspace cards replace clipped tables throughout the mobile drawer breakpoint", async ({ page }) => {

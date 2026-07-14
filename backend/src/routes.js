@@ -25,6 +25,14 @@ import {
   normalizeMediaStorageKey
 } from "./media.js";
 import {
+  enqueueMembershipProvisioning,
+  kickProvisioningWorker,
+  provisioningAvailable,
+  requestEnrollmentResend,
+  retryMembershipProvisioning
+} from "./provisioning.js";
+import { safeProvisioningFailure } from "./provisioning-state.js";
+import {
   isEmailConfigured,
   sendNewsletterIssueEmail,
   sendNewsletterSubscriberReviewEmail,
@@ -47,7 +55,7 @@ const newsletterIssueSchema = z.object({
   body: z.string().min(10).max(10000)
 });
 const newsletterTestSendSchema = z.object({
-  email: z.string().email()
+  email: z.string().email().max(254)
 });
 const frgContentBlockSchema = z.object({
   blockType: z.enum(["announcement", "event", "resource"]),
@@ -167,7 +175,51 @@ function rowToTenant(row) {
   };
 }
 
-function rowToMember(row) {
+export function safeMemberProvisioning(row) {
+  if (!row?.provisioning_job_id) return null;
+
+  const error = row.provisioning_error_code
+    ? safeProvisioningFailure({ code: row.provisioning_error_code })
+    : null;
+
+  const enrollmentSentAt = row.provisioning_enrollment_sent_at || null;
+  const canResendEnrollment = Boolean(
+    row.provisioning_status === "succeeded"
+    && row.provisioning_step === "complete"
+    && row.provisioning_desired_state === "active"
+    && row.provisioning_enrollment_required === true
+    && enrollmentSentAt
+    && row.status !== "disabled"
+    && !row.authentik_subject
+  );
+
+  return {
+    id: row.provisioning_job_id,
+    status: row.provisioning_status,
+    step: row.provisioning_step,
+    desiredRole: row.provisioning_desired_role,
+    desiredState: row.provisioning_desired_state,
+    nextAttemptAt: row.provisioning_next_attempt_at || null,
+    completedAt: row.provisioning_completed_at || null,
+    error,
+    safeError: error?.message || null,
+    retryable: Boolean(error?.retryable),
+    enrollmentRequired: typeof row.provisioning_enrollment_required === "boolean"
+      ? row.provisioning_enrollment_required
+      : null,
+    enrollmentSentAt,
+    canResendEnrollment,
+    enrollment: {
+      required: typeof row.provisioning_enrollment_required === "boolean"
+        ? row.provisioning_enrollment_required
+        : null,
+      sentAt: enrollmentSentAt,
+      canResend: canResendEnrollment
+    }
+  };
+}
+
+export function rowToMember(row) {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -176,8 +228,35 @@ function rowToMember(row) {
     status: row.status,
     email: row.email,
     displayName: row.display_name,
+    accountType: row.account_type || "authentik",
+    hasSignedIn: Boolean(row.authentik_subject),
+    provisioning: safeMemberProvisioning(row),
     createdAt: row.created_at
   };
+}
+
+export function permanentMemberTransition(currentStatus, requestedStatus) {
+  if (!["active", "invited", "disabled"].includes(currentStatus)) {
+    throw new TypeError("Unsupported current member status");
+  }
+  if (requestedStatus !== undefined && !["active", "disabled"].includes(requestedStatus)) {
+    throw new TypeError("Unsupported requested member status");
+  }
+
+  if (requestedStatus === "disabled") {
+    return Object.freeze({ membershipStatus: "disabled", desiredState: "disabled" });
+  }
+  if (requestedStatus === "active") {
+    return Object.freeze({
+      membershipStatus: currentStatus === "active" ? "active" : "invited",
+      desiredState: "active"
+    });
+  }
+
+  return Object.freeze({
+    membershipStatus: currentStatus,
+    desiredState: currentStatus === "disabled" ? "disabled" : "active"
+  });
 }
 
 function rowToWorkspace(row) {
@@ -206,9 +285,8 @@ function rowToCrewAccess(row) {
   };
 }
 
-function getTenantGroupSlugs(identity) {
-  const prefix = String(config.oidc.tenantGroupPrefix || "876en-").toLowerCase();
-  const reserved = new Set([
+function reservedAuthentikGroupNames() {
+  return new Set([
     "876en",
     "876en-admins",
     "876en-frg-admins",
@@ -217,6 +295,11 @@ function getTenantGroupSlugs(identity) {
     String(config.oidc.frgAdminGroup || "").toLowerCase(),
     String(config.oidc.tenantAdminGroup || "").toLowerCase()
   ].filter(Boolean));
+}
+
+function getTenantGroupSlugs(identity) {
+  const prefix = String(config.oidc.tenantGroupPrefix || "876en-").toLowerCase();
+  const reserved = reservedAuthentikGroupNames();
 
   return [...new Set((identity?.groups || [])
     .map(group => String(group || "").trim().toLowerCase())
@@ -379,6 +462,10 @@ async function getAuthHealth(request, reply) {
 async function assertMemberCanLoseAdminRole(client, reply, tenantId, member) {
   if (member.role !== "tenant_admin" || member.status !== "active") return;
 
+  // Serialize last-admin decisions per tenant. Member-row locks alone do not
+  // prevent two different admins from being removed concurrently.
+  await client.query("SELECT id FROM tenants WHERE id = $1 FOR UPDATE", [tenantId]);
+
   const adminCount = await client.query(
     `
       SELECT count(*)::int AS count
@@ -393,6 +480,140 @@ async function assertMemberCanLoseAdminRole(client, reply, tenantId, member) {
   if ((adminCount.rows[0]?.count || 0) <= 1) {
     reply.code(409);
     throw new Error("Add another active platoon admin before changing this member.");
+  }
+}
+
+async function findMemberWithProvisioning(queryFn, tenantId, memberId, { forUpdate = false } = {}) {
+  const result = await queryFn(
+    `
+      SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
+        u.email, u.display_name, u.account_type, u.authentik_subject,
+        p.id AS provisioning_job_id,
+        p.status AS provisioning_status,
+        p.current_step AS provisioning_step,
+        p.desired_role AS provisioning_desired_role,
+        p.desired_state AS provisioning_desired_state,
+        p.next_attempt_at AS provisioning_next_attempt_at,
+        p.completed_at AS provisioning_completed_at,
+        p.last_error_code AS provisioning_error_code,
+        p.last_safe_error AS provisioning_safe_error,
+        p.enrollment_required AS provisioning_enrollment_required,
+        p.enrollment_sent_at AS provisioning_enrollment_sent_at
+      FROM tenant_memberships m
+      JOIN app_users u ON u.id = m.user_id
+      LEFT JOIN authentik_provisioning_jobs p ON p.tenant_membership_id = m.id
+      WHERE m.tenant_id = $1 AND m.id = $2
+      ${forUpdate ? "FOR UPDATE OF m" : ""}
+    `,
+    [tenantId, memberId]
+  );
+  return result.rows[0] || null;
+}
+
+function permanentAccountError(message, statusCode, publicCode) {
+  const error = requestError(message, statusCode);
+  error.publicCode = publicCode;
+  return error;
+}
+
+function assertPermanentAccount(member) {
+  if (!member) return;
+  if (member.account_type === "session_crew") {
+    throw permanentAccountError("Temporary session accounts cannot be managed as permanent members.", 409, "temporary_account");
+  }
+  if (!member.email) {
+    throw permanentAccountError("This account does not have a permanent sign-in email.", 409, "permanent_email_required");
+  }
+}
+
+async function findOrCreatePermanentUser(client, { email, displayName = null }) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail || normalizedEmail.length > 254) {
+    throw permanentAccountError("Enter a valid email address.", 400, "invalid_email");
+  }
+
+  async function preserveExistingName(existingUser) {
+    assertPermanentAccount(existingUser);
+    if (existingUser.display_name || !displayName) return existingUser;
+    const filled = await client.query(
+      `
+        UPDATE app_users
+        SET display_name = $2
+        WHERE id = $1 AND display_name IS NULL
+        RETURNING id, email, display_name, account_type, authentik_subject
+      `,
+      [existingUser.id, displayName]
+    );
+    return filled.rows[0] || existingUser;
+  }
+  const existingUsers = await client.query(
+    `
+      SELECT id, email, display_name, account_type, authentik_subject
+      FROM app_users
+      WHERE lower(email) = $1
+      ORDER BY id
+      FOR UPDATE
+    `,
+    [normalizedEmail]
+  );
+  if (existingUsers.rows.length > 1) {
+    throw permanentAccountError(
+      "More than one account uses this email. An administrator must resolve the duplicate.",
+      409,
+      "email_ambiguous"
+    );
+  }
+
+  let user = existingUsers.rows[0] || null;
+  if (user) {
+    return preserveExistingName(user);
+  }
+
+  const inserted = await client.query(
+    `
+      INSERT INTO app_users (email, display_name, account_type)
+      VALUES ($1, $2, 'authentik')
+      ON CONFLICT (email) DO NOTHING
+      RETURNING id, email, display_name, account_type, authentik_subject
+    `,
+    [normalizedEmail, displayName]
+  );
+  user = inserted.rows[0] || (
+    await client.query(
+      `
+        SELECT id, email, display_name, account_type, authentik_subject
+        FROM app_users
+        WHERE email = $1
+        FOR UPDATE
+      `,
+      [normalizedEmail]
+    )
+  ).rows[0];
+  if (inserted.rows[0]) {
+    assertPermanentAccount(user);
+    return user;
+  }
+  return preserveExistingName(user);
+}
+
+function requirePermanentProvisioning() {
+  if (!provisioningAvailable()) {
+    throw permanentAccountError(
+      "Permanent account setup is not available yet.",
+      503,
+      "provisioning_unavailable"
+    );
+  }
+}
+
+function startProvisioningWork() {
+  try {
+    const worker = kickProvisioningWorker();
+    if (worker && typeof worker.catch === "function") {
+      worker.catch(() => console.error(JSON.stringify({ event: "provisioning_worker_kick_failed" })));
+    }
+  } catch {
+    console.error(JSON.stringify({ event: "provisioning_worker_kick_failed" }));
   }
 }
 
@@ -791,10 +1012,12 @@ function safeTenantAuditDetails(action, value) {
   if (action.startsWith("member.")) {
     return compactAuditDetails({
       email: auditText(metadata.email, 320),
+      displayName: auditText(metadata.displayName, 120),
       previousRole: auditText(metadata.previousRole, 80),
       previousStatus: auditText(metadata.previousStatus, 80),
       role: auditText(metadata.role, 80),
-      status: auditText(metadata.status, 80)
+      status: auditText(metadata.status, 80),
+      acknowledgedUnknownEnrollment: auditBoolean(metadata.acknowledgedUnknownEnrollment)
     });
   }
   if (action.startsWith("invitation.")) {
@@ -2068,7 +2291,7 @@ export function registerRoutes(app) {
   route(app, "post", "/api/newsletter/subscribers", async (request, reply) => {
     const body = parseBody(
       z.object({
-        email: z.string().email(),
+        email: z.string().email().max(254),
         displayName: z.string().min(2).max(120),
         platoon: z.string().min(2).max(120),
         supervisorName: z.string().min(2).max(120)
@@ -2132,7 +2355,7 @@ export function registerRoutes(app) {
   route(app, "post", "/api/newsletter/unsubscribe", async (request) => {
     const body = parseBody(
       z.object({
-        email: z.string().email()
+        email: z.string().email().max(254)
       }),
       request.body
     );
@@ -2682,7 +2905,8 @@ export function registerRoutes(app) {
         ...rowToTenant(row),
         memberCount: row.member_count,
         adminCount: row.admin_count
-      }))
+      })),
+      provisioningAvailable: provisioningAvailable()
     };
   });
 
@@ -2690,14 +2914,28 @@ export function registerRoutes(app) {
     const auth = await requirePlatformAdmin(request, reply);
     const body = parseBody(
       z.object({
-        name: z.string().min(2),
-        slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
-        hostname: z.string().min(4).optional(),
-        adminEmail: z.string().email().optional(),
-        adminDisplayName: z.string().optional()
-      }),
+        name: z.string().trim().min(2),
+        slug: z.string().trim().min(1).max(63)
+          .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/),
+        hostname: z.string().trim().min(4).optional(),
+        adminEmail: z.string().trim().email().max(254).transform(value => value.toLowerCase()).optional(),
+        adminDisplayName: z.string().trim().min(2).max(120).optional()
+      }).strict(),
       request.body
     );
+    const tenantGroupName = `${config.authentikProvisioning.tenantGroupPrefix}${body.slug}`.toLowerCase();
+    if (
+      tenantGroupName.length > 255
+      || reservedAuthentikGroupNames().has(tenantGroupName)
+    ) {
+      reply.code(400);
+      throw permanentAccountError(
+        "This subdomain cannot be used with the configured account groups.",
+        400,
+        "invalid_slug"
+      );
+    }
+    if (body.adminEmail) requirePermanentProvisioning();
 
     const created = await withTransaction(async client => {
       const tenantResult = await client.query(
@@ -2714,32 +2952,53 @@ export function registerRoutes(app) {
 
       let adminMembership = null;
       if (body.adminEmail) {
-        const userResult = await client.query(
-          `
-            INSERT INTO app_users (email, display_name)
-            VALUES ($1, $2)
-            ON CONFLICT (email) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, app_users.display_name)
-            RETURNING id, email, display_name
-          `,
-          [body.adminEmail.toLowerCase(), body.adminDisplayName || null]
-        );
-        const adminUser = userResult.rows[0];
+        const adminUser = await findOrCreatePermanentUser(client, {
+          email: body.adminEmail,
+          displayName: body.adminDisplayName || null
+        });
 
         const membershipResult = await client.query(
           `
             INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
-            VALUES ($1, $2, 'tenant_admin', 'active', $3)
-            ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = 'tenant_admin', status = 'active'
+            VALUES ($1, $2, 'tenant_admin', 'invited', $3)
+            ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+              role = 'tenant_admin',
+              status = CASE
+                WHEN tenant_memberships.status = 'active' THEN 'active'
+                ELSE 'invited'
+              END,
+              invited_by = EXCLUDED.invited_by
             RETURNING id, tenant_id, user_id, role, status, created_at
           `,
           [tenant.id, adminUser.id, auth.user.id]
         );
 
-        adminMembership = {
-          ...membershipResult.rows[0],
-          email: adminUser.email,
-          display_name: adminUser.display_name
-        };
+        await enqueueMembershipProvisioning(client, {
+          membershipId: membershipResult.rows[0].id,
+          desiredRole: "tenant_admin",
+          desiredState: "active",
+          requestedBy: auth.user.id
+        });
+
+        await createAuditEvent(client, {
+          tenantId: tenant.id,
+          actorUserId: auth.user.id,
+          action: "member.provisioning_requested",
+          entityType: "tenant_membership",
+          entityId: membershipResult.rows[0].id,
+          metadata: {
+            email: adminUser.email,
+            displayName: adminUser.display_name || null,
+            role: "tenant_admin",
+            status: membershipResult.rows[0].status
+          }
+        });
+
+        adminMembership = await findMemberWithProvisioning(
+          (text, params) => client.query(text, params),
+          tenant.id,
+          membershipResult.rows[0].id
+        );
       }
 
       await createAuditEvent(client, {
@@ -2754,6 +3013,7 @@ export function registerRoutes(app) {
       return { tenant, adminMembership };
     });
 
+    if (created.adminMembership) startProvisioningWork();
     reply.code(201);
     return {
       tenant: rowToTenant(created.tenant),
@@ -3363,9 +3623,20 @@ export function registerRoutes(app) {
     const result = await query(
       `
         SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
-          u.email, u.display_name
+          u.email, u.display_name, u.account_type, u.authentik_subject,
+          p.id AS provisioning_job_id,
+          p.status AS provisioning_status,
+          p.current_step AS provisioning_step,
+          p.desired_role AS provisioning_desired_role,
+          p.desired_state AS provisioning_desired_state,
+          p.next_attempt_at AS provisioning_next_attempt_at,
+          p.completed_at AS provisioning_completed_at,
+          p.last_error_code AS provisioning_error_code,
+          p.enrollment_required AS provisioning_enrollment_required,
+          p.enrollment_sent_at AS provisioning_enrollment_sent_at
         FROM tenant_memberships m
         JOIN app_users u ON u.id = m.user_id
+        LEFT JOIN authentik_provisioning_jobs p ON p.tenant_membership_id = m.id
         WHERE m.tenant_id = $1
         ORDER BY
           CASE m.role
@@ -3378,56 +3649,125 @@ export function registerRoutes(app) {
       [context.tenant.id]
     );
 
-    return { members: result.rows.map(rowToMember) };
+    return {
+      members: result.rows.map(rowToMember),
+      provisioningAvailable: provisioningAvailable()
+    };
   });
 
   route(app, "post", "/api/tenant/members", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    requirePermanentProvisioning();
     const body = parseBody(
       z.object({
-        email: z.string().email(),
-        displayName: z.string().optional(),
-        role: z.enum(tenantRoles)
-      }),
+        email: z.string().trim().email().max(254).transform(value => value.toLowerCase()),
+        displayName: z.string().trim().min(2).max(120).optional(),
+        role: z.enum(tenantRoles).default("contributor")
+      }).strict(),
       request.body
     );
 
     const member = await withTransaction(async client => {
-      const userResult = await client.query(
+      const user = await findOrCreatePermanentUser(client, {
+        email: body.email,
+        displayName: body.displayName || null
+      });
+      const legacyInvitations = await client.query(
         `
-          INSERT INTO app_users (email, display_name)
-          VALUES ($1, $2)
-          ON CONFLICT (email) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, app_users.display_name)
-          RETURNING id, email, display_name
+          SELECT id
+          FROM tenant_invitations
+          WHERE tenant_id = $1
+            AND lower(email) = $2
+            AND status IN ('pending', 'expired')
+          ORDER BY id
+          FOR UPDATE
         `,
-        [body.email.toLowerCase(), body.displayName || null]
+        [context.tenant.id, body.email]
       );
-      const user = userResult.rows[0];
 
       const memberResult = await client.query(
         `
-          INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
-          VALUES ($1, $2, $3, 'active', $4)
-          ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
-          RETURNING id, tenant_id, user_id, role, status, created_at
+          WITH adopted AS (
+            UPDATE tenant_memberships existing
+            SET role = $3,
+              status = 'invited',
+              invited_by = $4
+            WHERE existing.tenant_id = $1
+              AND existing.user_id = $2
+              AND existing.status = 'invited'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM authentik_provisioning_jobs job
+                WHERE job.tenant_membership_id = existing.id
+              )
+            RETURNING existing.id, existing.tenant_id, existing.user_id,
+              existing.role, existing.status, existing.created_at,
+              true AS adopted_legacy_invitation
+          ), inserted AS (
+            INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
+            SELECT $1, $2, $3, 'invited', $4
+            WHERE NOT EXISTS (SELECT 1 FROM adopted)
+            ON CONFLICT (tenant_id, user_id) DO NOTHING
+            RETURNING id, tenant_id, user_id, role, status, created_at,
+              false AS adopted_legacy_invitation
+          )
+          SELECT * FROM adopted
+          UNION ALL
+          SELECT * FROM inserted
         `,
         [context.tenant.id, user.id, body.role, context.user.id]
       );
+      if (!memberResult.rows[0]) {
+        throw permanentAccountError(
+          "This teammate already has access. Use Manage to change it.",
+          409,
+          "member_exists"
+        );
+      }
+
+      if (memberResult.rows[0].adopted_legacy_invitation) {
+        await client.query(
+          `
+            UPDATE tenant_invitations
+            SET status = 'revoked', revoked_at = now()
+            WHERE id = ANY($1::uuid[])
+          `,
+          [legacyInvitations.rows.map(invitation => invitation.id)]
+        );
+      }
+
+      await enqueueMembershipProvisioning(client, {
+        membershipId: memberResult.rows[0].id,
+        desiredRole: body.role,
+        desiredState: "active",
+        requestedBy: context.user.id
+      });
 
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
-        action: "member.added",
+        action: "member.provisioning_requested",
         entityType: "tenant_membership",
         entityId: memberResult.rows[0].id,
-        metadata: { email: body.email.toLowerCase(), role: body.role }
+        metadata: {
+          email: body.email,
+          displayName: user.display_name || null,
+          role: body.role,
+          status: memberResult.rows[0].status,
+          adoptedLegacyInvitation: memberResult.rows[0].adopted_legacy_invitation === true
+        }
       });
 
-      return { ...memberResult.rows[0], email: user.email, displayName: user.display_name };
+      return findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberResult.rows[0].id
+      );
     });
 
-    reply.code(201);
-    return { member };
+    startProvisioningWork();
+    reply.code(202);
+    return { member: rowToMember(member) };
   });
 
   route(app, "patch", "/api/tenant/members/:memberId", async (request, reply) => {
@@ -3436,35 +3776,30 @@ export function registerRoutes(app) {
     const body = parseBody(
       z.object({
         role: z.enum(tenantRoles).optional(),
-        status: z.enum(memberStatuses).optional()
+        status: z.enum(["active", "disabled"]).optional()
       }).refine(value => value.role || value.status, {
         message: "Provide a role or status change"
       }),
       request.body
     );
+    if (body.status === "active") requirePermanentProvisioning();
 
     const member = await withTransaction(async client => {
-      const currentResult = await client.query(
-        `
-          SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
-            u.email, u.display_name
-          FROM tenant_memberships m
-          JOIN app_users u ON u.id = m.user_id
-          WHERE m.tenant_id = $1 AND m.id = $2
-          FOR UPDATE OF m
-        `,
-        [context.tenant.id, memberId]
+      const current = await findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId,
+        { forUpdate: true }
       );
-
-      const current = currentResult.rows[0];
       if (!current) {
         reply.code(404);
         throw new Error("Member not found");
       }
+      assertPermanentAccount(current);
 
       const nextRole = body.role || current.role;
-      const nextStatus = body.status || current.status;
-      if ((nextRole !== "tenant_admin" || nextStatus !== "active")) {
+      const transition = permanentMemberTransition(current.status, body.status);
+      if (nextRole !== "tenant_admin" || transition.membershipStatus !== "active") {
         await assertMemberCanLoseAdminRole(client, reply, context.tenant.id, current);
       }
 
@@ -3479,8 +3814,15 @@ export function registerRoutes(app) {
           RETURNING m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
             u.email, u.display_name
         `,
-        [context.tenant.id, memberId, nextRole, nextStatus]
+        [context.tenant.id, memberId, nextRole, transition.membershipStatus]
       );
+
+      await enqueueMembershipProvisioning(client, {
+        membershipId: memberId,
+        desiredRole: nextRole,
+        desiredState: transition.desiredState,
+        requestedBy: context.user.id
+      });
 
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
@@ -3493,13 +3835,18 @@ export function registerRoutes(app) {
           previousRole: current.role,
           previousStatus: current.status,
           role: nextRole,
-          status: nextStatus
+          status: transition.membershipStatus
         }
       });
 
-      return updateResult.rows[0];
+      return findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        updateResult.rows[0].id
+      );
     });
 
+    startProvisioningWork();
     return { member: rowToMember(member) };
   });
 
@@ -3508,23 +3855,17 @@ export function registerRoutes(app) {
     const memberId = z.string().uuid().parse(request.params.memberId);
 
     const member = await withTransaction(async client => {
-      const currentResult = await client.query(
-        `
-          SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
-            u.email, u.display_name
-          FROM tenant_memberships m
-          JOIN app_users u ON u.id = m.user_id
-          WHERE m.tenant_id = $1 AND m.id = $2
-          FOR UPDATE OF m
-        `,
-        [context.tenant.id, memberId]
+      const current = await findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId,
+        { forUpdate: true }
       );
-
-      const current = currentResult.rows[0];
       if (!current) {
         reply.code(404);
         throw new Error("Member not found");
       }
+      assertPermanentAccount(current);
 
       await assertMemberCanLoseAdminRole(client, reply, context.tenant.id, current);
 
@@ -3542,6 +3883,13 @@ export function registerRoutes(app) {
         [context.tenant.id, memberId]
       );
 
+      await enqueueMembershipProvisioning(client, {
+        membershipId: memberId,
+        desiredRole: current.role,
+        desiredState: "disabled",
+        requestedBy: context.user.id
+      });
+
       await createAuditEvent(client, {
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
@@ -3551,9 +3899,108 @@ export function registerRoutes(app) {
         metadata: { email: current.email, role: current.role, previousStatus: current.status }
       });
 
-      return updateResult.rows[0];
+      return findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        updateResult.rows[0].id
+      );
     });
 
+    startProvisioningWork();
+    return { member: rowToMember(member) };
+  });
+
+  route(app, "post", "/api/tenant/members/:memberId/retry", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    requirePermanentProvisioning();
+    const memberId = z.string().uuid().parse(request.params.memberId);
+    const member = await withTransaction(async client => {
+      const current = await findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId
+      );
+      if (!current) {
+        reply.code(404);
+        throw new Error("Member not found");
+      }
+      assertPermanentAccount(current);
+
+      const job = await retryMembershipProvisioning(memberId, context.user.id, {
+        tenantId: context.tenant.id,
+        client
+      });
+      if (!job) {
+        reply.code(404);
+        throw new Error("Account setup request not found");
+      }
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "member.provisioning_retried",
+        entityType: "tenant_membership",
+        entityId: memberId,
+        metadata: {
+          email: current.email,
+          displayName: current.display_name || null,
+          role: current.role,
+          status: current.status,
+          acknowledgedUnknownEnrollment: job.acknowledgedUnknownEnrollment === true
+        }
+      });
+      return findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId
+      );
+    });
+    startProvisioningWork();
+    reply.code(202);
+    return { member: rowToMember(member) };
+  });
+
+  route(app, "post", "/api/tenant/members/:memberId/resend-enrollment", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    requirePermanentProvisioning();
+    const memberId = z.string().uuid().parse(request.params.memberId);
+    const member = await withTransaction(async client => {
+      const current = await findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId
+      );
+      if (!current) {
+        reply.code(404);
+        throw new Error("Member not found");
+      }
+      assertPermanentAccount(current);
+
+      const job = await requestEnrollmentResend(memberId, context.user.id, {
+        tenantId: context.tenant.id,
+        client
+      });
+      if (!job) {
+        reply.code(404);
+        throw new Error("Account setup request not found");
+      }
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "member.enrollment_resend_requested",
+        entityType: "tenant_membership",
+        entityId: memberId,
+        metadata: { email: current.email, displayName: current.display_name || null, role: current.role, status: current.status }
+      });
+      return findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId
+      );
+    });
+    startProvisioningWork();
+    reply.code(202);
     return { member: rowToMember(member) };
   });
 
@@ -3577,7 +4024,7 @@ export function registerRoutes(app) {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
-        email: z.string().email(),
+        email: z.string().email().max(254),
         displayName: z.string().optional(),
         role: z.enum(tenantRoles).default("contributor"),
         expiresInDays: z.number().int().min(1).max(60).default(14)
@@ -3591,31 +4038,27 @@ export function registerRoutes(app) {
     const expiresAt = new Date(Date.now() + body.expiresInDays * 24 * 60 * 60 * 1000);
 
     const invite = await withTransaction(async client => {
-      const userResult = await client.query(
-        `
-          INSERT INTO app_users (email, display_name)
-          VALUES ($1, $2)
-          ON CONFLICT (email) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, app_users.display_name)
-          RETURNING id, email, display_name
-        `,
-        [email, body.displayName || null]
-      );
-      const user = userResult.rows[0];
+      const user = await findOrCreatePermanentUser(client, {
+        email,
+        displayName: body.displayName || null
+      });
 
-      await client.query(
+      const membershipResult = await client.query(
         `
           INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
           VALUES ($1, $2, $3, 'invited', $4)
-          ON CONFLICT (tenant_id, user_id) DO UPDATE SET
-            role = EXCLUDED.role,
-            status = CASE
-              WHEN tenant_memberships.status = 'active' THEN 'active'
-              ELSE 'invited'
-            END,
-            invited_by = EXCLUDED.invited_by
+          ON CONFLICT (tenant_id, user_id) DO NOTHING
+          RETURNING id
         `,
         [context.tenant.id, user.id, body.role, context.user.id]
       );
+      if (!membershipResult.rows[0]) {
+        throw permanentAccountError(
+          "This teammate already has access. Use Manage to change it.",
+          409,
+          "member_exists"
+        );
+      }
 
       const inviteResult = await client.query(
         `
@@ -3847,15 +4290,37 @@ export function registerRoutes(app) {
         return { forbidden: true };
       }
 
-      const membershipResult = await client.query(
+      const currentMembership = await client.query(
         `
-          INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
-          VALUES ($1, $2, $3, 'active', $4)
-          ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role, status = 'active'
-          RETURNING id, tenant_id, user_id, role, status, created_at
+          SELECT id, tenant_id, user_id, role, status, created_at
+          FROM tenant_memberships
+          WHERE tenant_id = $1 AND user_id = $2
+          FOR UPDATE
         `,
-        [invite.tenant_id, auth.user.id, invite.role, invite.invited_by]
+        [invite.tenant_id, auth.user.id]
       );
+      if (currentMembership.rows[0]?.status === "disabled") {
+        return { forbidden: true };
+      }
+
+      const membershipResult = currentMembership.rows[0]?.status === "active"
+        ? currentMembership
+        : await client.query(
+          `
+            INSERT INTO tenant_memberships (tenant_id, user_id, role, status, invited_by)
+            VALUES ($1, $2, $3, 'active', $4)
+            ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+              role = EXCLUDED.role,
+              status = 'active',
+              invited_by = EXCLUDED.invited_by
+            WHERE tenant_memberships.status = 'invited'
+            RETURNING id, tenant_id, user_id, role, status, created_at
+          `,
+          [invite.tenant_id, auth.user.id, invite.role, invite.invited_by]
+        );
+      if (!membershipResult.rows[0]) {
+        return { forbidden: true };
+      }
 
       const updatedInvite = await client.query(
         `
@@ -3881,7 +4346,9 @@ export function registerRoutes(app) {
         membership: {
           ...membershipResult.rows[0],
           email: auth.user.email,
-          display_name: auth.user.display_name
+          display_name: auth.user.display_name,
+          account_type: "authentik",
+          authentik_subject: auth.user.authentik_subject
         }
       };
     });
