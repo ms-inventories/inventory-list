@@ -3412,6 +3412,69 @@ button {
 
 .add-teammate-card {
   align-self: start;
+  gap: 0;
+}
+
+.add-teammate-summary {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.add-teammate-summary::-webkit-details-marker {
+  display: none;
+}
+
+.add-teammate-summary:focus-visible {
+  border-radius: var(--radius);
+  outline: 3px solid rgba(54, 91, 62, 0.2);
+  outline-offset: 3px;
+}
+
+.add-teammate-summary-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.add-teammate-summary-copy p,
+.add-teammate-title {
+  margin: 0;
+}
+
+.add-teammate-title {
+  color: var(--ink);
+  font-size: 1.1rem;
+  line-height: 1.2;
+}
+
+.add-teammate-summary > .status-pill,
+.add-teammate-chevron {
+  margin-left: auto;
+}
+
+.add-teammate-chevron {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+
+.add-teammate-card[open] .add-teammate-chevron {
+  transform: rotate(180deg);
+}
+
+.add-teammate-content {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 14px;
 }
 
 .team-email-note {

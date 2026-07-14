@@ -36,10 +36,10 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: a leader enters name/email and selects `Team member` or `Leader`; the backend idempotently creates or links the Authentik identity, assigns the tenant group automatically, creates the authoritative per-tenant membership, and sends the enrollment email.
   - Status: implementation/deployment foundation is in place behind `AUTHENTIK_PROVISIONING_ENABLED=false`: database authority, identity/job persistence, the bounded Authentik 2026.5.3 client, durable reconciliation, safe API states, and the streamlined Team UI are implemented. Production completion is still pending a dedicated least-privilege service token, recovery Email Stage UUID, signed-in phone/desktop verification, and cleanup of the tagged test identity. Human administrator credentials must not be stored in the app.
 
-- [ ] **UI-049: Reuse verified item records across sessions**
+- [x] **UI-049: Reuse verified item records across sessions**
   - Source: MVP field workflow, 2026-07-14.
   - Desired behavior: approved location/serial/reference photos can become the known item record; later packet imports suggest likely matches; the leader confirms the match and chooses up to three canonical old/new photos without losing evidence history.
-  - Status: planned after crew access and account provisioning. Requires explicit media-promotion and item-match APIs rather than treating every historical proof photo as permanent reference data.
+  - Status: complete, ACP-published, and production-verified, 2026-07-14. Packet imports suggest tenant-scoped likely records without exposing them to contributors; leaders confirm or dismiss the match, can prefill trusted location/serial, and explicitly choose whether to save up to three old/new canonical photos during one approval transaction. Evidence remains immutable, automatic saving is off, legacy references are backfilled safely, and API/browser coverage verifies authorization, closeout, and mobile presentation.
 
 - [x] **UI-041: Recover cleanly from abandoned packet/session flows**
   - Source: screen recording from 2026-07-09 21:34.
@@ -229,7 +229,7 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-029: Empty states should always give one next action**
   - Current issue: several empty states explain what is missing but do not always include a next button.
   - Desired behavior: empty states include the next action when the user has permission, such as `Create session`, `Upload packet`, `Invite helper`.
-  - Status: in progress, 2026-07-13. Dashboard work/review empty states now clear the active search or open the relevant session/queue, and Reports can reset all filters. Remaining People/invite and lower-frequency administration empty states still need the same treatment.
+  - Status: in progress, 2026-07-14. Dashboard work/review empty states clear the active search or open the relevant session/queue, Reports can reset all filters, and Team now clears unmatched searches or opens the permanent teammate form with focus. When permanent provisioning is unavailable, Team sends the leader to inventory sessions for temporary crew access instead of presenting unusable fields. Lower-frequency administration empty states still need the same treatment.
 
 - [ ] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
@@ -262,7 +262,7 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-036: Loading and error states**
   - Desired behavior: every async button has loading text, disabled state, success state, and a useful failure message.
   - Status: in progress, 2026-07-13. Assignment and claim actions now use row-scoped pending locks and `Claiming...`/saving feedback without freezing unrelated rows. Session lifecycle/direct-check actions already have scoped locks; remaining upload, people, and newsletter actions still need a systematic pass.
-  - Status: in progress, 2026-07-11, through `UX-003`. Session direct-check and close/reopen mutations now have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; public unsubscribe and legacy viewer login also lock while pending. Remaining newsletter and multi-row action audits are documented follow-ups.
+  - Status: in progress, 2026-07-14, through `UX-003`. Session direct-check and close/reopen mutations have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; public unsubscribe and legacy viewer login also lock while pending. Team provisioning polls recover with bounded backoff, member operations remain row-scoped, and legacy copy/resend/revoke actions now identify the exact in-progress operation. Remaining upload, newsletter, and lower-frequency multi-row actions still need a systematic pass.
 
 ## P3: Later SaaS Depth
 
@@ -283,8 +283,7 @@ Use this as the working backlog before turning individual items into implementat
 ## Current Suggested Work Order
 
 1. Publish and production-verify the completed `UI-045`/`UI-046` proof polish and `UI-047` crew-code flow at phone, tablet, and docked-desktop widths.
-2. Make database membership authoritative, fix invite-email matching, and implement `UI-048` permanent Authentik provisioning behind a safe feature flag.
-3. Implement `UI-049` verified-item reuse and canonical-photo selection.
-4. Complete `UI-036`, `UI-029`, and `UI-030` while touching each remaining surface; keep `OPS-002` as an owner-only deferred verification.
+2. Configure and production-verify the implemented `UI-048` permanent Authentik provisioning feature using its dedicated service identity and recovery stage.
+3. Complete `UI-036`, `UI-029`, and `UI-030` while touching each remaining surface; keep `OPS-002` as an owner-only deferred verification.
 
 This order follows the actual field event: leader starts work, brings the crew in, people claim and prove items, the leader closes the event, and the next event benefits from verified history.

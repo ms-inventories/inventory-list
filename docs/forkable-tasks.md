@@ -624,7 +624,7 @@ Definition of done:
 
 Goal: carry trusted location and reference photos into later inventory sessions without confusing historical proof with the permanent item record.
 
-Status: planned next after permanent Authentik provisioning; temporary crew onboarding is complete, 2026-07-14.
+Status: complete, ACP-published, and production-verified, 2026-07-14. Matching, explicit leader confirmation, transactional record promotion, three-photo canonical selection, evidence preservation, legacy backfill, and retained-media authorization are covered by API and responsive browser QA.
 
 Primary files:
 
@@ -635,11 +635,11 @@ Primary files:
 
 Subtasks:
 
-- [ ] Suggest known-item matches during packet review using exact LIN/NSN/serial first and bounded fuzzy fallback second.
-- [ ] Require a leader to confirm or reject each suggested match.
-- [ ] On approval, let the leader retain the known location/serial or replace them with the new verified values.
-- [ ] Let the leader choose up to three canonical old/new reference photos while preserving immutable evidence history.
-- [ ] Keep media authorization, tenant isolation, and audit events intact during promotion/replacement.
+- [x] Suggest known-item matches during packet review using exact LIN/NSN/serial first and bounded fuzzy fallback second.
+- [x] Require a leader to confirm or reject each suggested match.
+- [x] On approval, let the leader retain the known location/serial or replace them with the new verified values.
+- [x] Let the leader choose up to three canonical old/new reference photos while preserving immutable evidence history.
+- [x] Keep media authorization, tenant isolation, and audit events intact during promotion/replacement.
 
 Definition of done:
 

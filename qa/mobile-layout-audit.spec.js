@@ -183,9 +183,14 @@ test.describe("mobile layout audit", () => {
 
     await openWorkspaceView(page, "Team");
     await expect(page.getByRole("heading", { name: "Team", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Add permanent teammate" })).toBeVisible();
+    await expect(page.getByText("Add teammate", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Not connected", { exact: true })).toBeVisible();
+    const addTeammate = page.locator(".add-teammate-card");
+    await expect(addTeammate).not.toHaveAttribute("open", "");
+    await addTeammate.locator(".add-teammate-summary").click();
     await expect(page.getByText("Permanent account setup is not connected yet.", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Add teammate" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Open inventory sessions" })).toBeVisible();
+    await expect(page.getByLabel("Name", { exact: true })).toHaveCount(0);
 
     const peoplePanel = page.locator(".people-panel");
     await expectContained(peoplePanel);

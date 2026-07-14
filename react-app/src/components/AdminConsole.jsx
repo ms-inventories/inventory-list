@@ -8010,6 +8010,8 @@ function TenantPeoplePanel({
   members,
   invitations,
   query = "",
+  onQueryChange,
+  onOpenSessions,
   memberForm,
   onMemberFormChange,
   onCreateMember,
@@ -8021,7 +8023,7 @@ function TenantPeoplePanel({
   onResendInvitation,
   onRevokeInvitation,
   inviteLinksById,
-  inviteActionId,
+  inviteActionsById,
   memberActionId,
   lastInviteUrl,
   isSaving,
@@ -8047,6 +8049,21 @@ function TenantPeoplePanel({
     invite.status,
     formatInviteStatus(invite.status)
   ], query));
+  const addTeammateRef = useRef(null);
+  const memberNameRef = useRef(null);
+
+  function openAddTeammate() {
+    if (!provisioningAvailable) {
+      onOpenSessions?.();
+      return;
+    }
+    if (addTeammateRef.current) addTeammateRef.current.open = true;
+    window.requestAnimationFrame(() => memberNameRef.current?.focus());
+  }
+
+  function clearPeopleSearch() {
+    onQueryChange?.("");
+  }
 
   return (
     <div className="people-panel">
@@ -8064,78 +8081,95 @@ function TenantPeoplePanel({
       </section>
 
       <div className="admin-grid people-grid">
-        <section className="admin-card add-teammate-card">
-          <div className="admin-card-heading">
+        <details className="admin-card add-teammate-card" ref={addTeammateRef}>
+          <summary className="add-teammate-summary">
             <span className="admin-icon">
               <MailPlus aria-hidden="true" />
             </span>
-            <div>
+            <span className="add-teammate-summary-copy">
               <p className="eyebrow">Permanent access</p>
-              <h2>Add permanent teammate</h2>
-            </div>
+              <strong className="add-teammate-title">Add teammate</strong>
+            </span>
+            {!provisioningAvailable ? (
+              <span className="status-pill pending">Not connected</span>
+            ) : (
+              <ChevronDown className="add-teammate-chevron" aria-hidden="true" />
+            )}
+          </summary>
+
+          <div className="add-teammate-content">
+            {!provisioningAvailable ? (
+              <>
+                <div className="team-setup-unavailable" role="status">
+                  <AlertCircle aria-hidden="true" />
+                  <span>Permanent account setup is not connected yet.</span>
+                </div>
+                <p className="team-email-note">For today&apos;s inventory, create temporary access from the active session.</p>
+                <button className="btn btn-primary btn-full" type="button" onClick={onOpenSessions}>
+                  <ListChecks aria-hidden="true" />
+                  <span>Open inventory sessions</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="team-email-note" id="permanentTeammateHelp">
+                  New accounts receive a secure setup link. Existing accounts connect automatically.
+                </p>
+
+                <form className="admin-form team-member-form" onSubmit={onCreateMember}>
+                  <label className="field-label" htmlFor="memberName">Name</label>
+                  <input
+                    id="memberName"
+                    ref={memberNameRef}
+                    className="input"
+                    required
+                    minLength={2}
+                    maxLength={120}
+                    autoComplete="name"
+                    disabled={isSaving}
+                    value={memberForm.displayName}
+                    placeholder="Full name"
+                    onChange={e => onMemberFormChange(current => ({ ...current, displayName: e.target.value }))}
+                  />
+
+                  <label className="field-label" htmlFor="memberEmail">Email</label>
+                  <input
+                    id="memberEmail"
+                    className="input"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    required
+                    maxLength={254}
+                    aria-describedby="permanentTeammateHelp"
+                    disabled={isSaving}
+                    value={memberForm.email}
+                    placeholder="name@example.com"
+                    onChange={e => onMemberFormChange(current => ({ ...current, email: e.target.value }))}
+                  />
+
+                  <label className="field-label" htmlFor="memberRole">Access</label>
+                  <select
+                    id="memberRole"
+                    className="select"
+                    disabled={isSaving}
+                    value={memberForm.role}
+                    onChange={e => onMemberFormChange(current => ({ ...current, role: e.target.value }))}
+                  >
+                    {permanentTeamRoleOptions.map(option => (
+                      <option value={option.value} key={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+
+                  <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
+                    <UserPlus aria-hidden="true" />
+                    <span>{isSaving ? "Adding teammate..." : "Add teammate"}</span>
+                  </button>
+                </form>
+              </>
+            )}
           </div>
-
-          <p className="team-email-note" id="permanentTeammateHelp">
-            New accounts receive a secure setup link. Existing accounts connect without another setup email.
-          </p>
-
-          {!provisioningAvailable ? (
-            <div className="team-setup-unavailable" role="status">
-              <AlertCircle aria-hidden="true" />
-              <span>Permanent account setup is not connected yet.</span>
-            </div>
-          ) : null}
-
-          <form className="admin-form team-member-form" onSubmit={onCreateMember}>
-            <label className="field-label" htmlFor="memberName">Name</label>
-            <input
-              id="memberName"
-              className="input"
-              required
-              minLength={2}
-              maxLength={120}
-              autoComplete="name"
-              disabled={!provisioningAvailable || isSaving}
-              value={memberForm.displayName}
-              placeholder="Full name"
-              onChange={e => onMemberFormChange(current => ({ ...current, displayName: e.target.value }))}
-            />
-
-            <label className="field-label" htmlFor="memberEmail">Email</label>
-            <input
-              id="memberEmail"
-              className="input"
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              required
-              maxLength={254}
-              aria-describedby="permanentTeammateHelp"
-              disabled={!provisioningAvailable || isSaving}
-              value={memberForm.email}
-              placeholder="name@example.com"
-              onChange={e => onMemberFormChange(current => ({ ...current, email: e.target.value }))}
-            />
-
-            <label className="field-label" htmlFor="memberRole">Access</label>
-            <select
-              id="memberRole"
-              className="select"
-              disabled={!provisioningAvailable || isSaving}
-              value={memberForm.role}
-              onChange={e => onMemberFormChange(current => ({ ...current, role: e.target.value }))}
-            >
-              {permanentTeamRoleOptions.map(option => (
-                <option value={option.value} key={option.value}>{option.label}</option>
-              ))}
-            </select>
-
-            <button className="btn btn-primary btn-full" type="submit" disabled={isSaving || !provisioningAvailable}>
-              <UserPlus aria-hidden="true" />
-              <span>{isSaving ? "Adding teammate..." : "Add teammate"}</span>
-            </button>
-          </form>
-        </section>
+        </details>
 
         <section className="admin-card admin-card-wide" aria-label="People results">
           <div className="admin-card-heading">
@@ -8244,6 +8278,13 @@ function TenantPeoplePanel({
             <EmptyPanel
               title={hasSearchQuery ? "No matching teammates" : "No teammates yet"}
               body={hasSearchQuery ? "Try another name, email, role, or status." : "Add your first permanent teammate."}
+              action={hasSearchQuery ? (
+                <button className="btn btn-secondary btn-small" type="button" onClick={clearPeopleSearch}>Clear search</button>
+              ) : (
+                <button className="btn btn-primary btn-small" type="button" onClick={openAddTeammate}>
+                  {provisioningAvailable ? "Add teammate" : "Open inventory sessions"}
+                </button>
+              )}
             />
           )}
         </section>
@@ -8270,7 +8311,8 @@ function TenantPeoplePanel({
           {visibleInvitations.length ? (
             <div className="admin-list compact">
               {visibleInvitations.map(invite => {
-                const isWorking = inviteActionId === invite.id;
+                const inviteActionKind = inviteActionsById[invite.id] || "";
+                const isWorking = Boolean(inviteActionKind);
                 const inviteLink = inviteLinksById[invite.id];
 
                 return (
@@ -8286,18 +8328,18 @@ function TenantPeoplePanel({
                         <>
                           <button className="btn btn-secondary btn-small" type="button" disabled={isWorking} onClick={() => onCopyInviteLink(invite)}>
                             <Copy aria-hidden="true" />
-                            <span>Copy link</span>
+                            <span>{isWorking && inviteActionKind === "copy" ? "Refreshing..." : "Copy link"}</span>
                           </button>
                           <button className="btn btn-secondary btn-small" type="button" disabled={isWorking} onClick={() => onResendInvitation(invite)}>
                             <Send aria-hidden="true" />
-                            <span>{isWorking ? "Working..." : "Resend"}</span>
+                            <span>{isWorking && inviteActionKind === "resend" ? "Sending..." : "Resend"}</span>
                           </button>
                         </>
                       ) : null}
                       {inviteCanBeRevoked(invite) ? (
                         <button className="btn btn-danger-soft btn-small" type="button" disabled={isWorking} onClick={() => onRevokeInvitation(invite.id)}>
                           <Trash2 aria-hidden="true" />
-                          <span>Revoke</span>
+                          <span>{isWorking && inviteActionKind === "revoke" ? "Revoking..." : "Revoke"}</span>
                         </button>
                       ) : null}
                     </div>
@@ -8309,6 +8351,9 @@ function TenantPeoplePanel({
             <EmptyPanel
               title={hasSearchQuery ? "No matching links" : "No legacy links"}
               body={hasSearchQuery ? "Try another email, role, or status." : "Nothing to manage here."}
+              action={hasSearchQuery ? (
+                <button className="btn btn-secondary btn-small" type="button" onClick={clearPeopleSearch}>Clear search</button>
+              ) : null}
             />
           )}
         </div>
@@ -8351,7 +8396,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [status, setStatus] = useState({ text: "Loading tenant...", isError: false });
   const [lastInviteUrl, setLastInviteUrl] = useState("");
   const [inviteLinksById, setInviteLinksById] = useState({});
-  const [inviteActionId, setInviteActionId] = useState("");
+  const [inviteActionsById, setInviteActionsById] = useState({});
   const [memberActionId, setMemberActionId] = useState("");
   const [notifications, setNotifications] = useState([]);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
@@ -8704,8 +8749,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
   }
 
-  async function refreshInvitation(invite, { sendEmail }) {
-    setInviteActionId(invite.id);
+  async function refreshInvitation(invite, { sendEmail, actionKind }) {
+    setInviteActionsById(current => ({ ...current, [invite.id]: actionKind }));
     try {
       const data = await apiRequest(`/tenant/invitations/${invite.id}/resend`, {
         method: "POST",
@@ -8728,12 +8773,17 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
       return null;
     } finally {
-      setInviteActionId("");
+      setInviteActionsById(current => {
+        if (current[invite.id] !== actionKind) return current;
+        const next = { ...current };
+        delete next[invite.id];
+        return next;
+      });
     }
   }
 
   async function copyInviteLink(invite) {
-    const data = await refreshInvitation(invite, { sendEmail: false });
+    const data = await refreshInvitation(invite, { sendEmail: false, actionKind: "copy" });
     const inviteUrl = data?.invitation?.inviteUrl;
     if (!inviteUrl) return;
 
@@ -8751,7 +8801,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   async function resendInvitation(invite) {
-    const data = await refreshInvitation(invite, { sendEmail: true });
+    const data = await refreshInvitation(invite, { sendEmail: true, actionKind: "resend" });
     if (!data) return;
 
     const email = data.email || {};
@@ -8765,7 +8815,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   async function revokeInvitation(invitationId) {
-    setInviteActionId(invitationId);
+    setInviteActionsById(current => ({ ...current, [invitationId]: "revoke" }));
     try {
       await apiRequest(`/tenant/invitations/${invitationId}/revoke`, { method: "POST", token, tenantSlug });
       setInviteLinksById(current => {
@@ -8778,7 +8828,12 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
-      setInviteActionId("");
+      setInviteActionsById(current => {
+        if (current[invitationId] !== "revoke") return current;
+        const next = { ...current };
+        delete next[invitationId];
+        return next;
+      });
     }
   }
 
@@ -9195,6 +9250,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               members={members}
               invitations={invitations}
               query={leaderQuery}
+              onQueryChange={setLeaderQuery}
+              onOpenSessions={() => openSessions()}
               memberForm={memberForm}
               onMemberFormChange={setMemberForm}
               onCreateMember={createPermanentMember}
@@ -9206,7 +9263,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               onResendInvitation={resendInvitation}
               onRevokeInvitation={revokeInvitation}
               inviteLinksById={inviteLinksById}
-              inviteActionId={inviteActionId}
+              inviteActionsById={inviteActionsById}
               memberActionId={memberActionId}
               lastInviteUrl={lastInviteUrl}
               isSaving={isSaving}
