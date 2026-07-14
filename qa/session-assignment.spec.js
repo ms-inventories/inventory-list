@@ -109,21 +109,17 @@ test.describe("session assignment", () => {
     await addPacketRows(page);
 
     const toolKitRow = page.locator(".session-item", { hasText: "Tool Kit" }).first();
-    if (testInfo.project.name === "mobile-chrome") {
-      await expect(toolKitRow.locator(".session-assignment-control")).toBeHidden();
-      await expect(toolKitRow.getByRole("button", { name: "Found", exact: true })).toBeHidden();
-      await expect(toolKitRow.getByRole("button", { name: "Not found", exact: true })).toBeHidden();
-      await expect(toolKitRow.getByRole("button", { name: "Claim item" })).toBeVisible();
-      await toolKitRow.getByRole("button", { name: /Open details for/ }).click();
-      const drawer = page.getByRole("dialog");
-      await drawer.locator("footer").getByRole("combobox").selectOption({ label: "QA NCO" });
-      await expect(drawer.getByRole("status")).toContainText("Row assigned.");
-      await drawer.getByRole("button", { name: "Close item details" }).click();
-    } else {
-      await expect(toolKitRow.locator(".session-assignment-control select")).toBeVisible();
-      await expect(toolKitRow.getByRole("button", { name: "Found", exact: true })).toBeVisible();
-      await toolKitRow.locator(".session-assignment-control select").selectOption({ label: "QA NCO" });
-    }
+    await expect(toolKitRow.locator(".session-assignment-control")).toHaveCount(0);
+    await expect(toolKitRow.getByRole("button", { name: "Found", exact: true })).toHaveCount(0);
+    await expect(toolKitRow.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
+    await expect(toolKitRow.getByRole("button", { name: "Claim item" })).toBeVisible();
+    await toolKitRow.getByRole("button", { name: /Open details for/ }).click();
+    const assignmentDrawer = page.getByRole("dialog");
+    const leaderTools = assignmentDrawer.locator("details.session-detail-disclosure").filter({ hasText: "Manage item" });
+    await leaderTools.locator("summary").click();
+    await leaderTools.getByRole("combobox").selectOption({ label: "QA NCO" });
+    await expect(assignmentDrawer.getByRole("status")).toContainText("Row assigned.");
+    await assignmentDrawer.getByRole("button", { name: "Close item details" }).click();
     await expect(toolKitRow.getByText("Assigned to QA NCO")).toBeVisible();
 
     await seedQaSession(page, qaNcoIdentity);
@@ -134,24 +130,35 @@ test.describe("session assignment", () => {
     await page.getByRole("button", { name: /^Mine\b/ }).click();
 
     await expect(page.getByText("Assigned to QA NCO")).toBeVisible();
-    await expect(page.getByText("TOOL KIT CARPENTERS")).toBeVisible();
+    await expect(page.getByText("Tool Kit", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: /^Unclaimed\b/ }).click();
     const generatorRow = page.locator(".session-item", { hasText: "TAMPER,VIBRATING" }).first();
     if (testInfo.project.name === "mobile-chrome") {
       await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeVisible();
       await generatorRow.getByRole("button", { name: "Claim item" }).click();
-      await expect(page.getByRole("status")).toContainText("Item claimed.");
+      await expect(page.getByRole("dialog").getByRole("status")).toContainText("Item claimed.");
     } else {
       await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeVisible();
       await generatorRow.getByRole("button", { name: "Claim item" }).click();
     }
     await expect(generatorRow.getByText("Assigned to QA NCO")).toBeVisible();
-    const claimedProofForm = generatorRow.locator(".proof-form");
+    await expect(generatorRow.locator(".proof-form")).toHaveCount(0);
+    const proofDrawer = page.getByRole("dialog");
+    await expect(proofDrawer).toBeVisible();
+    const claimedProofForm = proofDrawer.locator(".proof-form");
     await expect(claimedProofForm).toBeVisible();
     await claimedProofForm.getByRole("button", { name: "Cancel" }).click();
-    await expect(generatorRow.locator("[data-proof-item-id]")).toBeFocused();
+    await expect(proofDrawer).toBeHidden();
     await page.getByRole("button", { name: /^Mine\b/ }).click();
-    await expect(page.locator(".session-item", { hasText: "TAMPER,VIBRATING" })).toBeVisible();
+    const mineGeneratorRow = page.locator(".session-item", { hasText: "TAMPER,VIBRATING" });
+    await expect(mineGeneratorRow).toBeVisible();
+    await expect(mineGeneratorRow.locator(".proof-form")).toHaveCount(0);
+    await mineGeneratorRow.getByRole("button", { name: "Add proof" }).click();
+    const reopenedProofDrawer = page.getByRole("dialog");
+    await expect(reopenedProofDrawer.locator(".proof-form")).toBeVisible();
+    await expect(mineGeneratorRow.locator(".proof-form")).toHaveCount(0);
+    await reopenedProofDrawer.locator(".proof-form").getByRole("button", { name: "Cancel" }).click();
+    await expect(reopenedProofDrawer).toBeHidden();
 
     const sessions = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
       headers: qaHeaders(qaAdminIdentity)

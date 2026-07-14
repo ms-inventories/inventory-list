@@ -64,6 +64,9 @@ test.describe("recorded packet and session regression", () => {
 
     await expect(packetDialog).toBeHidden();
     await expect(page.locator(".session-summary", { hasText: sessionName })).toBeVisible();
+    const importHistoryDisclosure = page.locator("details.packet-import-history");
+    await expect(importHistoryDisclosure).toBeVisible();
+    await importHistoryDisclosure.locator("summary").click();
     const importHistory = page.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
     await expect(importHistory).toBeVisible();
     await expect(importHistory).toContainText("application/pdf");
@@ -92,6 +95,9 @@ test.describe("recorded packet and session regression", () => {
     await expect(archivedSession).toBeVisible();
     await archivedSession.click();
 
+    const persistedHistoryDisclosure = page.locator("details.packet-import-history");
+    await expect(persistedHistoryDisclosure).toBeVisible();
+    await persistedHistoryDisclosure.locator("summary").click();
     const persistedHistory = page.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
     await expect(persistedHistory).toContainText("application/pdf");
     await expect(persistedHistory).toContainText(/\d+ KB/);

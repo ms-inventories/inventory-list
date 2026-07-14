@@ -619,13 +619,38 @@ Definition of done:
 
 - A platoon admin can abandon a bad import/session without stale errors, duplicate empty sessions, or unclear closed-session clutter.
 
+### SESSION-006: Verified Item Reuse
+
+Goal: carry trusted location and reference photos into later inventory sessions without confusing historical proof with the permanent item record.
+
+Status: planned after temporary/permanent onboarding, defined 2026-07-14.
+
+Primary files:
+
+- `backend/db/`
+- `backend/src/routes.js`
+- `react-app/src/components/AdminConsole.jsx`
+- new matching/media-promotion QA specs
+
+Subtasks:
+
+- [ ] Suggest known-item matches during packet review using exact LIN/NSN/serial first and bounded fuzzy fallback second.
+- [ ] Require a leader to confirm or reject each suggested match.
+- [ ] On approval, let the leader retain the known location/serial or replace them with the new verified values.
+- [ ] Let the leader choose up to three canonical old/new reference photos while preserving immutable evidence history.
+- [ ] Keep media authorization, tenant isolation, and audit events intact during promotion/replacement.
+
+Definition of done:
+
+- A later inventory recognizes the same equipment, reuses only leader-confirmed facts, and keeps no more than three canonical reference photos per item.
+
 ## Review And Evidence
 
 ### REVIEW-001: Review Queue Actions
 
 Goal: make approve/reject/request-more-proof fully trustworthy.
 
-Status: implemented locally, awaiting ACP, 2026-07-10. Desktop/mobile QA now creates isolated pending submissions and verifies approve, reject, and more-proof decisions across submission history, session item state, review queue membership, session/dashboard counts, contributor notifications, and visible confirmation feedback.
+Status: hardened locally, awaiting ACP, 2026-07-14. Desktop/mobile QA verifies approve, reject, more-proof, follow-up submission replacement, stale review conflicts, queue removal, session item state, and visible confirmation feedback.
 
 Primary files:
 
@@ -667,6 +692,31 @@ Subtasks:
 Definition of done:
 
 - A reviewer can judge proof without opening raw image links one by one.
+
+### REVIEW-003: Single Open Review Cycle
+
+Goal: guarantee that an item cannot require the leader to approve older proof after approving the newest proof.
+
+Status: implemented locally and QA-covered, awaiting ACP, 2026-07-14.
+
+Primary files:
+
+- `backend/db/015_submission_review_supersession.sql`
+- `backend/src/routes.js`
+- `react-app/src/components/AdminConsole.jsx`
+- `qa/proof-review-reliability.spec.js`
+
+Subtasks:
+
+- [x] Preserve older submissions as `superseded` history while allowing only one actionable proof per item.
+- [x] Resolve the prior evidence request when a response arrives.
+- [x] Reject repeated, replaced, and closed-session review actions with a conflict.
+- [x] Limit proof submissions to three photos in both API and UI.
+- [x] Present pending proof as one role-specific action: `Awaiting review` for helpers or `Review proof` for leaders.
+
+Definition of done:
+
+- The newest proof appears once in the queue and one leader decision removes the item from review work.
 
 ## User Management
 
@@ -719,6 +769,62 @@ Subtasks:
 Definition of done:
 
 - A tenant admin can promote, demote, or disable members safely.
+
+### USER-MANAGEMENT-005: Session Crew Codes
+
+Goal: let a leader bring temporary helpers into one inventory without requiring Authentik account administration in the field.
+
+Status: next MVP task, defined 2026-07-14.
+
+Primary files:
+
+- `backend/db/`
+- `backend/src/auth.js`
+- `backend/src/routes.js`
+- `react-app/src/App.jsx`
+- `react-app/src/components/AdminConsole.jsx`
+- new focused API and mobile QA specs
+
+Subtasks:
+
+- [ ] Generate a cryptographically random, zero-padded four-digit code labeled with the helper's name.
+- [ ] Store only a keyed digest; expire after seven days; consume exactly once under a row lock.
+- [ ] Exchange the code for a high-entropy HttpOnly session bound to one active inventory session.
+- [ ] Rate-limit and return the same response for invalid, expired, consumed, or revoked codes.
+- [ ] Allow only session read, claim/release, upload, proof submission, minimal profile, and logout.
+- [ ] Revoke every temporary grant/session atomically when the inventory session closes or is deleted.
+- [ ] Add a mobile-first `Invite crew` / `Use crew code` flow and closeout revocation count.
+
+Definition of done:
+
+- A helper can use a shared four-digit code once, work only the intended session, and loses access immediately at closeout.
+
+### USER-MANAGEMENT-006: Permanent Authentik Provisioning
+
+Goal: create a real permanent login, tenant group, and app membership from the Team screen.
+
+Status: planned after `USER-MANAGEMENT-005`; requires a least-privilege Authentik service token and verified enrollment API for the installed version.
+
+Primary files:
+
+- `backend/src/`
+- `backend/db/`
+- `react-app/src/components/AdminConsole.jsx`
+- deployment configuration and mocked integration tests
+
+Subtasks:
+
+- [ ] Make explicit database membership authoritative for tenant role and disabled status.
+- [ ] Require intended-email matching when accepting the legacy invite, including platform admins.
+- [ ] Add idempotent provisioning jobs that create/link an Authentik identity and exact tenant group.
+- [ ] Create an active per-tenant `Team member` or `Leader` membership and send enrollment/password setup from Authentik.
+- [ ] Persist Authentik identity ID plus an app-managed marker; retry partial failures without duplicating people.
+- [ ] Reconcile role/disable changes safely and expose provisioning failures without leaking credentials.
+- [ ] Create and clean up only tagged integration-test identities.
+
+Definition of done:
+
+- A leader can enter name/email once, Authentik sends enrollment, and the new person signs in with the correct tenant-scoped role.
 
 ### USER-MANAGEMENT-003: Authentik Group Sync Status
 

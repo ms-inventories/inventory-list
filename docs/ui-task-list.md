@@ -13,6 +13,34 @@ Use this as the working backlog before turning individual items into implementat
 
 ## P0: Make The Main Flow Reliable
 
+- [x] **UI-045: Make one proof review resolve one item**
+  - Source: live field feedback, 2026-07-14.
+  - Current issue: submitting follow-up proof leaves the older pending/request-more-proof submission actionable, so the same item can reappear and require approval twice.
+  - Desired behavior: only the newest proof is actionable, older evidence remains visible as history, one approval resolves the item, and stale review actions fail clearly.
+  - Status: implemented locally and QA-covered, awaiting ACP. New proof now supersedes the prior open review cycle atomically, resolves its evidence request, limits each submission to three photos, and stale/repeated review actions return a conflict instead of mutating the item again.
+
+- [x] **UI-046: Streamline session rows, proof entry, and compact admin layouts**
+  - Source: desktop-with-DevTools and mobile field screenshots, 2026-07-14.
+  - Current issue: the proof form is squeezed into a flex row, selecting a photo makes the surface appear to move, pending items show competing actions, item cards repeat reference data, and the platform dashboard table clips at compact desktop widths.
+  - Desired behavior: one stable proof drawer, one state-specific primary action, compact item cards, secondary facts behind disclosures, and contained platform tables at phone/tablet/docked-desktop widths.
+  - Status: implemented locally and under focused responsive QA, awaiting ACP. Proof entry is drawer-only, supports three removable photo selections, pending contributors see `Awaiting review`, leaders see `Review proof`, import/details/history are disclosures, and the dashboard preview is a three-column compact table.
+
+- [ ] **UI-047: Add one-time session crew codes**
+  - Source: MVP field workflow, 2026-07-14.
+  - Desired behavior: a leader names a temporary helper, generates a one-time four-digit code valid for at most seven days, shares it, and the helper lands directly in that active session. Consumption is atomic and rate-limited; closing the session revokes every temporary session immediately.
+  - Status: next MVP implementation. Temporary access must be session-scoped and must not grant People, Settings, Reports, other sessions, or platform access.
+
+- [ ] **UI-048: Provision permanent accounts through Authentik**
+  - Source: MVP field workflow and live Authentik audit, 2026-07-14.
+  - Current issue: the current invite creates only a database membership; a person without an existing Authentik identity cannot sign in to accept it.
+  - Desired behavior: a leader enters name/email and selects `Team member` or `Leader`; the backend idempotently creates or links the Authentik identity, assigns the tenant group automatically, creates the authoritative per-tenant membership, and sends the enrollment email.
+  - Status: blocked on creating a least-privilege Authentik service token and verifying the installed instance's enrollment/provider API. Human administrator credentials must not be stored in the app.
+
+- [ ] **UI-049: Reuse verified item records across sessions**
+  - Source: MVP field workflow, 2026-07-14.
+  - Desired behavior: approved location/serial/reference photos can become the known item record; later packet imports suggest likely matches; the leader confirms the match and chooses up to three canonical old/new photos without losing evidence history.
+  - Status: planned after crew access and account provisioning. Requires explicit media-promotion and item-match APIs rather than treating every historical proof photo as permanent reference data.
+
 - [x] **UI-041: Recover cleanly from abandoned packet/session flows**
   - Source: screen recording from 2026-07-09 21:34.
   - Status: implemented locally, awaiting ACP, 2026-07-10. Focused lifecycle/error tests pass, the packet-wizard session-loading race is covered, and `qa/recorded-packet-flow.spec.js` replays import, closeout, navigation, source history, stale-error checks, and screenshots on desktop/mobile.
@@ -141,7 +169,7 @@ Use this as the working backlog before turning individual items into implementat
 - [x] **UI-018: Review queue actions**
   - Current issue: approve/reject/request more proof exists conceptually, but needs full confidence in live behavior and status feedback.
   - Desired behavior: every review action updates the queue, item state, session progress, and notification state.
-  - Status: implemented locally, awaiting ACP, 2026-07-10. Approve, reject, and more-proof now have nearby loading/confirmation feedback and desktop/mobile QA verifies queue, row, session-count, history, and contributor-notification state.
+  - Status: hardened locally, awaiting ACP, 2026-07-14. Approve, reject, and more-proof have nearby feedback; follow-up submissions now supersede the older actionable proof so a single decision clears the item, with stale-action, queue, and desktop/mobile regression coverage.
 
 - [x] **UI-019: Reports view**
   - Current issue: reporting exists as closeout export pieces, but there is no clear Reports page.
@@ -158,7 +186,7 @@ Use this as the working backlog before turning individual items into implementat
 - [x] **UI-021: Invite helper needs full lifecycle**
   - Current issue: invite creation exists, but admin workflow needs resend/copy/revoke/expire clarity.
   - Desired behavior: invite list shows status, expiration, last sent, copy link, resend email, revoke.
-  - Status: completed in `USER-MANAGEMENT-001` with QA invite lifecycle coverage.
+  - Status: existing-account invite lifecycle completed in `USER-MANAGEMENT-001`, but this is not sufficient for new users because it does not provision an Authentik identity. `UI-047` and `UI-048` now own the usable field invitation paths.
 
 - [x] **UI-022: Member role editing**
   - Current issue: members are listed but role management needs a visible flow.
@@ -254,8 +282,10 @@ Use this as the working backlog before turning individual items into implementat
 
 ## Current Suggested Work Order
 
-1. Keep the owner-only `OPS-002` rotation confirmation as a deferred, unverified follow-up; it does not block local feature work.
-2. `UI-036`: loading/error states, beginning with session-row and close/reopen mutation locks.
-3. `UI-029` and `UI-030`: actionable empty states and consistent destination/action labels.
+1. Finish and publish `UI-045`/`UI-046`, then verify the production proof/review flow at phone, tablet, and docked-desktop widths.
+2. Build `UI-047` session-scoped crew codes and immediate closeout revocation.
+3. Make database membership authoritative, fix invite-email matching, and implement `UI-048` permanent Authentik provisioning behind a safe feature flag.
+4. Implement `UI-049` verified-item reuse and canonical-photo selection.
+5. Complete `UI-036`, `UI-029`, and `UI-030` while touching each remaining surface; keep `OPS-002` as an owner-only deferred verification.
 
-This order prioritizes workflow correctness and diagnosability before adding more surface area.
+This order follows the actual field event: leader starts work, brings the crew in, people claim and prove items, the leader closes the event, and the next event benefits from verified history.
