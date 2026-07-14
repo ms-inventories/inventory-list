@@ -20,8 +20,9 @@
     "check:packet": "node --test scripts/packet-parser.test.mjs",
     "check:search": "node --test scripts/search.test.mjs",
     "check:api": "npm --prefix backend run check",
+    "check:frontend-lock": "npm --prefix react-app ci --workspaces=false --audit=false --fund=false",
     "check:static": "node --check ocr.js && node --check script.js && node --check admin.js",
-    "check": "npm run check:static && npm run check:api && npm run check:packet && npm run check:search && npm run build:frontend"
+    "check": "npm run check:static && npm run check:frontend-lock && npm run check:api && npm run check:packet && npm run check:search && npm run build:frontend"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1"
