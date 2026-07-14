@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import cors from "cors";
 import express from "express";
 import { assertProductionConfig, config } from "./config.js";
-import { closePool } from "./db.js";
+import { closePool, query } from "./db.js";
 import { registerMediaRoutes } from "./media.js";
 import { registerRoutes } from "./routes.js";
 
@@ -10,6 +12,19 @@ assertProductionConfig();
 
 if (config.env === "production" && config.storage.mediaSigningSecretIsEphemeral) {
   console.warn("MEDIA_SIGNING_SECRET is not configured; using a process-local signing key. Set a persistent secret before scaling beyond one API instance.");
+}
+
+async function verifyProductionDependencies() {
+  await query("SELECT 1");
+
+  await fs.mkdir(config.storage.root, { recursive: true });
+  const probePath = path.join(config.storage.root, `.startup-probe-${crypto.randomUUID()}`);
+  await fs.writeFile(probePath, "ready", { flag: "wx" });
+  await fs.unlink(probePath);
+}
+
+if (config.env === "production") {
+  await verifyProductionDependencies();
 }
 
 const app = express();
