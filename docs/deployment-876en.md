@@ -346,7 +346,13 @@ COOLIFY_DEPLOY_TOKEN
 
 The frontend webhook is required for the React app deploy. The backend webhook can stay empty until the backend resource is ready. The workflow uses the Coolify deploy webhook with a `GET` request and the deploy token as a bearer token.
 
-The frontend job also accepts Coolify's generic doc-style secret names as a fallback:
+Webhook acceptance is not treated as a successful release. Coolify returns a deployment UUID, and the workflow derives that Coolify instance's `/api/v1` base from an HTTPS webhook ending in `/api/v1/deploy`, then polls `GET /deployments/{uuid}`. Query parameters and fragments are never carried into the status URL. Each configured frontend/backend deployment must reach `finished` within 45 minutes. `failed`, cancelled, unknown, repeatedly unreadable, and timed-out deployments fail the GitHub Actions run. When Coolify reports a Git commit SHA, the workflow also checks that it matches the commit that started the run.
+
+Enable the Coolify API and give `COOLIFY_DEPLOY_TOKEN` both `read` and `deploy` permissions. The workflow never prints the webhook URL, bearer token, API response bodies, or deployment logs. Failures show only the target, HTTP/status category, and a shortened deployment UUID; inspect the full deployment log inside Coolify.
+
+References: [Coolify deployment status API](https://coolify.io/docs/api-reference/api/deployments/get-deployment-by-uuid) and [Coolify API authorization](https://coolify.io/docs/api-reference/authorization).
+
+The frontend deployment target also accepts Coolify's generic doc-style secret names as a fallback:
 
 ```text
 COOLIFY_WEBHOOK
