@@ -44,7 +44,7 @@ test.describe("recorded packet and session regression", () => {
     const packetDialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(packetDialog).toBeVisible();
     await expect(packetDialog.locator("option", { hasText: sessionName })).toHaveCount(1);
-    await packetDialog.getByRole("button", { name: "Continue" }).click();
+    await packetDialog.getByRole("button", { name: "Choose source" }).click();
     await expect(packetDialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
 
     const fileChooserPromise = page.waitForEvent("filechooser");
@@ -77,6 +77,12 @@ test.describe("recorded packet and session regression", () => {
     await expect(importHistory).toContainText(/\d+ KB/);
     await expect(importHistory).toContainText("uploaded by QA Platoon Admin");
     await expect(importHistory.getByRole("link", { name: "Source" })).toBeVisible();
+    await importHistory.getByRole("button", { name: "Review again" }).click();
+    await expect(packetDialog).toBeVisible();
+    await expect(packetDialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
+    await expect(packetDialog.getByText("army-packet-clean.pdf")).toBeVisible();
+    await packetDialog.getByRole("button", { name: "Close packet wizard" }).click();
+    await expect(packetDialog).toBeHidden();
     await captureStep(page, testInfo, "04-session-with-source-history");
 
     await page.getByRole("button", { name: "Close out" }).click();

@@ -48,6 +48,52 @@ test.describe("tenant start inventory wizard", () => {
     const packetDialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(packetDialog).toBeVisible();
     await expect(packetDialog.locator("option", { hasText: sessionName })).toHaveCount(1);
-    await expect(packetDialog.getByRole("button", { name: "Continue" })).toBeVisible();
+    await expect(packetDialog.getByRole("button", { name: "Choose source" })).toBeVisible();
+  });
+
+  test("starting inventory locks the form and retries without duplicate sessions", async ({ page }) => {
+    let startAttempts = 0;
+    await page.route("**/api/inventory/sessions", async route => {
+      if (route.request().method() !== "POST") return route.continue();
+      startAttempts += 1;
+      if (startAttempts === 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary session start failure" })
+        });
+      }
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ session: { id: "qa-start-retry-session", name: "Retry inventory", status: "active" } })
+      });
+    });
+
+    await page.goto(TENANT_URL);
+    await signInWithQaPersona(page, "Platoon admin");
+    await page.getByRole("button", { name: "Start new inventory" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Start inventory" });
+    await dialog.getByLabel("Session name").fill("Retry inventory");
+    await dialog.getByText("Create blank session").click();
+    const startButton = dialog.getByRole("button", { name: "Start session" });
+    await startButton.evaluate(button => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await expect.poll(() => startAttempts).toBe(1);
+    await expect(dialog.getByRole("button", { name: "Starting..." })).toBeDisabled();
+    await expect(dialog.getByLabel("Session name")).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await expect(dialog.getByRole("radio", { name: /Upload packet now/ })).toBeDisabled();
+    await expect(dialog.getByRole("alert")).toContainText("Temporary session start failure");
+    expect(startAttempts).toBe(1);
+
+    await dialog.getByRole("button", { name: "Start session" }).click();
+    await expect(dialog).toBeHidden();
+    expect(startAttempts).toBe(2);
   });
 });

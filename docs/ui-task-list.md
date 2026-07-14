@@ -80,7 +80,7 @@ Use this as the working backlog before turning individual items into implementat
   - Controls affected: launch screen, admin sign-in card, invite accept screen.
 
 - [x] **UI-003: Finish the packet upload path**
-  - Status: completed by current Codex thread, 2026-07-09. Safe for `UI-004` to continue; coordinate before changing the tenant dashboard upload button, Sessions import wizard, or packet import empty states again.
+  - Status: complete and QA-verified, 2026-07-14. Session selection, file reading, row review, and import remain one guided flow; pending work locks conflicting controls, synchronous guards reject duplicate taps, errors stay inside the modal for retry, and responsive QA covers delayed failure/recovery.
   - Current issue: `Upload packet` moves users to Sessions, but the actual file picker only appears after a session exists.
   - Desired behavior: clicking `Upload packet` opens a guided flow: select/create session, choose PDF/spreadsheet, review parsed rows, import.
   - Controls affected: `Upload packet`, `New session`, `Import packet rows`, `Choose PDF or spreadsheet`.
@@ -234,7 +234,7 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
   - Desired behavior: labels map to clear destinations: `Open workspace`, `Open session`, `Review queue`, `Import packet`, `Launch app`.
-  - Status: in progress, 2026-07-14. Existing-work destinations now consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`; and proof entry uses the explicit `Submit proof` label. Packet/import wording and remaining platform/newsletter labels still need consolidation.
+  - Status: in progress, 2026-07-14. Existing-work destinations consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`; proof entry says `Submit proof`; and packet setup now says `Choose source`, the exact `Import N row(s)` action, and `Review again` for reopening saved import text. Remaining platform/newsletter labels still need consolidation.
 
 - [x] **UI-031: Mobile-first toolbar cleanup**
   - Current issue: desktop layout is improving, but mobile needs repeated inspection.
@@ -262,7 +262,7 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-036: Loading and error states**
   - Desired behavior: every async button has loading text, disabled state, success state, and a useful failure message.
   - Status: in progress, 2026-07-13. Assignment and claim actions now use row-scoped pending locks and `Claiming...`/saving feedback without freezing unrelated rows. Session lifecycle/direct-check actions already have scoped locks; remaining upload, people, and newsletter actions still need a systematic pass.
-  - Status: in progress, 2026-07-14, through `UX-003`. Session direct-check and close/reopen mutations have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; proof submit/remove/cancel actions now use synchronous duplicate guards, lock conflicting fields and controls, and expose action-specific loading labels on desktop and mobile. Public unsubscribe and legacy viewer login also lock while pending. Team provisioning polls recover with bounded backoff, member operations remain row-scoped, and legacy copy/resend/revoke actions identify the exact in-progress operation. Remaining packet upload, newsletter, and lower-frequency multi-row actions still need a systematic pass.
+  - Status: in progress, 2026-07-14, through `UX-003`. Session direct-check and close/reopen mutations have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; proof submit/remove/cancel plus leader start/session/packet-import actions use synchronous duplicate guards, lock conflicting fields and controls, and expose action-specific loading labels on desktop and mobile. Packet failures now remain visible inside the wizard and retry without reselecting source data. Public unsubscribe and legacy viewer login also lock while pending. Team provisioning polls recover with bounded backoff, member operations remain row-scoped, and legacy copy/resend/revoke actions identify the exact in-progress operation. Remaining newsletter and lower-frequency multi-row actions still need a systematic pass.
 
 ## P3: Later SaaS Depth
 
@@ -282,8 +282,8 @@ Use this as the working backlog before turning individual items into implementat
 
 ## Current Suggested Work Order
 
-1. Publish and production-verify the completed `UI-045`/`UI-046` proof polish and `UI-047` crew-code flow at phone, tablet, and docked-desktop widths.
-2. Configure and production-verify the implemented `UI-048` permanent Authentik provisioning feature using its dedicated service identity and recovery stage.
-3. Complete `UI-036`, `UI-029`, and `UI-030` while touching each remaining surface; keep `OPS-002` as an owner-only deferred verification.
+1. Configure and production-verify the implemented `UI-048` permanent Authentik provisioning feature using its dedicated service identity and recovery stage.
+2. Complete `UI-036`, `UI-029`, and `UI-030` across the remaining newsletter/platform surfaces while preserving the deployed leader/helper accountability flow.
+3. Replay leader upload/invite/assign/proof/review/close and verify temporary-account cleanup in production after Authentik activation; keep `OPS-002` as an owner-only deferred verification.
 
 This order follows the actual field event: leader starts work, brings the crew in, people claim and prove items, the leader closes the event, and the next event benefits from verified history.

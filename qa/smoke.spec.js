@@ -181,7 +181,7 @@ test.describe("QA smoke", () => {
     await expect(dialog.getByText("Source", { exact: true })).toBeVisible();
     await expect(dialog.getByText("Review", { exact: true })).toBeVisible();
 
-    await dialog.getByRole("button", { name: "Continue" }).click();
+    await dialog.getByRole("button", { name: "Choose source" }).click();
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
 
     await dialog.locator("textarea").fill([

@@ -32,7 +32,7 @@ async function openNewSessionForm(page) {
 async function createEmptySession(page, name) {
   const sessionName = await openNewSessionForm(page);
   await sessionName.fill(name);
-  await page.locator(".session-create-form").getByRole("button", { name: "Start", exact: true }).click();
+  await page.locator(".session-create-form").getByRole("button", { name: "Start session", exact: true }).click();
   await expect(page.locator(".session-row", { hasText: name })).toHaveCount(1);
 }
 
@@ -70,7 +70,7 @@ test.describe("session lifecycle", () => {
     await page.locator(".packet-wizard-entry").getByRole("button", { name: "Upload packet" }).click();
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Continue" }).click();
+    await dialog.getByRole("button", { name: "Choose source" }).click();
     await dialog.locator("textarea").fill(`000009148 ${packetLin} QA CLOSEOUT TEST ITEM`);
     await dialog.getByRole("button", { name: "Review rows" }).click();
     await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();

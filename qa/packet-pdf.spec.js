@@ -49,9 +49,9 @@ test.describe("PDF packet import", () => {
     releaseSessionList();
 
     await expect(dialog.getByText("Use an open session")).toBeVisible();
-    const continueButton = dialog.getByRole("button", { name: "Continue" });
-    await expect(continueButton).toBeEnabled();
-    await continueButton.click();
+    const chooseSourceButton = dialog.getByRole("button", { name: "Choose source" });
+    await expect(chooseSourceButton).toBeEnabled();
+    await chooseSourceButton.click();
 
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
     await expect(page.getByText("Name the inventory session first.")).toHaveCount(0);
@@ -67,7 +67,7 @@ test.describe("PDF packet import", () => {
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Continue" }).click();
+    await dialog.getByRole("button", { name: "Choose source" }).click();
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
 
     const fileChooserPromise = page.waitForEvent("filechooser");
@@ -96,7 +96,7 @@ test.describe("PDF packet import", () => {
     await openPacketUpload(page);
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Continue" }).click();
+    await dialog.getByRole("button", { name: "Choose source" }).click();
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
 
     const fileChooserPromise = page.waitForEvent("filechooser");
@@ -111,5 +111,56 @@ test.describe("PDF packet import", () => {
     await expect(page.getByText("Choose a PDF, CSV, text file, or JPEG/PNG/WebP/GIF image.")).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Review before saving" })).toHaveCount(0);
+  });
+
+  test("packet import locks conflicting actions and retries without duplicate requests", async ({ page }) => {
+    let importAttempts = 0;
+    await page.route("**/api/inventory/sessions/*/items/bulk", async route => {
+      if (route.request().method() !== "POST") return route.continue();
+      importAttempts += 1;
+      if (importAttempts === 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary packet import failure" })
+        });
+      }
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ sessionItems: [], possibleMatchCount: 0 })
+      });
+    });
+
+    await page.goto(TENANT_URL);
+    await signInWithQaPersona(page, "Platoon admin");
+    await openPacketUpload(page);
+
+    const dialog = page.getByRole("dialog", { name: "Upload packet" });
+    await dialog.getByRole("button", { name: "Choose source" }).click();
+    const sourceText = dialog.getByPlaceholder(/Paste hand-receipt text/);
+    await sourceText.fill("000009148 R20684 RADIAC SET: AN/VDR-2");
+    await dialog.getByRole("button", { name: "Review rows" }).click();
+
+    const importButton = dialog.getByRole("button", { name: "Import 1 row" });
+    await importButton.evaluate(button => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await expect.poll(() => importAttempts).toBe(1);
+    await expect(dialog.getByRole("button", { name: "Importing..." })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Close packet wizard" })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Back" })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Clear" })).toBeDisabled();
+    await expect(dialog.locator(".packet-review-line").first()).toBeDisabled();
+
+    await expect(dialog.getByRole("alert")).toContainText("Temporary packet import failure");
+    expect(importAttempts).toBe(1);
+
+    await dialog.getByRole("button", { name: "Import 1 row" }).click();
+    await expect(dialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
+    expect(importAttempts).toBe(2);
   });
 });

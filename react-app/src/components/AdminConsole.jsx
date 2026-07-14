@@ -2061,7 +2061,7 @@ function SessionPanel({
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isLoadingSessions, setIsLoadingSessions] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isReadingPacket, setIsReadingPacket] = useState(false);
+  const [packetAction, setPacketAction] = useState("");
   const [deleteSessionTarget, setDeleteSessionTarget] = useState(null);
   const [closeSessionTarget, setCloseSessionTarget] = useState(null);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
@@ -2077,6 +2077,8 @@ function SessionPanel({
   const detailPhotoTriggerRef = useRef(null);
   const proofTriggerRef = useRef(null);
   const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
+  const packetActionRef = useRef("");
+  const sessionCreateActionRef = useRef(false);
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
   const sessionItemFilterSessionRef = useRef("");
@@ -2085,6 +2087,21 @@ function SessionPanel({
   const matchActionRef = useRef(new Map());
   const sessionStatusActionRef = useRef(new Map());
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
+  const isPacketBusy = Boolean(packetAction);
+  const isReadingPacket = packetAction === "read";
+
+  function beginPacketAction(action) {
+    if (packetActionRef.current) return false;
+    packetActionRef.current = action;
+    setPacketAction(action);
+    return true;
+  }
+
+  function finishPacketAction(action) {
+    if (packetActionRef.current !== action) return;
+    packetActionRef.current = "";
+    setPacketAction("");
+  }
 
   function clearSelectedSessionState() {
     sessionDetailRequestRef.current += 1;
@@ -2256,6 +2273,7 @@ function SessionPanel({
 
   async function createSession(e) {
     e.preventDefault();
+    if (sessionCreateActionRef.current) return;
     const name = newSessionName.trim();
     if (!name) return;
 
@@ -2266,6 +2284,7 @@ function SessionPanel({
     }
 
     try {
+      sessionCreateActionRef.current = true;
       setIsSaving(true);
       const data = await apiRequest("/inventory/sessions", {
         method: "POST",
@@ -2281,6 +2300,7 @@ function SessionPanel({
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
+      sessionCreateActionRef.current = false;
       setIsSaving(false);
     }
   }
@@ -2300,6 +2320,7 @@ function SessionPanel({
   }
 
   function closePacketWizard() {
+    if (packetActionRef.current) return;
     setPacketWizardModeTouched(false);
     clearPacketImport();
     setPacketWizardOpen(false);
@@ -2346,44 +2367,45 @@ function SessionPanel({
   }
 
   async function preparePacketWizardSession() {
+    const action = "prepare";
+    if (!beginPacketAction(action)) return "";
     const currentWizard = packetWizardCurrentRef.current;
     const fallbackSessionId = currentWizard.sessionId;
     const shouldUseExistingSession = currentWizard.mode === "existing";
 
-    if (shouldUseExistingSession) {
-      const sessionId = fallbackSessionId;
-      if (!sessionId) {
-        setStatus({ text: "Choose a session or create a new one first.", isError: true });
+    try {
+      if (shouldUseExistingSession) {
+        const sessionId = fallbackSessionId;
+        if (!sessionId) {
+          setStatus({ text: "Choose a session or create a new one first.", isError: true });
+          return "";
+        }
+
+        setSelectedSessionId(sessionId);
+        onSessionChange?.(sessionId);
+        setPacketWizardSessionId(sessionId);
+        setPacketWizardStep(2);
+        setStatus({ text: "", isError: false });
+        void loadSessionDetail(sessionId, false);
+        return sessionId;
+      }
+
+      const name = currentWizard.sessionName.trim();
+      if (!name) {
+        setStatus({ text: "Name the inventory session first.", isError: true });
         return "";
       }
 
-      setSelectedSessionId(sessionId);
-      onSessionChange?.(sessionId);
-      setPacketWizardSessionId(sessionId);
-      setPacketWizardStep(2);
-      setStatus({ text: "", isError: false });
-      void loadSessionDetail(sessionId, false);
-      return sessionId;
-    }
+      const duplicate = findDuplicateOpenEmptySession(name);
+      if (duplicate) {
+        const sessionId = await openExistingEmptySession(
+          duplicate,
+          `${duplicate.name} is already an empty session. Using that session instead.`
+        );
+        if (sessionId) setPacketWizardStep(2);
+        return sessionId;
+      }
 
-    const name = currentWizard.sessionName.trim();
-    if (!name) {
-      setStatus({ text: "Name the inventory session first.", isError: true });
-      return "";
-    }
-
-    const duplicate = findDuplicateOpenEmptySession(name);
-    if (duplicate) {
-      const sessionId = await openExistingEmptySession(
-        duplicate,
-        `${duplicate.name} is already an empty session. Using that session instead.`
-      );
-      if (sessionId) setPacketWizardStep(2);
-      return sessionId;
-    }
-
-    try {
-      setIsSaving(true);
       const data = await apiRequest("/inventory/sessions", {
         method: "POST",
         token,
@@ -2404,7 +2426,7 @@ function SessionPanel({
       setStatus({ text: getApiErrorMessage(error), isError: true });
       return "";
     } finally {
-      setIsSaving(false);
+      finishPacketAction(action);
     }
   }
 
@@ -2447,8 +2469,9 @@ function SessionPanel({
       return;
     }
 
+    const action = "read";
+    if (!beginPacketAction(action)) return;
     try {
-      setIsReadingPacket(true);
       setStatus({ text: "Reading packet file...", isError: false });
       const [text, dataUrl] = await Promise.all([
         readPacketFileText(file, message => setStatus({ text: message, isError: false })),
@@ -2475,7 +2498,7 @@ function SessionPanel({
     } catch (error) {
       setStatus({ text: error.message || "Could not read packet file.", isError: true });
     } finally {
-      setIsReadingPacket(false);
+      finishPacketAction(action);
     }
   }
 
@@ -2518,7 +2541,21 @@ function SessionPanel({
 
     setPacketRows(batch.extractedText);
     setPacketSourceFile(null);
-    reviewPacketRows(batch.extractedText, batch.sourceName || "Saved import");
+    const rows = reviewPacketRows(
+      batch.extractedText,
+      batch.sourceName || "Saved import",
+      selectedSessionId,
+      { fileName: batch.sourceName || "Saved import", mimeType: batch.sourceMimeType || "text/plain" }
+    );
+    if (!rows.length) return;
+    setPacketWizardModeTouched(false);
+    setPacketWizardOpen(true);
+    setPacketWizardStep(3);
+    setPacketWizardSummary(null);
+    setPacketWizardMode("existing");
+    setPacketWizardSessionId(selectedSessionId);
+    setPacketWizardSessionName("");
+    setIsPacketImportOpen(false);
   }
 
   async function importPacketRowsToSession(targetSessionId = selectedSessionId) {
@@ -2533,6 +2570,9 @@ function SessionPanel({
       setStatus({ text: "Review at least one valid packet row first.", isError: true });
       return null;
     }
+
+    const action = "import";
+    if (!beginPacketAction(action)) return null;
 
     const sourceName = packetSourceName || packetSourceFile?.fileName || "Pasted packet text";
     const importBatch = {
@@ -2550,7 +2590,6 @@ function SessionPanel({
     }
 
     try {
-      setIsSaving(true);
       const data = await apiRequest(`/inventory/sessions/${targetSessionId}/items/bulk`, {
         method: "POST",
         token,
@@ -2575,7 +2614,7 @@ function SessionPanel({
       setStatus({ text: getApiErrorMessage(error), isError: true });
       return null;
     } finally {
-      setIsSaving(false);
+      finishPacketAction(action);
     }
   }
 
@@ -3153,12 +3192,13 @@ function SessionPanel({
                     id="sessionName"
                     className="input"
                     value={newSessionName}
+                    disabled={isSaving}
                     placeholder="July sensitive items"
                     onChange={e => setNewSessionName(e.target.value)}
                   />
                   <button className="btn btn-primary" type="submit" disabled={isSaving}>
                     <Plus aria-hidden="true" />
-                    <span>Start</span>
+                    <span>{isSaving ? "Starting session..." : "Start session"}</span>
                   </button>
                 </div>
               </form>
@@ -3271,10 +3311,12 @@ function SessionPanel({
                               <span>Source</span>
                             </a>
                           ) : null}
-                          <button className="btn btn-secondary btn-small" type="button" onClick={() => retryImportBatch(batch)}>
-                            <ClipboardPlus aria-hidden="true" />
-                            <span>Retry</span>
-                          </button>
+                          {!selectedSessionIsClosed ? (
+                            <button className="btn btn-secondary btn-small" type="button" onClick={() => retryImportBatch(batch)}>
+                              <ClipboardPlus aria-hidden="true" />
+                              <span>Review again</span>
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     ))}
@@ -3297,7 +3339,7 @@ function SessionPanel({
                     className="packet-hidden-file"
                     type="file"
                     accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
-                    disabled={isReadingPacket || isSaving}
+                    disabled={isPacketBusy || isSaving}
                     onChange={e => {
                       const file = e.target.files?.[0];
                       e.target.value = "";
@@ -3565,7 +3607,7 @@ function SessionPanel({
 
       {packetWizardOpen ? (
         <div className="modal-backdrop packet-wizard-backdrop" role="presentation">
-          <div className="modal-panel packet-wizard-panel" role="dialog" aria-modal="true" aria-labelledby="packetWizardTitle">
+          <div className="modal-panel packet-wizard-panel" role="dialog" aria-modal="true" aria-labelledby="packetWizardTitle" aria-busy={isPacketBusy}>
             <div className="modal-stack packet-wizard">
               <div className="packet-wizard-heading">
                 <div className="modal-heading">
@@ -3578,7 +3620,7 @@ function SessionPanel({
                     <p className="modal-copy">Pick the inventory session, add the packet source, review the rows, then save them.</p>
                   </div>
                 </div>
-                <button className="icon-button" type="button" aria-label="Close packet wizard" onClick={closePacketWizard}>
+                <button className="icon-button" type="button" aria-label="Close packet wizard" disabled={isPacketBusy} onClick={closePacketWizard}>
                   <XCircle aria-hidden="true" />
                 </button>
               </div>
@@ -3603,6 +3645,7 @@ function SessionPanel({
                     <h3>Choose where these rows belong</h3>
                     <p>Packet rows are saved inside one inventory session so the work stays tied to the right task.</p>
                   </div>
+                  <StatusLine status={status} />
 
                   {openSessions.length ? (
                     <label className={`packet-choice ${effectivePacketWizardMode === "existing" ? "active" : ""}`}>
@@ -3610,6 +3653,7 @@ function SessionPanel({
                         type="radio"
                         name="packetSessionMode"
                         checked={effectivePacketWizardMode === "existing"}
+                        disabled={isPacketBusy}
                         onChange={() => {
                           setPacketWizardModeTouched(true);
                           setPacketWizardMode("existing");
@@ -3622,7 +3666,7 @@ function SessionPanel({
                       <select
                         className="input"
                         value={packetWizardFallbackSessionId}
-                        disabled={effectivePacketWizardMode !== "existing"}
+                        disabled={effectivePacketWizardMode !== "existing" || isPacketBusy}
                         onChange={e => setPacketWizardSessionId(e.target.value)}
                       >
                         {openSessions.map(session => (
@@ -3639,6 +3683,7 @@ function SessionPanel({
                       type="radio"
                       name="packetSessionMode"
                       checked={effectivePacketWizardMode === "new"}
+                      disabled={isPacketBusy}
                       onChange={() => {
                         setPacketWizardModeTouched(true);
                         setPacketWizardMode("new");
@@ -3651,27 +3696,29 @@ function SessionPanel({
                     <input
                       className="input"
                       value={packetWizardSessionName}
-                      disabled={effectivePacketWizardMode !== "new"}
+                      disabled={effectivePacketWizardMode !== "new" || isPacketBusy}
                       placeholder="July sensitive items"
                       onChange={e => setPacketWizardSessionName(e.target.value)}
                     />
                   </label>
 
                   <div className="packet-wizard-actions">
-                    <button className="btn btn-secondary" type="button" onClick={closePacketWizard}>
+                    <button className="btn btn-secondary" type="button" disabled={isPacketBusy} onClick={closePacketWizard}>
                       <span>Cancel</span>
                     </button>
                     <button
                       className="btn btn-primary"
                       type="button"
-                      disabled={isSaving || isLoadingSessions || (
+                      disabled={isPacketBusy || isLoadingSessions || (
                         effectivePacketWizardMode === "existing"
                           ? !packetWizardFallbackSessionId
                           : !packetWizardSessionName.trim()
                       )}
                       onClick={preparePacketWizardSession}
                     >
-                      <span>{isSaving ? "Starting..." : isLoadingSessions ? "Loading sessions..." : "Continue"}</span>
+                      <span>{packetAction === "prepare"
+                        ? effectivePacketWizardMode === "new" ? "Starting session..." : "Opening session..."
+                        : isLoadingSessions ? "Loading sessions..." : "Choose source"}</span>
                     </button>
                   </div>
                 </div>
@@ -3683,12 +3730,13 @@ function SessionPanel({
                     <h3>Add the packet source</h3>
                     <p>Use a clean PDF or CSV when you have it. If the packet is messy, paste one item per line.</p>
                   </div>
+                  <StatusLine status={status} />
 
                   <div className="packet-source-grid">
                     <button
                       className="packet-source-card"
                       type="button"
-                      disabled={isReadingPacket || isSaving}
+                      disabled={isPacketBusy}
                       onClick={() => openPacketFilePicker(packetWizardSessionId || selectedSessionId)}
                     >
                       <FileUp aria-hidden="true" />
@@ -3700,6 +3748,7 @@ function SessionPanel({
                     <button
                       className="packet-source-card"
                       type="button"
+                      disabled={isPacketBusy}
                       onClick={() => packetTextareaRef.current?.focus()}
                     >
                       <ClipboardList aria-hidden="true" />
@@ -3717,6 +3766,7 @@ function SessionPanel({
                     ref={packetTextareaRef}
                     className="input packet-textarea"
                     value={packetRows}
+                    disabled={isPacketBusy}
                     placeholder="Paste hand-receipt text or one item per line. Example:&#10;000009148 R20684 RADIAC SET: AN/VDR-2&#10;B67839 BINOCULAR: M24"
                     onChange={e => {
                       setPacketRows(e.target.value);
@@ -3730,6 +3780,7 @@ function SessionPanel({
                     <button
                       className="btn btn-secondary"
                       type="button"
+                      disabled={isPacketBusy}
                       onClick={() => {
                         setStatus({ text: "", isError: false });
                         setPacketWizardStep(1);
@@ -3740,7 +3791,7 @@ function SessionPanel({
                     <button
                       className="btn btn-primary"
                       type="button"
-                      disabled={!packetRows.trim() || isReadingPacket || isSaving}
+                      disabled={!packetRows.trim() || isPacketBusy}
                       onClick={reviewWizardPacketRows}
                     >
                       <ClipboardList aria-hidden="true" />
@@ -3756,6 +3807,7 @@ function SessionPanel({
                     <h3>Review before saving</h3>
                     <p>Clean up anything the parser guessed wrong. Low confidence rows can still be saved if the text is useful.</p>
                   </div>
+                  <StatusLine status={status} />
 
                   {packetParseSummary ? (
                     <div className="packet-review-summary" aria-label="Packet parser summary">
@@ -3824,6 +3876,7 @@ function SessionPanel({
                                 className="icon-button"
                                 type="button"
                                 aria-label="Remove row"
+                                disabled={isPacketBusy}
                                 onClick={() => removePacketDraftRow(row.id)}
                               >
                                 <Trash2 aria-hidden="true" />
@@ -3834,6 +3887,7 @@ function SessionPanel({
                               id={`packetLine-${row.id}`}
                               className="input packet-review-line"
                               value={row.packetLine}
+                              disabled={isPacketBusy}
                               onChange={e => updatePacketDraftRow(row.id, "packetLine", e.target.value)}
                             />
                             <div className="packet-review-fields">
@@ -3843,6 +3897,7 @@ function SessionPanel({
                                   className="input"
                                   inputMode="numeric"
                                   value={row.expectedQty}
+                                  disabled={isPacketBusy}
                                   onChange={e => updatePacketDraftRow(row.id, "expectedQty", e.target.value)}
                                 />
                               </label>
@@ -3851,6 +3906,7 @@ function SessionPanel({
                                 <input
                                   className="input"
                                   value={row.locationHint}
+                                  disabled={isPacketBusy}
                                   placeholder="Optional"
                                   onChange={e => updatePacketDraftRow(row.id, "locationHint", e.target.value)}
                                 />
@@ -3868,6 +3924,7 @@ function SessionPanel({
                     <button
                       className="btn btn-secondary"
                       type="button"
+                      disabled={isPacketBusy}
                       onClick={() => {
                         setStatus({ text: "", isError: false });
                         setPacketWizardStep(2);
@@ -3875,13 +3932,13 @@ function SessionPanel({
                     >
                       <span>Back</span>
                     </button>
-                    <button className="btn btn-secondary" type="button" onClick={() => clearPacketImport({ clearStatus: true })}>
+                    <button className="btn btn-secondary" type="button" disabled={isPacketBusy} onClick={() => clearPacketImport({ clearStatus: true })}>
                       <Trash2 aria-hidden="true" />
                       <span>Clear</span>
                     </button>
-                    <button className="btn btn-primary" type="button" disabled={isSaving || isReadingPacket || packetRowsReadyCount === 0} onClick={finishPacketWizardImport}>
+                    <button className="btn btn-primary" type="button" disabled={isPacketBusy || packetRowsReadyCount === 0} onClick={finishPacketWizardImport}>
                       <ClipboardPlus aria-hidden="true" />
-                      <span>{isSaving ? "Importing..." : `Import ${packetRowsReadyCount} rows`}</span>
+                      <span>{packetAction === "import" ? "Importing..." : `Import ${packetRowsReadyCount} ${packetRowsReadyCount === 1 ? "row" : "rows"}`}</span>
                     </button>
                   </div>
                 </div>
@@ -3998,7 +4055,7 @@ function SessionPanel({
         </div>
       ) : null}
 
-      <StatusLine status={status} />
+      {!packetWizardOpen ? <StatusLine status={status} /> : null}
     </section>
   );
 }
@@ -8449,6 +8506,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const leaderSearchInputRef = useRef(null);
   const tenantSidebarRef = useRef(null);
   const tenantMobileNavToggleRef = useRef(null);
+  const startInventoryActionRef = useRef(false);
   const userName = me?.user?.display_name || me?.user?.displayName || me?.user?.email || "Signed in";
   const userRole = isCrew ? "Crew member" : me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
@@ -8898,13 +8956,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   function closeStartInventoryWizard() {
-    if (isStartingInventory) return;
+    if (startInventoryActionRef.current) return;
     setIsStartInventoryOpen(false);
     setStartInventoryStatus({ text: "", isError: false });
   }
 
   async function startInventory(e) {
     e.preventDefault();
+    if (startInventoryActionRef.current) return;
     const name = startInventoryForm.name.trim();
     if (!name) {
       setStartInventoryStatus({ text: "Name the inventory session first.", isError: true });
@@ -8912,6 +8971,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
 
     try {
+      startInventoryActionRef.current = true;
       setIsStartingInventory(true);
       setStartInventoryStatus({ text: "Starting inventory...", isError: false });
       const data = await apiRequest("/inventory/sessions", {
@@ -8931,6 +8991,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     } catch (error) {
       setStartInventoryStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
+      startInventoryActionRef.current = false;
       setIsStartingInventory(false);
     }
   }
@@ -9370,6 +9431,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 id="startInventoryName"
                 className="input"
                 value={startInventoryForm.name}
+                disabled={isStartingInventory}
                 placeholder="July sensitive items"
                 onChange={e => setStartInventoryForm(current => ({ ...current, name: e.target.value }))}
                 autoFocus
@@ -9383,6 +9445,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     name="startInventorySource"
                     value="packet"
                     checked={startInventoryForm.source === "packet"}
+                    disabled={isStartingInventory}
                     onChange={() => setStartInventoryForm(current => ({ ...current, source: "packet" }))}
                   />
                   <span>
@@ -9396,6 +9459,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     name="startInventorySource"
                     value="blank"
                     checked={startInventoryForm.source === "blank"}
+                    disabled={isStartingInventory}
                     onChange={() => setStartInventoryForm(current => ({ ...current, source: "blank" }))}
                   />
                   <span>

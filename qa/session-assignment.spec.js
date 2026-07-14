@@ -77,7 +77,7 @@ async function createSession(page, name) {
   await sessionName.scrollIntoViewIfNeeded();
   await expect(sessionName).toBeVisible();
   await sessionName.fill(name);
-  await page.locator(".session-create-form").getByRole("button", { name: "Start", exact: true }).click();
+  await page.locator(".session-create-form").getByRole("button", { name: "Start session", exact: true }).click();
   await expect(page.locator(".session-row", { hasText: name })).toHaveCount(1);
 }
 
@@ -85,7 +85,7 @@ async function addPacketRows(page) {
   await page.locator(".packet-wizard-entry").getByRole("button", { name: "Upload packet" }).click();
   const dialog = page.getByRole("dialog", { name: "Upload packet" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByRole("button", { name: "Choose source" }).click();
   await dialog.locator("textarea").fill([
     "000002115 W34648 TOOL KIT CARPENTERS: ENGINEER SQUAD",
     "0000186033 M05000 TAMPER,VIBRATING TYPE,INTERNAL COMBUST"

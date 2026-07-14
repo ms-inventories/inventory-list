@@ -21,9 +21,9 @@ Each task is designed to be worked mostly independently. If a task needs to touc
 
 ## Current Priority Order
 
-1. Implement `USER-MANAGEMENT-006` permanent Authentik provisioning with authoritative database membership and a least-privilege service integration.
-2. Implement `SESSION-006` verified-item reuse with leader-confirmed matches and canonical-photo selection.
-3. Continue `UX-003` plus the empty-state/action-label cleanup while preserving the current accountability regression suite.
+1. Activate and production-verify `USER-MANAGEMENT-006` permanent Authentik provisioning with its dedicated least-privilege service identity and recovery stage.
+2. Continue `UX-003` plus the empty-state/action-label cleanup while preserving the current accountability regression suite.
+3. Run the final leader/helper production replay and automatic temporary-account cleanup verification after Authentik activation.
 4. Owner follow-up, deferred and unverified: resolve `OPS-002` credential rotation and confirm the old credential is rejected. This does not block local feature work.
 
 ## QA
@@ -199,7 +199,7 @@ Definition of done:
 
 Goal: turn `Upload packet` into a guided, obvious workflow.
 
-Status: completed by current Codex thread, 2026-07-08.
+Status: complete and QA-verified, 2026-07-14. File reading, session preparation, and import are action-scoped; rapid taps cannot duplicate sessions or rows; conflicting wizard controls lock while work is pending; failures render inside the modal and remain retryable; desktop/mobile regression coverage exercises delayed failures and duplicate events.
 
 Coordination note: packet upload wizard UI, parser reliability, source history, and session handoff are implemented. Coordinate with `PACKET-003` and `SESSION-005` before changing the shared upload/session flow.
 
@@ -1125,7 +1125,7 @@ Definition of done:
 
 Goal: every async action should feel deliberate.
 
-Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel actions now have the same duplicate protection, field/control locking, and action-specific feedback with desktop/mobile QA. Legacy viewer login and public unsubscribe also reject repeat submissions while pending. Newsletter, packet upload, and remaining lower-frequency multi-row pending-state follow-ups remain.
+Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel and leader start/session/packet-import actions now have the same duplicate protection, field/control locking, and action-specific feedback with desktop/mobile QA. Legacy viewer login and public unsubscribe also reject repeat submissions while pending. Newsletter and remaining lower-frequency multi-row pending-state follow-ups remain.
 
 Primary files:
 
