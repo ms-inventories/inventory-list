@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { authenticate, authContext, ensureUser, exchangeOidcCode } from "./auth.js";
+import { createAuthentikClient } from "./authentik.js";
 import { config } from "./config.js";
 import {
   authenticateCrewRequest,
@@ -1508,6 +1509,48 @@ function requestError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+export function platformTenantResetStoragePath(storageRoot, tenantSlug) {
+  const slug = String(tenantSlug || "").trim().toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(slug)) {
+    throw requestError("Invalid tenant reset target", 400);
+  }
+
+  const tenantsRoot = path.resolve(storageRoot, "tenants");
+  const tenantPath = path.resolve(tenantsRoot, slug);
+  if (!tenantPath.startsWith(tenantsRoot + path.sep)) {
+    throw requestError("Invalid tenant reset storage path", 400);
+  }
+  return tenantPath;
+}
+
+async function assertTenantGroupRemovedForReset(tenant) {
+  if (!config.authentikProvisioning.enabled) return;
+
+  try {
+    const client = createAuthentikClient({
+      origin: config.authentikProvisioning.origin,
+      token: config.authentikProvisioning.token,
+      timeoutMs: config.authentikProvisioning.requestTimeoutMs
+    });
+    const groupName = `${config.authentikProvisioning.tenantGroupPrefix}${tenant.slug}`.toLowerCase();
+    const group = await client.findGroupByName(groupName);
+    if (group) {
+      throw permanentAccountError(
+        "Remove the workspace account group before deleting this platoon.",
+        409,
+        "tenant_group_present"
+      );
+    }
+  } catch (error) {
+    if (error?.publicCode === "tenant_group_present") throw error;
+    throw permanentAccountError(
+      "The account service could not verify that workspace access is removed.",
+      503,
+      "tenant_group_check_failed"
+    );
+  }
 }
 
 async function lockStagedMediaUpload(client, {
@@ -3208,6 +3251,145 @@ export function registerRoutes(app) {
     return {
       tenant: rowToTenant(created.tenant),
       adminMembership: created.adminMembership ? rowToMember(created.adminMembership) : null
+    };
+  });
+
+  route(app, "delete", "/api/platform/tenants/:tenantId", async (request, reply) => {
+    const auth = await requirePlatformAdmin(request, reply);
+    const tenantId = z.string().uuid().parse(request.params.tenantId);
+    const body = parseBody(
+      z.object({
+        confirmSlug: z.string().trim().min(1).max(63)
+      }).strict(),
+      request.body
+    );
+
+    const targetResult = await query(
+      "SELECT id, slug, name, status FROM tenants WHERE id = $1 LIMIT 1",
+      [tenantId]
+    );
+    const target = targetResult.rows[0];
+    if (!target) {
+      reply.code(404);
+      throw new Error("Tenant not found");
+    }
+    if (body.confirmSlug.toLowerCase() !== target.slug) {
+      throw permanentAccountError(
+        "Type the exact platoon subdomain to confirm deletion.",
+        400,
+        "tenant_reset_confirmation_failed"
+      );
+    }
+
+    await assertTenantGroupRemovedForReset(target);
+    const storagePath = platformTenantResetStoragePath(config.storage.root, target.slug);
+    const reset = await withTransaction(async client => {
+      const lockedResult = await client.query(
+        "SELECT id, slug, name, status FROM tenants WHERE id = $1 FOR UPDATE",
+        [tenantId]
+      );
+      const locked = lockedResult.rows[0];
+      if (!locked) throw requestError("Tenant not found", 404);
+      if (locked.slug !== target.slug) throw requestError("Tenant reset target changed", 409);
+
+      const countsResult = await client.query(
+        `
+          SELECT
+            (SELECT count(*)::int FROM tenant_memberships WHERE tenant_id = $1) AS memberships,
+            (SELECT count(*)::int FROM inventory_sessions WHERE tenant_id = $1) AS sessions,
+            (SELECT count(*)::int FROM inventory_items WHERE tenant_id = $1) AS inventory_items,
+            (SELECT count(*)::int FROM packet_import_batches WHERE tenant_id = $1) AS packet_imports,
+            (SELECT count(*)::int FROM media_uploads WHERE tenant_id = $1) AS media_uploads,
+            (SELECT count(*)::int FROM audit_events WHERE tenant_id = $1) AS audit_events
+        `,
+        [tenantId]
+      );
+
+      await client.query(
+        `
+          UPDATE submission_photos photo
+          SET media_upload_id = NULL
+          FROM item_submissions submission,
+            inventory_session_items session_item,
+            inventory_sessions inventory_session
+          WHERE photo.submission_id = submission.id
+            AND submission.session_item_id = session_item.id
+            AND session_item.session_id = inventory_session.id
+            AND inventory_session.tenant_id = $1
+        `,
+        [tenantId]
+      );
+      await client.query(
+        "UPDATE packet_import_batches SET media_upload_id = NULL WHERE tenant_id = $1",
+        [tenantId]
+      );
+      await client.query(
+        `
+          DELETE FROM inventory_item_media reference
+          USING inventory_items item
+          WHERE reference.inventory_item_id = item.id
+            AND item.tenant_id = $1
+        `,
+        [tenantId]
+      );
+      await client.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
+      const crewCleanup = await client.query(
+        `
+          DELETE FROM app_users user_account
+          WHERE user_account.account_type = 'session_crew'
+            AND NOT EXISTS (
+              SELECT 1 FROM tenant_memberships membership
+              WHERE membership.user_id = user_account.id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM audit_events event
+              WHERE event.actor_user_id = user_account.id
+            )
+          RETURNING user_account.id
+        `
+      );
+      return {
+        ...countsResult.rows[0],
+        temporaryAccounts: crewCleanup.rowCount
+      };
+    });
+
+    let storageCleanup = "complete";
+    try {
+      await fs.rm(storagePath, { recursive: true, force: true });
+    } catch (error) {
+      storageCleanup = "failed";
+      console.error(JSON.stringify({
+        event: "tenant_reset_storage_cleanup_failed",
+        tenantId,
+        tenantSlug: target.slug,
+        errorCode: error?.code || null
+      }));
+    }
+
+    await query(
+      `
+        INSERT INTO audit_events (tenant_id, actor_user_id, action, entity_type, entity_id, metadata)
+        VALUES (NULL, $1, 'tenant.reset', 'tenant', $2, $3::jsonb)
+      `,
+      [
+        auth.user.id,
+        tenantId,
+        JSON.stringify({
+          slug: target.slug,
+          name: target.name,
+          removed: reset,
+          storageCleanup
+        })
+      ]
+    );
+
+    return {
+      reset: {
+        tenant: { id: tenantId, slug: target.slug, name: target.name },
+        removed: reset,
+        storageCleanup
+      }
     };
   });
 

@@ -285,6 +285,12 @@ Use this as the first real go-live pass.
 10. Confirm a current in-app evidence/source link opens, then copy the same plain `/media/...` URL into an anonymous/private browser and confirm it returns `403`. Also confirm a contributor cannot open a packet-source link.
 11. After the test pass, leave the root static GitHub Pages site online until you are comfortable moving the public homepage to the Coolify app.
 
+## Production Test Workspace Reset
+
+Use `scripts/production-tenant-reset.mjs` only when a platform administrator intentionally wants to recreate a test workspace from scratch. Set the two platform/Authentik credential pairs in a trusted operator shell, set `MVP_RESET_TENANT_SLUG`, and set `MVP_RESET_CONFIRMATION` to the exact value `DELETE <slug>`. The runner refuses reserved hostnames and never prints credentials or tokens.
+
+The reset first proves that the operator is a platform administrator and Authentik superuser. It removes only the exact, unprivileged Authentik group carrying the matching app-managed tenant UUID and slug. The backend then requires the exact slug again, cascades all tenant-owned database records, removes orphaned temporary crew accounts, deletes the tenant upload directory, and records a platform audit event. The runner verifies that the slug, group, and tenant API route are absent before reporting success. Human Authentik identities and global newsletter/platform data are preserved.
+
 ## QA Environment
 
 Use separate Coolify resources for QA when testing Authentik and inventory flows:

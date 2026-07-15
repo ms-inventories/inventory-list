@@ -5,10 +5,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   permanentMemberTransition,
+  platformTenantResetStoragePath,
   registerRoutes,
   rowToMember,
   safeMemberProvisioning
 } from "../src/routes.js";
+
+test("platform tenant reset storage paths remain inside the tenant upload root", () => {
+  const resolved = platformTenantResetStoragePath("/data/inventory-uploads", "ms");
+  assert.equal(resolved, path.resolve("/data/inventory-uploads/tenants/ms"));
+  assert.throws(() => platformTenantResetStoragePath("/data/inventory-uploads", "../ms"), /invalid tenant reset target/i);
+  assert.throws(() => platformTenantResetStoragePath("/data/inventory-uploads", "ms/other"), /invalid tenant reset target/i);
+});
 
 test("permanent member state changes revoke immediately and re-enable through invited", () => {
   assert.deepEqual(
@@ -132,6 +140,7 @@ test("permanent member retry and enrollment routes remain registered beside lega
   assert.equal(routes.has("POST /api/tenant/members/:memberId/retry"), true);
   assert.equal(routes.has("POST /api/tenant/members/:memberId/resend-enrollment"), true);
   assert.equal(routes.has("POST /api/tenant/invitations"), true);
+  assert.equal(routes.has("DELETE /api/platform/tenants/:tenantId"), true);
 });
 
 test("member mutations serialize last-admin removal and only adopt unprovisioned legacy invites", async () => {
@@ -170,4 +179,8 @@ test("platform tenant slugs are bounded DNS labels and fit the Authentik group n
   );
   assert.match(source, /reservedAuthentikGroupNames\(\)\.has\(tenantGroupName\)/i);
   assert.match(source, /status:\s*z\.enum\(\["active",\s*"disabled"\]\)\.optional\(\)/i);
+  assert.match(
+    source,
+    /delete[\s\S]*\/api\/platform\/tenants\/:tenantId[\s\S]*confirmSlug[\s\S]*assertTenantGroupRemovedForReset[\s\S]*DELETE FROM tenants[\s\S]*fs\.rm/i
+  );
 });
