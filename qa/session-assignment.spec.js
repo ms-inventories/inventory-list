@@ -155,7 +155,10 @@ test.describe("session assignment", () => {
     await expect(claimedProofForm).toBeVisible();
     await claimedProofForm.getByRole("button", { name: "Cancel" }).click();
     await expect(proofDrawer).toBeHidden();
-    await page.getByRole("button", { name: /^Mine\b/ }).click();
+    await page.getByRole("button", { name: /^Unclaimed\b/ }).click();
+    await expect(page.getByText("No items available to claim", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Show mine", exact: true }).click();
+    await expect(page.getByText("No items available to claim", { exact: true })).toHaveCount(0);
     const mineGeneratorRow = page.locator(".session-item", { hasText: "TAMPER,VIBRATING" });
     await expect(mineGeneratorRow).toBeVisible();
     await expect(mineGeneratorRow.locator(".proof-form")).toHaveCount(0);
@@ -175,7 +178,9 @@ test.describe("session assignment", () => {
       headers: qaHeaders(qaAdminIdentity)
     }));
     const generator = detail.items.find(item => item.packetLine.includes("TAMPER,VIBRATING"));
+    const toolKit = detail.items.find(item => item.packetLine.includes("TOOL KIT CARPENTERS"));
     expect(generator?.id).toBeTruthy();
+    expect(toolKit?.id).toBeTruthy();
     await responseJson(await request.patch(`${API_URL}/session-items/${generator.id}/direct-check`, {
       headers: qaHeaders(qaAdminIdentity),
       data: { status: "approved" }
@@ -198,6 +203,17 @@ test.describe("session assignment", () => {
     await sessionSearch.fill("TAMPER,VIBRATING");
     await expect(page.getByText("No matching items", { exact: true })).toHaveCount(0);
     await expect(completed.getByText(/TAMPER,VIBRATING/)).toBeVisible();
+
+    await responseJson(await request.patch(`${API_URL}/session-items/${toolKit.id}/direct-check`, {
+      headers: qaHeaders(qaAdminIdentity),
+      data: { status: "approved" }
+    }));
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
+    await openSessions(page);
+    await page.locator(".session-row", { hasText: sessionName }).click();
+    await expect(page.locator(".session-completed-items")).toHaveAttribute("open", "");
+    await expect(page.locator(".session-completed-items").getByText(/TOOL KIT CARPENTERS/)).toBeVisible();
 
     await request.patch(`${API_URL}/inventory/sessions/${session.id}`, {
       headers: qaHeaders(qaAdminIdentity),

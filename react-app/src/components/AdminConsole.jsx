@@ -3,7 +3,6 @@ import {
   AlertCircle,
   BarChart3,
   Bell,
-  BookOpen,
   Building2,
   Camera,
   CheckCircle2,
@@ -144,19 +143,6 @@ function memberAccountState(member, { provisioningAvailable = false } = {}) {
   }
 
   return { label: formatMemberStatus(member?.status), tone: member?.status || "active" };
-}
-
-function formatAccessSource(source) {
-  return {
-    database: "App database",
-    authentik: "Authentik group",
-    platform_admin: "Platform admin override"
-  }[source] || "No tenant access";
-}
-
-function formatAccessMembership(membership) {
-  if (!membership) return "Not assigned";
-  return `${formatRole(membership.role)} - ${formatMemberStatus(membership.status)}`;
 }
 
 function formatDate(value) {
@@ -2935,6 +2921,11 @@ function SessionPanel({
     ["mine", "Mine"],
     ["team", "Others"]
   ];
+  const alternateSessionItemFilter = sessionItemFilter === "available"
+    ? (sessionItemFilterCounts.mine ? ["mine", "Show mine"] : ["team", "Show others"])
+    : sessionItemFilter === "mine"
+      ? (sessionItemFilterCounts.available ? ["available", "Show unclaimed"] : ["team", "Show others"])
+      : (sessionItemFilterCounts.available ? ["available", "Show unclaimed"] : ["mine", "Show mine"]);
   const sessionReport = useMemo(
     () => selectedSession ? buildSessionReport(selectedSession, detail?.items || []) : null,
     [selectedSession, detail?.items]
@@ -3158,11 +3149,11 @@ function SessionPanel({
           <div className="session-work-summary">
             <div>
               <strong>{openCount}</strong>
-              <span>Open</span>
+              <span>Open rows</span>
             </div>
             <div>
               <strong>{reviewRowCount}</strong>
-              <span>Review</span>
+              <span>Needs review</span>
             </div>
             <div>
               <strong>{overallProgress}%</strong>
@@ -3494,13 +3485,15 @@ function SessionPanel({
                         : sessionItemFilter === "mine"
                           ? "Claim an available item to start working it."
                           : "Items claimed by teammates will appear here."}
+                    action={query.trim() ? (
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => onQueryChange("")}>Clear search</button>
+                    ) : (
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => setSessionItemFilter(alternateSessionItemFilter[0])}>
+                        {alternateSessionItemFilter[1]}
+                      </button>
+                    )}
                   />
-                ) : detailItems.length ? (
-                  <EmptyPanel
-                    title="All current work is complete"
-                    body="Open Completed below to review item details and submitted proof."
-                  />
-                ) : (
+                ) : detailItems.length ? null : (
                   <EmptyPanel
                     title="No packet rows yet"
                     body="Upload a packet or paste rows from the hand receipt to start tasking the inventory."
@@ -3515,7 +3508,7 @@ function SessionPanel({
               </div>
 
               {completedDetailItems.length ? (
-                <details className="session-completed-items" open={Boolean(query.trim() && visibleCompletedItems.length)}>
+                <details className="session-completed-items" open={Boolean(!actionableDetailItems.length || (query.trim() && visibleCompletedItems.length))}>
                   <summary>
                     <span>Completed</span>
                     <strong>{completedDetailItems.length}</strong>
@@ -7530,7 +7523,7 @@ function LeaderOverviewPanel({
                   <span>{submission.reviewNote || submission.note || formatReviewState(submission.reviewState)}</span>
                   <span className={`status-pill ${submission.reviewState}`}>{formatReviewState(submission.reviewState)}</span>
                   <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
-                    <span>Review</span>
+                    <span>Review proof</span>
                   </button>
                 </article>
               );
@@ -7553,249 +7546,6 @@ function LeaderOverviewPanel({
           </div>
         </section>
         ) : null}
-      </div>
-
-      <StatusLine status={status} />
-    </div>
-  );
-}
-
-function AccessSourcePanel({ access }) {
-  if (!access) return null;
-
-  const warnings = access.warnings || [];
-  const matchedGroups = access.matchedGroups || [];
-
-  return (
-    <section className="access-source-panel admin-card">
-      <div className="subsection-heading-row">
-        <div>
-          <p className="eyebrow">Access source</p>
-          <h3>Why you can access this platoon</h3>
-        </div>
-        <span className={`status-pill ${access.source || "disabled"}`}>{formatAccessSource(access.source)}</span>
-      </div>
-
-      <div className="access-source-grid">
-        <div>
-          <span>Effective role</span>
-          <strong>{access.effectiveRole ? formatRole(access.effectiveRole) : "None"}</strong>
-        </div>
-        <div>
-          <span>Database</span>
-          <strong>{formatAccessMembership(access.databaseMembership)}</strong>
-        </div>
-        <div>
-          <span>Authentik</span>
-          <strong>{formatAccessMembership(access.authentikMembership)}</strong>
-        </div>
-      </div>
-
-      <div className="access-group-list">
-        <span>Expected groups</span>
-        <code>{access.expectedTenantGroup || "none"}</code>
-        {access.expectedTenantAdminGroup ? <code>{access.expectedTenantAdminGroup}</code> : null}
-      </div>
-
-      {matchedGroups.length ? (
-        <div className="access-group-list">
-          <span>Matched groups</span>
-          {matchedGroups.map(group => <code key={group}>{group}</code>)}
-        </div>
-      ) : null}
-
-      {warnings.length ? (
-        <div className="access-warning-list">
-          {warnings.map(warning => (
-            <p className={`access-warning ${warning.severity || "info"}`} key={warning.type || warning.message}>
-              {warning.message}
-            </p>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function TenantGuidancePanel({ token, tenantSlug, canManage, onOpenSessions, onOpenUpload }) {
-  const starterGuidance = [
-    "Inventory guidance",
-    "",
-    "- Start with the packet line and search by LIN, NSN, serial, or the plain item name.",
-    "- Check the location hint and any existing photos before asking for help.",
-    "- Take a wide photo first, then serial number or data plate photos when available.",
-    "- If an item does not match the packet line, submit it as a mismatch and add a short note."
-  ].join("\n");
-  const [guidance, setGuidance] = useState({ body: "", updatedAt: null, updatedByName: "", updatedByEmail: "" });
-  const [draft, setDraft] = useState("");
-  const [isEditing, setIsEditing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [status, setStatus] = useState({ text: "Loading guidance...", isError: false });
-
-  async function loadGuidance() {
-    try {
-      setStatus({ text: "Loading guidance...", isError: false });
-      const data = await apiRequest("/tenant/guidance", { token, tenantSlug });
-      const loaded = data.guidance || {};
-      setGuidance({
-        body: loaded.body || "",
-        updatedAt: loaded.updatedAt || null,
-        updatedByName: loaded.updatedByName || "",
-        updatedByEmail: loaded.updatedByEmail || ""
-      });
-      setDraft(loaded.body || starterGuidance);
-      setStatus({ text: "", isError: false });
-    } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
-    }
-  }
-
-  useEffect(() => {
-    loadGuidance();
-  }, [tenantSlug, token]);
-
-  function startEditing() {
-    setDraft(guidance.body || starterGuidance);
-    setIsEditing(true);
-    setStatus({ text: "", isError: false });
-  }
-
-  async function saveGuidance(event) {
-    event.preventDefault();
-
-    try {
-      setIsSaving(true);
-      const data = await apiRequest("/tenant/guidance", {
-        method: "PATCH",
-        token,
-        tenantSlug,
-        body: { body: draft }
-      });
-      const saved = data.guidance || {};
-      setGuidance({
-        body: saved.body || "",
-        updatedAt: saved.updatedAt || null,
-        updatedByName: saved.updatedByName || "",
-        updatedByEmail: saved.updatedByEmail || ""
-      });
-      setDraft(saved.body || starterGuidance);
-      setIsEditing(false);
-      setStatus({ text: "Guidance saved", isError: false });
-    } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  const hasGuidance = Boolean(guidance.body?.trim());
-  const updatedBy = guidance.updatedByName || guidance.updatedByEmail;
-
-  return (
-    <div className="leader-dashboard guidance-page">
-      <div className="leader-page-heading">
-        <div>
-          <h1>Inventory Guidance</h1>
-          <p>{tenantSlug}.{appConfig.baseDomain}</p>
-        </div>
-        <div className="leader-page-actions">
-          <button className="btn btn-secondary" type="button" onClick={onOpenSessions}>
-            <ListChecks aria-hidden="true" />
-            <span>Open sessions</span>
-          </button>
-          {canManage ? (
-            <button className="btn btn-primary" type="button" onClick={onOpenUpload}>
-              <FileUp aria-hidden="true" />
-              <span>Upload packet</span>
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="guidance-grid">
-        <section className="leader-card guidance-card">
-          <div className="leader-card-header">
-            <span className="leader-card-icon">
-              <BookOpen aria-hidden="true" />
-            </span>
-            <div>
-              <h2>Local instructions</h2>
-              <p>{updatedBy ? `Updated by ${updatedBy}${guidance.updatedAt ? ` - ${formatDate(guidance.updatedAt)}` : ""}` : "Shared with everyone in this workspace."}</p>
-            </div>
-            {canManage && !isEditing ? (
-              <button className="btn btn-secondary btn-small" type="button" onClick={startEditing}>
-                <span>{hasGuidance ? "Edit" : "Add"}</span>
-              </button>
-            ) : null}
-          </div>
-
-          {isEditing ? (
-            <form className="guidance-editor" onSubmit={saveGuidance}>
-              <label className="field-label" htmlFor="tenantGuidanceBody">Guidance</label>
-              <textarea
-                id="tenantGuidanceBody"
-                className="input guidance-textarea"
-                value={draft}
-                maxLength={12000}
-                onChange={event => setDraft(event.target.value)}
-              />
-              <div className="guidance-editor-footer">
-                <span>{draft.length.toLocaleString()} / 12,000</span>
-                <div className="button-row">
-                  <button className="btn btn-secondary" type="button" onClick={() => setIsEditing(false)} disabled={isSaving}>
-                    <span>Cancel</span>
-                  </button>
-                  <button className="btn btn-primary" type="submit" disabled={isSaving}>
-                    <CheckCircle2 aria-hidden="true" />
-                    <span>{isSaving ? "Saving..." : "Save guidance"}</span>
-                  </button>
-                </div>
-              </div>
-            </form>
-          ) : hasGuidance ? (
-            <div className="guidance-body">{guidance.body}</div>
-          ) : (
-            <EmptyPanel
-              title="No guidance yet"
-              body={canManage ? "Add local instructions for how your platoon should handle photos, notes, and packet rows." : "A platoon admin has not published guidance yet."}
-            />
-          )}
-        </section>
-
-        <aside className="leader-card guidance-workflow-card">
-          <div className="leader-card-header">
-            <span className="leader-card-icon">
-              <ShieldCheck aria-hidden="true" />
-            </span>
-            <div>
-              <h2>Use during inventory</h2>
-              <p>Keep the packet and proof flow moving.</p>
-            </div>
-          </div>
-          <div className="guidance-step-list">
-            <div className="guidance-step">
-              <Search aria-hidden="true" />
-              <div>
-                <strong>Search the packet row</strong>
-                <span>Try the common name, LIN, NSN, serial, and location hints.</span>
-              </div>
-            </div>
-            <div className="guidance-step">
-              <Camera aria-hidden="true" />
-              <div>
-                <strong>Capture proof</strong>
-                <span>Use a wide photo first. Add serial or data plate photos when requested.</span>
-              </div>
-            </div>
-            <div className="guidance-step">
-              <MessageSquare aria-hidden="true" />
-              <div>
-                <strong>Leave a short note</strong>
-                <span>Call out mismatches, missing pieces, or weird locations before review.</span>
-              </div>
-            </div>
-          </div>
-        </aside>
       </div>
 
       <StatusLine status={status} />
@@ -8367,7 +8117,7 @@ function activityDateBoundary(value, endOfDay = false) {
   return date.toISOString();
 }
 
-function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenPeople, onOpenSettings }) {
+function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions, onOpenPeople, onOpenSettings }) {
   const emptyFilters = { category: "", actor: "", action: "", entityType: "", from: "", to: "" };
   const [events, setEvents] = useState([]);
   const [nextCursor, setNextCursor] = useState("");
@@ -8571,7 +8321,11 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenPeople, o
           <EmptyPanel
             title={hasFilters ? "No matching activity" : "No activity yet"}
             body={hasFilters ? "Clear or change the filters to review other workspace changes." : "Imports, reviews, assignments, invitations, and settings changes will appear here."}
-            action={hasFilters ? <button className="btn btn-secondary btn-small" type="button" onClick={clearFilters}>Clear filters</button> : null}
+            action={hasFilters ? (
+              <button className="btn btn-secondary btn-small" type="button" onClick={clearFilters}>Clear filters</button>
+            ) : (
+              <button className="btn btn-primary btn-small" type="button" onClick={onOpenSessions}>Open inventory sessions</button>
+            )}
           />
         ) : null}
       </section>
@@ -8937,7 +8691,11 @@ function TenantPeoplePanel({
               body={hasSearchQuery ? "Try another email, role, or status." : "Nothing to manage here."}
               action={hasSearchQuery ? (
                 <button className="btn btn-secondary btn-small" type="button" onClick={clearPeopleSearch}>Clear search</button>
-              ) : null}
+              ) : (
+                <button className="btn btn-secondary btn-small" type="button" onClick={openAddTeammate}>
+                  {provisioningAvailable ? "Add teammate" : "Open inventory sessions"}
+                </button>
+              )}
             />
           )}
         </div>
@@ -9513,7 +9271,13 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   if (!tenantSlug) {
-    return <EmptyPanel title="No platoon selected" body="Open a platoon subdomain to manage members." />;
+    return (
+      <EmptyPanel
+        title="No platoon selected"
+        body="Choose a workspace to continue."
+        action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>}
+      />
+    );
   }
 
   return (
@@ -9872,6 +9636,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               token={token}
               tenantSlug={tenantSlug}
               onOpenSession={openActivitySession}
+              onOpenSessions={() => openSessions()}
               onOpenPeople={() => selectTenantTab("people")}
               onOpenSettings={() => selectTenantTab("settings")}
             />
@@ -10235,15 +10000,15 @@ export default function AdminConsole() {
           {isNewsletterPage || (isPlatformPage && canUseNewsletter && !canUsePlatform) ? (
             canUseNewsletter
               ? <NewsletterPanel token={token} me={me} onRefresh={() => loadMe()} onLogout={logout} />
-              : <EmptyPanel title="Newsletter admin access required" body="This account can sign in, but it is not assigned newsletter publishing access." />
+              : <EmptyPanel title="Newsletter admin access required" body="This account can sign in, but it is not assigned newsletter publishing access." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           ) : isPlatformPage ? (
             canUsePlatform
               ? <PlatformPanel token={token} me={me} onRefresh={() => loadMe()} onLogout={logout} />
-              : <EmptyPanel title="Platform access required" body="This account can sign in, but it is not a root admin." />
+              : <EmptyPanel title="Platform access required" body="This account can sign in, but it is not a root admin." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           ) : canUseTenant ? (
             <TenantPanel token={token} tenantSlug={tenantSlug} me={me} onRefresh={() => loadMe()} onLogout={logout} />
           ) : (
-            <EmptyPanel title="Platoon admin access required" body="This account is not assigned as a platoon admin here." />
+            <EmptyPanel title="Workspace access required" body="This account does not have access to this platoon." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           )}
         </>
       )}

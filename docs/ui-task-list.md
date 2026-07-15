@@ -226,15 +226,15 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: keep legacy app available intentionally, but label it as legacy or remove confusing admin links after cutover.
   - Status: completed in `LEGACY-001`; the static root is an explicitly labeled fallback.
 
-- [ ] **UI-029: Empty states should always give one next action**
+- [x] **UI-029: Empty states should always give one next action**
   - Current issue: several empty states explain what is missing but do not always include a next button.
   - Desired behavior: empty states include the next action when the user has permission, such as `Create session`, `Upload packet`, `Invite helper`.
-  - Status: in progress, 2026-07-14. Dashboard work/review empty states clear the active search or open the relevant session/queue, the full Review queue now clears unmatched searches with focus restoration or opens inventory sessions when no proof is waiting, Reports can reset all filters, and Team clears unmatched searches or opens the permanent teammate form with focus. When permanent provisioning is unavailable, Team sends the leader to inventory sessions for temporary crew access instead of presenting unusable fields. Platform platoon/workspace-access and newsletter content/issue/subscriber lists now distinguish load failure or filtered-empty from true-empty states with one direct retry, clear, create, or signup action. Lower-frequency administration empty states still need the same treatment.
+  - Status: complete, 2026-07-14. Dashboard, session assignment lists, Review, Reports, Team, Activity, Platform, newsletter, and access-denied states now provide one direct recovery action when the user can act. Empty assignment buckets move to a populated list, completed-only sessions expand their results automatically, filtered lists clear their filters, and users without the requested admin role return to workspace selection instead of reaching a dead end. Desktop and Pixel 7 coverage protects the assignment, activity, and access-recovery paths.
 
-- [ ] **UI-030: Standardize action labels**
+- [x] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
   - Desired behavior: labels map to clear destinations: `Open workspace`, `Open session`, `Review queue`, `Import packet`, `Launch app`.
-  - Status: in progress, 2026-07-14. Existing-work destinations consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`; proof entry says `Submit proof`; packet setup says `Choose source`, the exact `Import N row(s)` action, and `Review again`; platform navigation now says `Open platoons`; and newsletter administration uses `homepage update`/`Write newsletter` instead of technical `block`/`issue` creation labels. Remaining lower-frequency platform/support labels still need consolidation.
+  - Status: complete, 2026-07-14. Existing-work destinations consistently say `Open session`, `Open item`, or `Open workspace`; assignment lists use `Unclaimed`, `Mine`, and `Others`; proof shortcuts say `Review proof` or `Open review queue`; proof entry says `Submit proof`; packet setup says `Choose source`, the exact `Import N row(s)` action, and `Review again`; platform navigation says `Open platoons`; and newsletter administration uses `homepage update`/`Write newsletter` instead of technical implementation labels. Session summary labels now distinguish `Open rows` and `Needs review`.
 
 - [x] **UI-031: Mobile-first toolbar cleanup**
   - Current issue: desktop layout is improving, but mobile needs repeated inspection.
@@ -276,7 +276,7 @@ Use this as the working backlog before turning individual items into implementat
 
 - [x] **UI-039: Tenant settings**
   - Desired behavior: platoon admins can update the workspace display name and notification preferences without seeing deployment-only identity configuration.
-  - Status: field-refined, 2026-07-11, through `TENANT-004`. Display name and in-app/email preferences remain editable, the workspace link remains copyable, and retired guidance plus read-only slug/Authentik group internals are no longer tenant-facing.
+  - Status: field-refined, 2026-07-14, through `TENANT-004`. Display name and in-app/email preferences remain editable, the workspace link remains copyable, and the retired Guidance and raw access-source interfaces plus their styles are no longer shipped to users. Historical guidance data and audit descriptions remain intact for compatibility.
 
 - [x] **UI-040: Admin setup checklist**
   - Desired behavior: platform admin sees setup completion for DNS, Authentik group, tenant admin invite, packet import, and storage.
@@ -285,7 +285,7 @@ Use this as the working backlog before turning individual items into implementat
 ## Current Suggested Work Order
 
 1. Configure and production-verify the implemented `UI-048` permanent Authentik provisioning feature using its dedicated service identity and recovery stage.
-2. Complete `UI-036`, `UI-029`, and `UI-030` across the remaining lower-frequency administration surfaces while preserving the deployed leader/helper accountability flow.
+2. Complete `UI-036` across the remaining lower-frequency administration surfaces while preserving the deployed leader/helper accountability flow.
 3. Replay leader upload/invite/assign/proof/review/close and verify temporary-account cleanup in production after Authentik activation; keep `OPS-002` as an owner-only deferred verification.
 
 This order follows the actual field event: leader starts work, brings the crew in, people claim and prove items, the leader closes the event, and the next event benefits from verified history.

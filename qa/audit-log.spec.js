@@ -122,4 +122,22 @@ test.describe("tenant activity log", () => {
     if (await mobileMenu.isVisible()) await mobileMenu.click();
     await expect(page.getByRole("button", { name: "Activity Log", exact: true })).toHaveCount(0);
   });
+
+  test("an empty activity log points leaders back to inventory sessions", async ({ page }) => {
+    await page.route("**/api/tenant/audit-events**", route => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        events: [],
+        nextCursor: null,
+        filterOptions: { actors: [], actions: [], entityTypes: [], categories: [] }
+      })
+    }));
+
+    await signIn(page, "Platoon admin");
+    await openWorkspaceTab(page, "Activity Log");
+    await expect(page.getByText("No activity yet", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Open inventory sessions", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+  });
 });
