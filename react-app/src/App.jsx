@@ -475,17 +475,58 @@ function getWorkspaceSlugsFromGroups(groups) {
 }
 
 function getWorkspaceSlugsFromProfile(profile) {
-  const slugs = new Set(getWorkspaceSlugsFromGroups(profile?.groups));
+  return getWorkspaceOptionsFromProfile(profile).map(workspace => workspace.slug);
+}
+
+function getWorkspaceOptionsFromProfile(profile) {
+  const workspaces = new Map();
+
+  // Modern `/me` responses contain the backend-authorized workspace list. Only
+  // fall back to raw group names for older API responses; otherwise a stale
+  // Authentik group could make a disabled workspace look selectable.
+  if (!Array.isArray(profile?.workspaces)) {
+    getWorkspaceSlugsFromGroups(profile?.groups).forEach(slug => {
+      workspaces.set(slug, {
+        slug,
+        name: `${slug.toUpperCase()} Platoon`,
+        role: "contributor",
+        source: "authentik"
+      });
+    });
+  }
 
   (profile?.workspaces || []).forEach(workspace => {
     const slug = String(workspace?.slug || "").trim().toLowerCase();
-    if (/^[a-z0-9-]+$/.test(slug)) slugs.add(slug);
+    if (!/^[a-z0-9-]+$/.test(slug)) return;
+    workspaces.set(slug, {
+      slug,
+      name: String(workspace?.name || "").trim() || `${slug.toUpperCase()} Platoon`,
+      role: String(workspace?.role || "contributor").trim().toLowerCase(),
+      source: String(workspace?.source || "").trim().toLowerCase()
+    });
   });
 
   const tenantSlug = String(profile?.tenant?.slug || "").trim().toLowerCase();
-  if (tenantSlug && profile?.membership?.role) slugs.add(tenantSlug);
+  if (tenantSlug && profile?.membership?.role) {
+    workspaces.set(tenantSlug, {
+      slug: tenantSlug,
+      name: String(profile?.tenant?.name || "").trim() || `${tenantSlug.toUpperCase()} Platoon`,
+      role: String(profile.membership.role).trim().toLowerCase(),
+      source: String(profile.membership.source || "database").trim().toLowerCase()
+    });
+  }
 
-  return [...slugs].sort();
+  return [...workspaces.values()].sort((left, right) => (
+    left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+    || left.slug.localeCompare(right.slug)
+  ));
+}
+
+function workspaceRoleLabel(role) {
+  if (role === "tenant_admin") return "Leader";
+  if (role === "viewer") return "Viewer";
+  if (role === "crew") return "Temporary crew";
+  return "Team member";
 }
 
 function isOidcCallback(search = window.location.search) {
@@ -668,7 +709,8 @@ function LaunchRouter() {
 
         setMe(data);
         const groups = normalizeGroupLabels(data.groups);
-        const slugs = getWorkspaceSlugsFromProfile(data);
+        const workspaceOptions = getWorkspaceOptionsFromProfile(data);
+        const slugs = workspaceOptions.map(workspace => workspace.slug);
 
         if (tenantSlug) {
           if (!data.tenant) {
@@ -713,7 +755,7 @@ function LaunchRouter() {
         }
 
         if (slugs.length > 1) {
-          setWorkspaces(slugs);
+          setWorkspaces(workspaceOptions);
           setStatus({ text: "Choose a workspace to continue.", isError: false });
           return;
         }
@@ -804,9 +846,11 @@ function LaunchRouter() {
     <div className="auth-screen launch-screen">
       <section className="auth-card launch-card" aria-labelledby="launchTitle">
         <p className="eyebrow">{APP_NAME}</p>
-        <h1 id="launchTitle">Opening workspace</h1>
+        <h1 id="launchTitle">{workspaces.length ? "Choose a workspace" : "Opening workspace"}</h1>
         <p className="auth-copy">
-          We are checking your account and sending you to the right place.
+          {workspaces.length
+            ? "Select the platoon you are working with today."
+            : "We are checking your account and sending you to the right place."}
         </p>
 
         {me ? (
@@ -817,14 +861,25 @@ function LaunchRouter() {
         ) : null}
 
         {workspaces.length ? (
-          <div className="launch-workspace-list">
-            {workspaces.map(slug => (
-              <a className="btn btn-secondary btn-full" key={slug} href={getTenantUrl(slug)}>
-                <CornerDownRight aria-hidden="true" />
-                <span>{slug.toUpperCase()} workspace</span>
+          <nav className="launch-workspace-list" aria-label="Available workspaces">
+            {workspaces.map(workspace => (
+              <a
+                className="btn btn-secondary btn-full launch-workspace-card"
+                key={workspace.slug}
+                href={getTenantUrl(workspace.slug)}
+                aria-label={`Open ${workspace.name} workspace`}
+              >
+                <span className="launch-workspace-copy">
+                  <strong>{workspace.name}</strong>
+                  <small>{workspace.slug}.{appConfig.baseDomain}</small>
+                </span>
+                <span className="launch-workspace-role">
+                  {workspaceRoleLabel(workspace.role)}
+                  <CornerDownRight aria-hidden="true" />
+                </span>
               </a>
             ))}
-          </div>
+          </nav>
         ) : null}
 
         <StatusText status={status} />

@@ -481,6 +481,52 @@ button {
   margin-top: 20px;
 }
 
+.btn.launch-workspace-card {
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 12px 14px;
+  text-align: left;
+  white-space: normal;
+}
+
+.launch-workspace-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.launch-workspace-copy strong,
+.launch-workspace-copy small {
+  overflow-wrap: anywhere;
+}
+
+.launch-workspace-copy strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.launch-workspace-copy small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.launch-workspace-role {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.launch-workspace-role svg {
+  width: 18px;
+  height: 18px;
+}
+
 .launch-access-details {
   border-top: 1px solid var(--line);
   color: var(--muted);

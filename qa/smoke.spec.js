@@ -98,6 +98,75 @@ test.describe("QA smoke", () => {
     await expect(page).toHaveURL(/ms\.localhost:5175\/#\/admin/);
   });
 
+  test("launch router gives multi-platoon users a named workspace chooser", async ({ page }) => {
+    await seedQaLaunchSession(page, {
+      sub: "qa-multi-workspace",
+      email: "qa-multi-workspace@876en.test",
+      name: "QA Multi Workspace",
+      groups: []
+    });
+    await page.route("**/api/me", async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          user: {
+            id: "00000000-0000-4000-8000-000000000091",
+            email: "qa-multi-workspace@876en.test",
+            display_name: "QA Multi Workspace"
+          },
+          identity: {
+            subject: "qa-multi-workspace",
+            email: "qa-multi-workspace@876en.test",
+            displayName: "QA Multi Workspace"
+          },
+          groups: ["876en-disabled-stale-group"],
+          isPlatformAdmin: false,
+          isFrgAdmin: false,
+          tenant: null,
+          membership: null,
+          access: null,
+          workspaces: [
+            {
+              id: "00000000-0000-4000-8000-000000000092",
+              slug: "ms",
+              name: "Maintenance Support Platoon",
+              status: "active",
+              role: "tenant_admin",
+              source: "database"
+            },
+            {
+              id: "00000000-0000-4000-8000-000000000093",
+              slug: "red",
+              name: "Red Platoon",
+              status: "active",
+              role: "contributor",
+              source: "database"
+            }
+          ]
+        })
+      });
+    });
+
+    await page.goto(LAUNCH_URL);
+
+    await expect(page.getByRole("heading", { name: "Choose a workspace" })).toBeVisible();
+    const choices = page.getByRole("navigation", { name: "Available workspaces" });
+    const msWorkspace = choices.getByRole("link", { name: "Open Maintenance Support Platoon workspace" });
+    const redWorkspace = choices.getByRole("link", { name: "Open Red Platoon workspace" });
+    await expect(msWorkspace).toContainText("Leader");
+    await expect(msWorkspace).toContainText("ms.localhost");
+    await expect(redWorkspace).toContainText("Team member");
+    await expect(redWorkspace).toContainText("red.localhost");
+    await expect(choices.getByText(/disabled-stale-group/i)).toHaveCount(0);
+    await expect(msWorkspace).toHaveAttribute("href", "http://ms.localhost:5175/#/admin");
+    await expect(redWorkspace).toHaveAttribute("href", "http://red.localhost:5175/#/admin");
+
+    for (const choice of [msWorkspace, redWorkspace]) {
+      const box = await choice.boundingBox();
+      expect(box?.height || 0).toBeGreaterThanOrEqual(44);
+    }
+  });
+
   test("newsletter admin can reach newsletter workspace", async ({ page }) => {
     await page.goto(NEWSLETTER_URL);
     await signInWithQaPersona(page, "Newsletter admin");

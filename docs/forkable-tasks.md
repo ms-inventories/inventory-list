@@ -863,6 +863,8 @@ Definition of done:
 
 Goal: support users assigned to more than one tenant.
 
+Status: complete and responsive-QA covered, 2026-07-14. Workspace discovery preserves exact active database memberships, optional legacy group fallback, and the platform-admin override. The launch screen automatically opens a single authorized platoon or presents named, role-labeled choices when more than one is available; the tenant account menu provides the return path.
+
 Primary files:
 
 - `backend/src/routes.js`
@@ -871,10 +873,10 @@ Primary files:
 
 Subtasks:
 
-- [ ] Return all accessible tenants from `/me`.
-- [ ] Add workspace chooser in launch screen.
-- [ ] Add switch workspace to user menu.
-- [ ] Preserve platform-admin override behavior.
+- [x] Return all accessible tenants from `/me`.
+- [x] Add workspace chooser in launch screen.
+- [x] Add switch workspace to user menu.
+- [x] Preserve platform-admin override behavior.
 
 Definition of done:
 

@@ -266,8 +266,9 @@ Use this as the working backlog before turning individual items into implementat
 
 ## P3: Later SaaS Depth
 
-- [ ] **UI-037: Multi-workspace switcher**
+- [x] **UI-037: Multi-workspace switcher**
   - Desired behavior: platform admins or users in multiple platoons can switch workspaces from the user menu.
+  - Status: complete and responsive-QA covered, 2026-07-14. `/me` returns every active authorized workspace while honoring database authority and the platform-admin override; multi-platoon users get a named, role-labeled, phone-sized chooser; and the tenant account menu returns to that chooser without requiring URL editing.
 
 - [x] **UI-038: Audit log UI**
   - Desired behavior: platform and tenant admins can see who imported rows, changed status, approved proof, invited users, and closed sessions.

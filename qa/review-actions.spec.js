@@ -199,13 +199,13 @@ test.describe("review queue decisions", () => {
     await page.route(`**/api/submissions/${approved.submissionId}/review`, async route => {
       if (route.request().method() !== "PATCH") return route.continue();
       approvalAttempts += 1;
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 1_500));
       await route.continue();
     });
     await page.route(`**/api/submissions/${requested.submissionId}/evidence-requests`, async route => {
       if (route.request().method() !== "POST") return route.continue();
       requestAttempts += 1;
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 1_500));
       await route.continue();
     });
 
