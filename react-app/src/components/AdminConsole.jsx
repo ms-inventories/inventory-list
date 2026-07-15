@@ -6110,8 +6110,13 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [status, setStatus] = useState({ text: "Loading platoons...", isError: false });
-  const [isSaving, setIsSaving] = useState(false);
+  const [createStatus, setCreateStatus] = useState({ text: "", isError: false });
+  const [platformActions, setPlatformActions] = useState(() => new Map());
   const [platformProvisioningAvailable, setPlatformProvisioningAvailable] = useState(false);
+  const [hasLoadedTenants, setHasLoadedTenants] = useState(false);
+  const [tenantLoadError, setTenantLoadError] = useState(false);
+  const platformActionRef = useRef(new Map());
+  const platformLoadRequestRef = useRef(0);
   const userMenuRef = useRef(null);
   const mobileNavToggleRef = useRef(null);
   const mobileNavCloseRef = useRef(null);
@@ -6138,6 +6143,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     const matchesStatus = statusFilter === "all" || tenant.status === statusFilter;
     return matchesStatus;
   });
+  const createAction = platformActions.get("create") || "";
+  const refreshAction = platformActions.get("refresh") || "";
+  const hasPlatformAction = platformActions.size > 0;
   const healthUrl = (() => {
     try {
       const apiUrl = new URL(appConfig.apiBaseUrl, window.location.origin);
@@ -6219,6 +6227,32 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     }
   ];
 
+  function beginPlatformAction(scope, action) {
+    if (!scope || platformActionRef.current.size || platformActionRef.current.has(scope)) return false;
+    platformActionRef.current.set(scope, action);
+    setPlatformActions(current => {
+      const next = new Map(current);
+      next.set(scope, action);
+      return next;
+    });
+    return true;
+  }
+
+  function finishPlatformAction(scope, action) {
+    if (platformActionRef.current.get(scope) !== action) return;
+    platformActionRef.current.delete(scope);
+    setPlatformActions(current => {
+      const next = new Map(current);
+      if (next.get(scope) === action) next.delete(scope);
+      return next;
+    });
+  }
+
+  function clearPlatformFilters() {
+    setQuery("");
+    setStatusFilter("all");
+  }
+
   function tenantWorkspaceHref(tenant) {
     const host = tenantHost(tenant);
     const isLocal = appConfig.baseDomain === "localhost" || window.location.hostname.endsWith(".localhost") || window.location.hostname === "localhost";
@@ -6238,20 +6272,30 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     });
   }
 
-  async function loadTenants() {
+  async function loadTenants({ quiet = false } = {}) {
+    const requestId = platformLoadRequestRef.current + 1;
+    platformLoadRequestRef.current = requestId;
     try {
-      setStatus({ text: "Loading platoons...", isError: false });
+      if (!quiet) setStatus({ text: "Loading platoons...", isError: false });
+      setTenantLoadError(false);
       const data = await apiRequest("/platform/tenants", { token });
+      if (requestId !== platformLoadRequestRef.current) return { ok: false, stale: true };
       setTenants(data.tenants || []);
+      setHasLoadedTenants(true);
       const accountSetupAvailable = data.provisioningAvailable === true;
       setPlatformProvisioningAvailable(accountSetupAvailable);
       if (!accountSetupAvailable) {
         setForm(current => ({ ...current, adminEmail: "", adminDisplayName: "" }));
       }
-      setStatus({ text: "", isError: false });
+      if (!quiet) setStatus({ text: "", isError: false });
+      return { ok: true };
     } catch (error) {
+      if (requestId !== platformLoadRequestRef.current) return { ok: false, stale: true };
       setPlatformProvisioningAvailable(false);
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      setHasLoadedTenants(true);
+      setTenantLoadError(true);
+      if (!quiet) setStatus({ text: getApiErrorMessage(error), isError: true });
+      return { ok: false, error };
     }
   }
 
@@ -6283,8 +6327,30 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   }, [isUserMenuOpen, isMobileNavOpen, isMobileViewport]);
 
   async function refreshPlatform() {
-    await loadTenants();
-    onRefresh?.();
+    const scope = "refresh";
+    const action = "refresh";
+    if (!beginPlatformAction(scope, action)) return;
+    try {
+      const result = await loadTenants();
+      if (result.ok) {
+        setStatus({ text: "Platform refreshed.", isError: false });
+        onRefresh?.();
+      }
+    } finally {
+      finishPlatformAction(scope, action);
+    }
+  }
+
+  function openCreateTenant() {
+    if (platformActionRef.current.size) return;
+    setCreateStatus({ text: "", isError: false });
+    setIsCreateOpen(true);
+  }
+
+  function closeCreateTenant() {
+    if (platformActionRef.current.has("create")) return;
+    setIsCreateOpen(false);
+    setCreateStatus({ text: "", isError: false });
   }
 
   function selectPlatformView(view) {
@@ -6316,7 +6382,11 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
 
   async function createTenant(e) {
     e.preventDefault();
-    setIsSaving(true);
+    const scope = "create";
+    const action = "create";
+    if (!beginPlatformAction(scope, action)) return;
+    setCreateStatus({ text: "Creating platoon...", isError: false });
+    setStatus({ text: "", isError: false });
     try {
       const body = {
         name: form.name.trim(),
@@ -6327,12 +6397,18 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
       const data = await apiRequest("/platform/tenants", { method: "POST", token, body });
       setForm({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
       setIsCreateOpen(false);
-      setStatus({ text: `Created ${data.tenant.slug}.${appConfig.baseDomain}`, isError: false });
-      await loadTenants();
+      setCreateStatus({ text: "", isError: false });
+      const refreshed = await loadTenants({ quiet: true });
+      const createdText = `Created ${data.tenant.slug}.${appConfig.baseDomain}.`;
+      if (!refreshed.ok && !refreshed.stale) {
+        setStatus({ text: `${createdText} The latest platoon list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, isError: true });
+      } else {
+        setStatus({ text: createdText, isError: false });
+      }
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      setCreateStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
-      setIsSaving(false);
+      finishPlatformAction(scope, action);
     }
   }
 
@@ -6407,9 +6483,32 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     );
   }
 
-  function renderTenantTable(rows, { compact = false } = {}) {
+  function renderTenantTable(rows, { compact = false, filtered = false } = {}) {
     if (!rows.length) {
-      return <EmptyPanel title="No platoons found" body="Adjust the search or create a new platoon workspace." />;
+      if (!hasLoadedTenants) {
+        return <EmptyPanel title="Loading platoons" body="Checking the latest workspaces and access counts." />;
+      }
+      if (tenantLoadError) {
+        return (
+          <EmptyPanel
+            title="Could not load platoons"
+            body="Refresh the platform to try again."
+            action={<button className="btn btn-secondary btn-small" type="button" disabled={hasPlatformAction} onClick={refreshPlatform}>Try again</button>}
+          />
+        );
+      }
+      const hasFilters = filtered && (Boolean(query.trim()) || statusFilter !== "all");
+      return (
+        <EmptyPanel
+          title={hasFilters ? "No matching platoons" : "No platoons yet"}
+          body={hasFilters ? "Clear the search and status filter to see every workspace." : "Create the first platoon workspace to begin inventory."}
+          action={hasFilters ? (
+            <button className="btn btn-secondary btn-small" type="button" onClick={clearPlatformFilters}>Clear filters</button>
+          ) : (
+            <button className="btn btn-primary btn-small" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>Create platoon</button>
+          )}
+        />
+      );
     }
 
     return (
@@ -6517,7 +6616,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           </button>
           <strong className="platform-mobile-title">{APP_NAME}</strong>
           <div className="leader-user-actions">
-            <button className="icon-button platform-topbar-refresh" type="button" onClick={refreshPlatform} aria-label="Refresh">
+            <button className="icon-button platform-topbar-refresh" type="button" disabled={hasPlatformAction} onClick={refreshPlatform} aria-label={refreshAction ? "Refreshing platform" : "Refresh platform"}>
               <RefreshCw aria-hidden="true" />
             </button>
             <div className="leader-popover-anchor platform-user-menu" ref={userMenuRef}>
@@ -6546,12 +6645,12 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                     </div>
                   </div>
                   <div className="leader-menu-actions">
-                    <button type="button" onClick={() => {
+                    <button type="button" disabled={hasPlatformAction} onClick={() => {
                       refreshPlatform();
                       setIsUserMenuOpen(false);
                     }}>
                       <RefreshCw aria-hidden="true" />
-                      <span>Refresh platform</span>
+                      <span>{refreshAction ? "Refreshing platform..." : "Refresh platform"}</span>
                     </button>
                     <button type="button" onClick={openAppLauncher}>
                       <LogIn aria-hidden="true" />
@@ -6594,7 +6693,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 </button>
               ) : null}
               {["dashboard", "platoons", "organizations"].includes(activeView) ? (
-                <button className="btn btn-primary" type="button" onClick={() => setIsCreateOpen(true)}>
+                <button className="btn btn-primary" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>
                   <Plus aria-hidden="true" />
                   <span>Create platoon</span>
                 </button>
@@ -6656,7 +6755,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                     <option value="archived">Archived</option>
                   </select>
                 </div>
-                {renderTenantTable(visibleTenants)}
+                {renderTenantTable(visibleTenants, { filtered: true })}
               </section>
             </>
           ) : null}
@@ -6720,7 +6819,15 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 ))}
               </div>
               {!searchMatchedTenants.length ? (
-                <EmptyPanel title="No user coverage found" body="Create a platoon workspace before assigning members." />
+                <EmptyPanel
+                  title={query.trim() ? "No matching workspace access" : "No workspace access yet"}
+                  body={query.trim() ? "Clear the search to see every workspace." : "Create a platoon workspace before assigning members."}
+                  action={query.trim() ? (
+                    <button className="btn btn-secondary btn-small" type="button" onClick={() => setQuery("")}>Clear search</button>
+                  ) : (
+                    <button className="btn btn-primary btn-small" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>Create platoon</button>
+                  )}
+                />
               ) : null}
             </section>
           ) : null}
@@ -6796,17 +6903,20 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 <p className="eyebrow">New workspace</p>
                 <h2 id="createPlatoonTitle">Create platoon</h2>
               </div>
-              <button className="icon-button" type="button" onClick={() => setIsCreateOpen(false)} aria-label="Close create platoon">
+              <button className="icon-button" type="button" disabled={Boolean(createAction)} onClick={closeCreateTenant} aria-label="Close create platoon">
                 <XCircle aria-hidden="true" />
               </button>
             </div>
 
-            <form className="admin-form" onSubmit={createTenant}>
+            <StatusLine status={createStatus} />
+
+            <form className="admin-form" onSubmit={createTenant} aria-busy={Boolean(createAction)}>
               <label className="field-label" htmlFor="tenantName">Platoon name</label>
               <input
                 id="tenantName"
                 className="input"
                 required
+                disabled={Boolean(createAction)}
                 value={form.name}
                 placeholder="1st Platoon"
                 onChange={e => updateForm("name", e.target.value)}
@@ -6818,6 +6928,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   id="tenantSlug"
                   className="input"
                   required
+                  disabled={Boolean(createAction)}
                   maxLength={63}
                   pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
                   title="Use 1 to 63 lowercase letters, numbers, or hyphens. Start and end with a letter or number."
@@ -6838,7 +6949,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 id="tenantAdminEmail"
                 className="input"
                 type="email"
-                disabled={!platformProvisioningAvailable || isSaving}
+                disabled={!platformProvisioningAvailable || Boolean(createAction)}
                 value={form.adminEmail}
                 placeholder="admin@example.com"
                 onChange={e => updateForm("adminEmail", e.target.value)}
@@ -6848,18 +6959,18 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               <input
                 id="tenantAdminName"
                 className="input"
-                disabled={!platformProvisioningAvailable || isSaving}
+                disabled={!platformProvisioningAvailable || Boolean(createAction)}
                 value={form.adminDisplayName}
                 placeholder="PSG Smith"
                 onChange={e => updateForm("adminDisplayName", e.target.value)}
               />
 
               <div className="button-row platform-modal-actions">
-                <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
+                <button className="btn btn-primary btn-full" type="submit" disabled={Boolean(createAction)}>
                   <Plus aria-hidden="true" />
-                  <span>{isSaving ? "Creating..." : "Create platoon"}</span>
+                  <span>{createAction ? "Creating platoon..." : "Create platoon"}</span>
                 </button>
-                <button className="btn btn-secondary btn-full" type="button" onClick={() => setIsCreateOpen(false)}>
+                <button className="btn btn-secondary btn-full" type="button" disabled={Boolean(createAction)} onClick={closeCreateTenant}>
                   <span>Cancel</span>
                 </button>
               </div>

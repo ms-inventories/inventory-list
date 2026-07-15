@@ -307,7 +307,7 @@ Definition of done:
 
 Goal: remove dead platform sidebar controls and replace them with real views.
 
-Status: complete for this pass. Platform navigation, overview, sidebar state, and platform-only admin views are safe for follow-up work; coordinate before changing the same section router.
+Status: complete for this pass. Platform navigation, overview, sidebar state, and platform-only admin views are safe for follow-up work; coordinate before changing the same section router. The 2026-07-14 reliability follow-up adds fenced tenant loads, a single-shot refresh, recoverable initial-load errors, and clear filtered/true-empty actions on desktop and mobile.
 
 Primary files:
 
@@ -1054,7 +1054,7 @@ Definition of done:
 
 Goal: make every empty page tell the user what to do next.
 
-Status: in progress, 2026-07-11. The full empty-state/action-label audit is complete. The first correctness slice now routes dashboard pending-row and card actions to existing sessions instead of the create-session wizard, removes duplicate Platform `Admin view` destinations, points fallback access to `Launch app`, and clarifies active legacy-viewer destinations. Broader empty-state next actions and packet/import label standardization remain.
+Status: in progress, 2026-07-14. The full empty-state/action-label audit is complete. Dashboard pending-row and card actions route to existing sessions instead of the create-session wizard, duplicate Platform `Admin view` destinations are removed, fallback access points to `Launch app`, and active legacy-viewer destinations are explicit. Platform platoon and workspace-access results now distinguish loading, failed load, no matches, and true-empty states with one direct `Try again`, `Clear filters`, or `Create platoon` action. Broader lower-frequency administration cleanup remains.
 
 Primary files:
 
@@ -1127,7 +1127,7 @@ Definition of done:
 
 Goal: every async action should feel deliberate.
 
-Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel, leader start/session/packet-import, Review Queue decision/request/match, and newsletter content/issue/subscriber actions have the same duplicate protection, scoped field/control locking, stale-response fencing, and action-specific feedback with desktop/mobile QA. Newsletter publishing is also single-shot at the API boundary. Legacy viewer login and public unsubscribe reject repeat submissions while pending. Remaining lower-frequency platform/admin follow-ups remain.
+Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel, leader start/session/packet-import, Review Queue decision/request/match, newsletter content/issue/subscriber actions, and Platform create/refresh actions have the same duplicate protection, scoped field/control locking, stale-response fencing, and action-specific feedback with desktop/mobile QA. Platform create failures stay inside the modal without discarding entered values, and initial tenant-load failures provide a direct retry. Newsletter publishing is also single-shot at the API boundary. Legacy viewer login and public unsubscribe reject repeat submissions while pending. Remaining lower-frequency platform/admin follow-ups remain.
 
 Primary files:
 

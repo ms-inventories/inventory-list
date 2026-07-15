@@ -66,6 +66,8 @@ test.describe("Platform users", () => {
     await expect(accessRow.getByRole("button", { name: "Copy link" })).toBeVisible();
 
     await page.getByPlaceholder("Search access by platoon or subdomain...").fill("no matching workspace");
-    await expect(page.getByText("No user coverage found")).toBeVisible();
+    await expect(page.getByText("No matching workspace access", { exact: true })).toBeVisible();
+    await page.locator(".admin-empty").getByRole("button", { name: "Clear search" }).click();
+    await expect(accessRow).toBeVisible();
   });
 });
