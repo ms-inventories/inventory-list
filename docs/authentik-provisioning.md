@@ -31,11 +31,13 @@ Provisioning must remain disabled if neither verified configuration is available
 ### Recovery email stage
 
 1. Sign in to the Authentik Admin interface at `auth.bensonhub.com` with a human administrator account.
-2. Confirm the Brand serving this hostname has a Recovery flow configured and that Authentik's worker can send email.
+2. Confirm the Brand serving this hostname has a Recovery flow configured and that Authentik's worker can send email. When the stage uses global connection settings, configure `AUTHENTIK_EMAIL__HOST`, `AUTHENTIK_EMAIL__PORT`, `AUTHENTIK_EMAIL__USERNAME`, `AUTHENTIK_EMAIL__PASSWORD`, `AUTHENTIK_EMAIL__USE_TLS`, `AUTHENTIK_EMAIL__USE_SSL`, `AUTHENTIK_EMAIL__TIMEOUT`, and `AUTHENTIK_EMAIL__FROM` on the Authentik service. Port `587` normally uses `USE_TLS=true` and `USE_SSL=false`; port `465` normally uses the inverse. Never enable both TLS modes.
 3. Open **Flows and Stages > Stages**. Select or create the general-purpose **Email Stage** used for account recovery. Do not use the Email Authenticator Setup stage.
 4. Set the stage template, subject, sender, and SMTP behavior. The backend sends `token_duration=days=7`, so the generated recovery link expires after seven days even if the stage default differs.
 5. Locate the stage UUID. While signed in as an administrator, open `https://auth.bensonhub.com/api/v3/stages/email/?ordering=name&page_size=100`, find the exact stage by `name`, and copy its `pk` UUID. An edit request for that row also uses `/api/v3/stages/email/<UUID>/`.
 6. Record only the UUID for Coolify. Never copy an administrator session or browser credential into the app.
+
+Run `ak test_email <controlled-address> -S "<stage name>"` from the Authentik worker/server environment before enabling provisioning. Also make one synchronous Django mail send when diagnosing queued retries so the underlying SMTP exception is visible. A `535 Authentication failed` response means the relay username or secret is invalid; do not enable provisioning or repeatedly retry enrollment until the relay credential is replaced and the test succeeds.
 
 The recovery-email API also requires the calling service identity to have object-level **Can view Email Stage** on this exact stage. A missing Brand recovery flow, inaccessible stage, or broken SMTP setup will leave the app job retryable without granting tenant access.
 
@@ -104,7 +106,7 @@ Keep `AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED=true` during this rollout for lega
 1. Deploy the additive database migration, Authentik client, durable job state, API routes, worker, and Team UI with `AUTHENTIK_PROVISIONING_ENABLED=false`, leaving the currently working frontend OIDC scopes unchanged.
 2. Confirm `https://api.876en.org/health` is healthy and existing OIDC login, temporary crew codes, assignment, proof, review, and closeout still work.
 3. Create and attach the immutable OIDC UUID mapping (or configure the explicitly verified UUID subject alternative). Then append `ak_user_uuid` to `VITE_OIDC_SCOPE`, redeploy the frontend, and verify normal login plus the emitted claim while backend provisioning is still off.
-4. Configure and verify the recovery flow/stage, least-privilege role, service account, expiring API token, base-group restrictions, and all backend Coolify values above. Redeploy once while the feature is still off.
+4. Configure and verify the recovery flow/stage, global or stage-specific SMTP delivery, least-privilege role, service account, expiring API token, base-group restrictions, and all backend Coolify values above. Redeploy once while the feature is still off. Do not continue until `ak test_email` succeeds through the exact recovery stage.
 5. Confirm no secret appears in deployment logs or frontend assets. Confirm the human administrator password is absent from every app environment variable.
 6. Change only `AUTHENTIK_PROVISIONING_ENABLED` to `true` and redeploy the backend.
 7. Run the signed-in smoke test below at phone and desktop widths before inviting real users.
