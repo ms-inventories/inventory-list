@@ -1,6 +1,6 @@
 # Permanent Authentik Provisioning
 
-The permanent-account schema, client, and authority foundation are deployed. Production provisioning was enabled on 2026-07-15 after the dedicated Authentik service identity, recovery email stage, Coolify values, synchronous SMTP send, exact recovery-stage send, backend redeploy, and health check succeeded. The signed-in phone/desktop create-link-email-login smoke test and its tagged test-identity cleanup remain the final activation verification. The app database is authoritative for each tenant role and disabled state; Authentik provides the login identity and group claims, but must not re-enable an explicitly disabled database membership.
+The permanent-account schema, client, and authority foundation are deployed and production-verified. Provisioning was enabled on 2026-07-15 after the dedicated Authentik service identity, recovery email stage, Coolify values, synchronous SMTP send, exact recovery-stage send, backend redeploy, and health check succeeded. A disposable end-to-end run then verified leader login, safe tenant-group tagging, account creation, enrollment dispatch, first member login, desktop/phone Team rendering, disable reconciliation, and Authentik identity deletion. The app database is authoritative for each tenant role and disabled state; Authentik provides the login identity and group claims, but must not re-enable an explicitly disabled database membership.
 
 ## Trust Boundary
 
@@ -113,6 +113,8 @@ Keep `AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED=true` during this rollout for lega
 
 ## Production Smoke Test
 
+Use `scripts/production-authentik-smoke.mjs` with `MVP_ADMIN_USERNAME`, `MVP_ADMIN_PASSWORD`, `MVP_AUTHENTIK_ADMIN_USERNAME`, and `MVP_AUTHENTIK_ADMIN_PASSWORD` set in a trusted operator shell. It generates a unique `@876en.org` smoke identity and runs both permanent onboarding and the production field event: responsive Team UI, first login, packet import, one-time crew join at 412px, claim, rendered photo/location/serial proof, leader approval, closeout, immediate temporary-session revocation, consumed-code rejection, permanent-membership disablement, and tagged Authentik identity deletion. It never prints credentials, access tokens, the generated password, or the disposable email address.
+
 Use a controlled email address and a display name clearly tagged with the test date. Do not alter or delete an existing person merely because an email lookup links to that identity.
 
 1. Sign in as a real tenant Leader and open **Team**.
@@ -138,7 +140,7 @@ Before inviting real users, also test an existing, controlled Authentik account:
 
 Never perform the email-reuse test by deleting, renaming, or taking over a real user's account. Keep the feature disabled if any first-login case links solely because the email matches.
 
-Production activation is not complete until this test succeeds through a real signed-in browser and the tagged test identity is cleaned up.
+The production activation run completed on 2026-07-15 through real signed-in desktop and phone-sized browsers, including tagged identity cleanup. Run the automated smoke again after changes to Authentik, SMTP, provisioning, crew access, proof review, or session closeout.
 
 ## Rollback
 

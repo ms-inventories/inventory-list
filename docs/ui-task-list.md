@@ -30,11 +30,11 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: a leader names a temporary helper, generates a private invite link plus one-time four-digit PIN valid for at most seven days, shares it, and the helper lands directly in that active session. Consumption is atomic and rate-limited; closing the session revokes every temporary session immediately.
   - Status: complete and focused-QA verified, 2026-07-14. PINs and high-entropy invite tokens are stored only as tenant-scoped keyed digests, consumed atomically once, capped at seven days, and protected by persistent invite/fingerprint/tenant attempt limits. The exchanged host-only HttpOnly session exposes only the intended active inventory, minimal profile/logout, claim/release, upload, proof, and authorized media; People, Settings, Reports, other sessions, and platform access remain unavailable. Leaders can generate, copy/share, list, and revoke private invites from a mobile-first flow, and closeout atomically reports and revokes every temporary session. Unit, API/database, and desktop/mobile browser coverage verify concurrent single use, session isolation, field work, logout/revoke, and immediate API/media invalidation.
 
-- [ ] **UI-048: Provision permanent accounts through Authentik**
+- [x] **UI-048: Provision permanent accounts through Authentik**
   - Source: MVP field workflow and live Authentik audit, 2026-07-14.
   - Current issue: the current invite creates only a database membership; a person without an existing Authentik identity cannot sign in to accept it.
   - Desired behavior: a leader enters name/email and selects `Team member` or `Leader`; the backend idempotently creates or links the Authentik identity, assigns the tenant group automatically, creates the authoritative per-tenant membership, and sends the enrollment email.
-  - Status: production activation is in progress, 2026-07-15. The immutable UUID scope, recovery flow/stage, dedicated least-privilege service identity, expiring token, backend values, and API wiring are deployed. The complete Coolify transactional-email credential now drives both the inventory backend and Authentik; a synchronous Django send and `ak test_email` through the exact `Inventory account recovery` stage both succeed. `AUTHENTIK_PROVISIONING_ENABLED=true` is persisted, the backend redeploy succeeded, and `/health` reports database and storage healthy. The remaining completion gate is the signed-in phone/desktop create-link-email-login smoke test plus removal of its tagged disposable identity. Human administrator credentials are not stored in the app.
+  - Status: complete, ACP-published foundation and production-verified, 2026-07-15. The immutable UUID scope, recovery flow/stage, dedicated least-privilege service identity, expiring token, backend values, and API wiring are deployed. The complete Coolify transactional-email credential drives both the inventory backend and Authentik; synchronous Django delivery and `ak test_email` through the exact recovery stage succeed. Provisioning is enabled and healthy. A disposable production run verifies leader login, tenant-group tagging, member request, identity provisioning and group assignment, enrollment dispatch, first member login, database access, desktop/412px Team rendering, membership disablement, and Authentik identity deletion. The safety-gate validation identity was also cleaned. Human administrator credentials are not stored in the app.
 
 - [x] **UI-049: Reuse verified item records across sessions**
   - Source: MVP field workflow, 2026-07-14.
@@ -285,8 +285,6 @@ Use this as the working backlog before turning individual items into implementat
 
 ## Current Suggested Work Order
 
-1. Finish the signed-in phone/desktop create-link-email-login smoke test for `UI-048`, then remove the tagged disposable identity.
-2. Replay leader upload/invite/assign/proof/review/close and verify temporary-account cleanup in production.
-3. Keep `OPS-002` as an owner-only deferred verification.
+The complete leader upload/invite/assign/proof/review/close flow and automatic temporary-account cleanup passed in production on 2026-07-15 at desktop and phone widths. Keep `OPS-002` as an owner-only deferred credential-rotation verification.
 
 This order follows the actual field event: leader starts work, brings the crew in, people claim and prove items, the leader closes the event, and the next event benefits from verified history.

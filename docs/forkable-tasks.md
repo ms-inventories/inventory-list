@@ -21,9 +21,7 @@ Each task is designed to be worked mostly independently. If a task needs to touc
 
 ## Current Priority Order
 
-1. Finish the signed-in phone/desktop create-link-email-login smoke test for `USER-MANAGEMENT-006`, then remove its tagged disposable identity.
-2. Run the final leader/helper production replay and automatic temporary-account cleanup verification.
-3. Owner follow-up, deferred and unverified: resolve `OPS-002` credential rotation and confirm the old credential is rejected. This does not block local feature work.
+The app-owned MVP flow is production-verified. The remaining owner follow-up is deferred and unverified: resolve `OPS-002` credential rotation and confirm the old credential is rejected. This does not block the field workflow.
 
 ## QA
 
@@ -812,7 +810,7 @@ Lifecycle note: this flow never creates an Authentik login. Logout, leader remov
 
 Goal: create a real permanent login, tenant group, and app membership from the Team screen.
 
-Status: production activation is in progress, 2026-07-15. The authoritative database membership, intended-email matching, additive identity/job schema, bounded Authentik 2026.5.3 client, durable reconciliation, API/UI states, dedicated least-privilege service identity, and recovery Email Stage are deployed. Coolify's complete SMTP credential is installed in the backend and Authentik; synchronous delivery and the exact recovery-stage test succeed; provisioning is enabled; and the backend redeploy plus health check succeed. Signed-in phone/desktop creation, email, first-login, and tagged test-identity cleanup remain before completion.
+Status: complete and production-verified, 2026-07-15. The authoritative database membership, intended-email matching, additive identity/job schema, bounded Authentik 2026.5.3 client, durable reconciliation, API/UI states, dedicated least-privilege service identity, and recovery Email Stage are deployed. Coolify's complete SMTP credential is installed in the backend and Authentik; synchronous delivery and the exact recovery-stage test succeed; provisioning is enabled; and the backend is healthy. A disposable run verifies leader login, safe tenant-group adoption, identity provisioning and group assignment, enrollment dispatch, desktop/412px Team UI, first member login and contributor access, disable reconciliation, and Authentik identity deletion with no tagged identity left behind.
 
 Primary files:
 

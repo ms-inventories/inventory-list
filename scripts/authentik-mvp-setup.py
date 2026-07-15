@@ -4,12 +4,13 @@ Run this inside the Authentik server container through ``ak shell``. The
 provisioning token is intentionally supplied at runtime and is never stored in
 this repository::
 
-    INVENTORY_PROVISION_TOKEN=... ak shell < scripts/authentik-mvp-setup.py
+    INVENTORY_PROVISION_TOKEN=... INVENTORY_TENANT_ID=<tenant UUID> \
+        ak shell < scripts/authentik-mvp-setup.py
 """
 
 from datetime import timedelta
 from os import environ
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from django.db import transaction
 from django.utils.timezone import now
@@ -30,6 +31,7 @@ from authentik.stages.email.models import EmailStage, EmailTemplates
 
 
 TOKEN_ENV = "INVENTORY_PROVISION_TOKEN"
+TENANT_ID_ENV = "INVENTORY_TENANT_ID"
 SERVICE_USERNAME = "inventory-provisioner"
 ROLE_NAME = "inventory-provisioner"
 TOKEN_IDENTIFIER = "inventory-provisioner-api"
@@ -67,9 +69,18 @@ def required_token() -> str:
     return token
 
 
+def required_tenant_id() -> str:
+    tenant_id = environ.get(TENANT_ID_ENV, "").strip().lower()
+    try:
+        return str(UUID(tenant_id))
+    except (ValueError, AttributeError) as exc:
+        raise RuntimeError(f"{TENANT_ID_ENV} must contain the inventory tenant UUID") from exc
+
+
 @transaction.atomic
 def configure() -> None:
     token_key = required_token()
+    tenant_id = required_tenant_id()
 
     mapping = (
         ScopeMapping.objects.filter(scope_name="ak_user_uuid").first()
@@ -164,6 +175,7 @@ def configure() -> None:
         tenant_group.attributes = {
             **(tenant_group.attributes or {}),
             "inventory_list_managed": True,
+            "inventory_tenant_id": tenant_id,
             "inventory_tenant_slug": "ms",
         }
         tenant_group.is_superuser = False
