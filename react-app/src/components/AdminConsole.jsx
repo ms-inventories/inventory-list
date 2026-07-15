@@ -294,7 +294,7 @@ function useMediaQuery(query) {
   return matches;
 }
 
-function ResponsiveActionMenu({ label = "More actions", ariaLabel = label, children, className = "" }) {
+function ResponsiveActionMenu({ label = "More actions", ariaLabel = label, children, className = "", disabled = false }) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
   const triggerRef = useRef(null);
@@ -329,6 +329,7 @@ function ResponsiveActionMenu({ label = "More actions", ariaLabel = label, child
         type="button"
         aria-label={ariaLabel}
         aria-expanded={isOpen}
+        disabled={disabled}
         onClick={() => setIsOpen(open => !open)}
       >
         <MoreHorizontal aria-hidden="true" />
@@ -7566,9 +7567,12 @@ const tenantNotificationOptions = [
 function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
   const [settingsData, setSettingsData] = useState(null);
   const [draft, setDraft] = useState({ displayName: "", notificationPreferences: {} });
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
   const [status, setStatus] = useState({ text: "Loading settings...", isError: false });
   const settingsLoadSequence = useRef(0);
+  const settingsActionRef = useRef("");
 
   function applySettings(settings) {
     const loaded = settings || {};
@@ -7580,8 +7584,11 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
   }
 
   async function loadSettings() {
+    if (settingsActionRef.current) return;
+    settingsActionRef.current = "load";
     const loadSequence = ++settingsLoadSequence.current;
     try {
+      setIsLoading(true);
       setStatus({ text: "Loading settings...", isError: false });
       const data = await apiRequest("/tenant/settings", { token, tenantSlug });
       if (loadSequence !== settingsLoadSequence.current) return;
@@ -7590,6 +7597,9 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
     } catch (error) {
       if (loadSequence !== settingsLoadSequence.current) return;
       setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      if (loadSequence === settingsLoadSequence.current) setIsLoading(false);
+      if (settingsActionRef.current === "load") settingsActionRef.current = "";
     }
   }
 
@@ -7599,6 +7609,8 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
 
   async function saveSettings(event) {
     event.preventDefault();
+    if (settingsActionRef.current) return;
+    settingsActionRef.current = "save";
     try {
       settingsLoadSequence.current += 1;
       setIsSaving(true);
@@ -7619,12 +7631,21 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
       setIsSaving(false);
+      if (settingsActionRef.current === "save") settingsActionRef.current = "";
     }
   }
 
   async function copyWorkspaceUrl() {
-    const copied = await copyText(settingsData?.workspace?.url || "");
-    setStatus({ text: copied ? "Workspace URL copied." : "Could not copy the workspace URL.", isError: !copied });
+    if (settingsActionRef.current) return;
+    settingsActionRef.current = "copy";
+    setIsCopying(true);
+    try {
+      const copied = await copyText(settingsData?.workspace?.url || "");
+      setStatus({ text: copied ? "Workspace URL copied." : "Could not copy the workspace URL.", isError: !copied });
+    } finally {
+      setIsCopying(false);
+      if (settingsActionRef.current === "copy") settingsActionRef.current = "";
+    }
   }
 
   function renderPreferenceGroup(group, legend, copy) {
@@ -7638,6 +7659,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
               <input
                 type="checkbox"
                 checked={draft.notificationPreferences[option.key] !== false}
+                disabled={isLoading || isSaving}
                 onChange={event => setDraft(current => ({
                   ...current,
                   notificationPreferences: {
@@ -7664,9 +7686,9 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
           <h1>Workspace Settings</h1>
           <p>Manage the workspace name and workflow notifications.</p>
         </div>
-        <button className="btn btn-secondary" type="button" onClick={loadSettings} disabled={isSaving}>
+        <button className="btn btn-secondary" type="button" onClick={loadSettings} disabled={isLoading || isSaving || isCopying}>
           <RefreshCw aria-hidden="true" />
-          <span>Refresh</span>
+          <span>{isLoading ? "Refreshing..." : "Refresh"}</span>
         </button>
       </div>
 
@@ -7687,6 +7709,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
             minLength={2}
             maxLength={120}
             value={draft.displayName}
+            disabled={isLoading || isSaving}
             onChange={event => setDraft(current => ({ ...current, displayName: event.target.value }))}
           />
           <div className="settings-workspace-link">
@@ -7694,9 +7717,9 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
               <span>Workspace link</span>
               <a href={settingsData?.workspace?.url || "#"}>{settingsData?.workspace?.url || "Loading..."}</a>
             </div>
-            <button className="btn btn-secondary" type="button" onClick={copyWorkspaceUrl} disabled={!settingsData?.workspace?.url}>
+            <button className="btn btn-secondary" type="button" onClick={copyWorkspaceUrl} disabled={isLoading || isSaving || isCopying || !settingsData?.workspace?.url}>
               <Copy aria-hidden="true" />
-              <span>Copy workspace URL</span>
+              <span>{isCopying ? "Copying..." : "Copy workspace URL"}</span>
             </button>
           </div>
         </section>
@@ -7717,7 +7740,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
 
         <div className="settings-save-bar">
           <StatusLine status={status} />
-          <button className="btn btn-primary" type="submit" disabled={isSaving || !draft.displayName.trim()}>
+          <button className="btn btn-primary" type="submit" disabled={isLoading || isSaving || isCopying || !draft.displayName.trim()}>
             <CheckCircle2 aria-hidden="true" />
             <span>{isSaving ? "Saving..." : "Save settings"}</span>
           </button>
@@ -7734,19 +7757,25 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
   const [lifecycleFilter, setLifecycleFilter] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
   const [isPrintTarget, setIsPrintTarget] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [status, setStatus] = useState({ text: "Loading reports...", isError: false });
+  const reportsLoadRef = useRef(false);
 
   async function loadReports() {
+    if (reportsLoadRef.current) return;
+    reportsLoadRef.current = true;
     try {
+      setIsLoading(true);
       setStatus({ text: "Loading reports...", isError: false });
       const data = await apiRequest("/inventory/reports", { token, tenantSlug });
       setSessions(data.sessions || []);
       setRows(data.rows || []);
       setStatus({ text: "", isError: false });
     } catch (error) {
-      setSessions([]);
-      setRows([]);
       setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      reportsLoadRef.current = false;
+      setIsLoading(false);
     }
   }
 
@@ -7838,20 +7867,25 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
           <p>Review outcomes and proof status across inventory sessions.</p>
         </div>
         <div className="leader-page-actions">
-          <button className="btn btn-primary" type="button" onClick={exportReportsCsv} disabled={!visibleRows.length}>
+          <button className="btn btn-primary" type="button" onClick={exportReportsCsv} disabled={isLoading || !visibleRows.length}>
             <Download aria-hidden="true" /><span>Export CSV</span>
           </button>
-          <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={loadReports}>
-            <RefreshCw aria-hidden="true" /><span>Refresh</span>
+          <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={loadReports} disabled={isLoading}>
+            <RefreshCw aria-hidden="true" /><span>{isLoading ? "Refreshing..." : "Refresh"}</span>
           </button>
-          <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={printSummary} disabled={!visibleRows.length}>
+          <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={printSummary} disabled={isLoading || !visibleRows.length}>
             <Printer aria-hidden="true" /><span>Print summary</span>
           </button>
-          <ResponsiveActionMenu className="mobile-secondary-actions">
-            <button type="button" onClick={loadReports}>
-              <RefreshCw aria-hidden="true" /><span>Refresh report</span>
+          <ResponsiveActionMenu
+            className="mobile-secondary-actions"
+            label={isLoading ? "Refreshing..." : "More actions"}
+            ariaLabel={isLoading ? "Refreshing report" : "More actions"}
+            disabled={isLoading}
+          >
+            <button type="button" onClick={loadReports} disabled={isLoading}>
+              <RefreshCw aria-hidden="true" /><span>{isLoading ? "Refreshing report..." : "Refresh report"}</span>
             </button>
-            <button type="button" onClick={printSummary} disabled={!visibleRows.length}>
+            <button type="button" onClick={printSummary} disabled={isLoading || !visibleRows.length}>
               <Printer aria-hidden="true" /><span>Print summary</span>
             </button>
           </ResponsiveActionMenu>
@@ -7862,14 +7896,14 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
         <div className="reports-filter-grid">
           <label>
             <span>Session</span>
-            <select className="select" value={sessionFilter} onChange={event => setSessionFilter(event.target.value)}>
+            <select className="select" value={sessionFilter} disabled={isLoading} onChange={event => setSessionFilter(event.target.value)}>
               <option value="all">All sessions</option>
               {sessions.map(session => <option value={session.id} key={session.id}>{session.name}</option>)}
             </select>
           </label>
           <label>
             <span>Status</span>
-            <select className="select" value={lifecycleFilter} onChange={event => setLifecycleFilter(event.target.value)}>
+            <select className="select" value={lifecycleFilter} disabled={isLoading} onChange={event => setLifecycleFilter(event.target.value)}>
               <option value="all">Any lifecycle</option>
               <option value="open">Open sessions</option>
               <option value="closed">Closed sessions</option>
@@ -7883,7 +7917,7 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
             ["missing", "Missing"],
             ["proof", "Proof work"]
           ].map(([value, label]) => (
-            <button className={resultFilter === value ? "active" : ""} type="button" key={value} aria-pressed={resultFilter === value} onClick={() => setResultFilter(value)}>
+            <button className={resultFilter === value ? "active" : ""} type="button" key={value} aria-pressed={resultFilter === value} disabled={isLoading} onClick={() => setResultFilter(value)}>
               <span>{label}</span><strong>{resultCounts[value]}</strong>
             </button>
           ))}
@@ -7930,14 +7964,14 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
           );
         }) : (
           <EmptyPanel
-            title="No report rows"
-            body="Adjust the session, status, proof, or workspace search filters."
-            action={(
+            title={isLoading ? "Loading report" : "No report rows"}
+            body={isLoading ? "Getting the latest inventory results." : "Adjust the session, status, proof, or workspace search filters."}
+            action={!isLoading ? (
               <button className="btn btn-secondary btn-small" type="button" onClick={resetReportFilters}>
                 <RefreshCw aria-hidden="true" />
                 <span>Reset filters</span>
               </button>
-            )}
+            ) : null}
           />
         )}
         {!isPrintTarget && visibleRows.length > renderedRows.length ? (
@@ -8125,9 +8159,11 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
   const [filters, setFilters] = useState(emptyFilters);
   const [appliedFilters, setAppliedFilters] = useState(emptyFilters);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingAction, setLoadingAction] = useState("initial");
   const [hasLoadedSuccessfully, setHasLoadedSuccessfully] = useState(false);
   const [status, setStatus] = useState({ text: "Loading activity...", isError: false });
   const requestRef = useRef(0);
+  const activityActionRef = useRef("");
   const hasFilters = Object.values(appliedFilters).some(Boolean);
   const categoryOptions = filterOptions.categories?.length ? filterOptions.categories : [
     { value: "workflow", label: "Workflow" },
@@ -8137,7 +8173,9 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
     { value: "other", label: "Other" }
   ];
 
-  async function loadEvents({ append = false, cursor = "", filterValues = appliedFilters } = {}) {
+  async function loadEvents({ append = false, cursor = "", filterValues = appliedFilters, actionKind = append ? "more" : "refresh" } = {}) {
+    if (activityActionRef.current) return;
+    activityActionRef.current = actionKind;
     const requestId = ++requestRef.current;
     const params = new URLSearchParams({ limit: "40" });
     Object.entries(filterValues).forEach(([key, value]) => {
@@ -8156,6 +8194,7 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
 
     try {
       setIsLoading(true);
+      setLoadingAction(actionKind);
       if (!append) {
         setEvents([]);
         setNextCursor("");
@@ -8176,7 +8215,11 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
       if (requestId !== requestRef.current) return;
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
-      if (requestId === requestRef.current) setIsLoading(false);
+      if (requestId === requestRef.current) {
+        setIsLoading(false);
+        setLoadingAction("");
+      }
+      if (activityActionRef.current === actionKind) activityActionRef.current = "";
     }
   }
 
@@ -8184,21 +8227,21 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
     const initial = { ...emptyFilters };
     setFilters(initial);
     setAppliedFilters(initial);
-    loadEvents({ filterValues: initial });
+    loadEvents({ filterValues: initial, actionKind: "initial" });
   }, [tenantSlug, token]);
 
   function applyFilters(event) {
     event.preventDefault();
     const next = { ...filters };
     setAppliedFilters(next);
-    loadEvents({ filterValues: next });
+    loadEvents({ filterValues: next, actionKind: "apply" });
   }
 
   function clearFilters() {
     const next = { ...emptyFilters };
     setFilters(next);
     setAppliedFilters(next);
-    loadEvents({ filterValues: next });
+    loadEvents({ filterValues: next, actionKind: "clear" });
   }
 
   function updateFilter(key, value) {
@@ -8212,16 +8255,16 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
           <h1>Activity Log</h1>
           <p>Review accountable workspace changes. Actor and related-record labels reflect their current workspace values.</p>
         </div>
-        <button className="btn btn-secondary" type="button" disabled={isLoading} onClick={() => loadEvents({ filterValues: appliedFilters })}>
+        <button className="btn btn-secondary" type="button" disabled={isLoading} onClick={() => loadEvents({ filterValues: appliedFilters, actionKind: "refresh" })}>
           <RefreshCw aria-hidden="true" />
-          <span>{isLoading ? "Refreshing..." : "Refresh"}</span>
+          <span>{loadingAction === "refresh" ? "Refreshing..." : "Refresh"}</span>
         </button>
       </div>
 
       <form className="leader-card activity-filters" aria-label="Activity filters" onSubmit={applyFilters}>
         <label>
           <span>Category</span>
-          <select className="select" value={filters.category} onChange={event => updateFilter("category", event.target.value)}>
+          <select className="select" value={filters.category} disabled={isLoading} onChange={event => updateFilter("category", event.target.value)}>
             <option value="">All categories</option>
             {categoryOptions.map(option => (
               <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
@@ -8230,7 +8273,7 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
         </label>
         <label>
           <span>Actor</span>
-          <select className="select" value={filters.actor} onChange={event => updateFilter("actor", event.target.value)}>
+          <select className="select" value={filters.actor} disabled={isLoading} onChange={event => updateFilter("actor", event.target.value)}>
             <option value="">All actors</option>
             {(filterOptions.actors || []).map(option => (
               <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
@@ -8239,7 +8282,7 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
         </label>
         <label>
           <span>Action</span>
-          <select className="select" value={filters.action} onChange={event => updateFilter("action", event.target.value)}>
+          <select className="select" value={filters.action} disabled={isLoading} onChange={event => updateFilter("action", event.target.value)}>
             <option value="">All actions</option>
             {(filterOptions.actions || []).map(option => (
               <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
@@ -8248,7 +8291,7 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
         </label>
         <label>
           <span>Entity</span>
-          <select className="select" value={filters.entityType} onChange={event => updateFilter("entityType", event.target.value)}>
+          <select className="select" value={filters.entityType} disabled={isLoading} onChange={event => updateFilter("entityType", event.target.value)}>
             <option value="">All entities</option>
             {(filterOptions.entityTypes || []).map(option => (
               <option value={activityFilterValue(option)} key={activityFilterValue(option)}>{activityFilterLabel(option)}</option>
@@ -8257,15 +8300,15 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
         </label>
         <label>
           <span>From</span>
-          <input className="input" type="date" value={filters.from} onChange={event => updateFilter("from", event.target.value)} />
+          <input className="input" type="date" value={filters.from} disabled={isLoading} onChange={event => updateFilter("from", event.target.value)} />
         </label>
         <label>
           <span>Through</span>
-          <input className="input" type="date" value={filters.to} onChange={event => updateFilter("to", event.target.value)} />
+          <input className="input" type="date" value={filters.to} disabled={isLoading} onChange={event => updateFilter("to", event.target.value)} />
         </label>
         <div className="activity-filter-actions">
-          <button className="btn btn-primary" type="submit" disabled={isLoading}>Apply filters</button>
-          <button className="btn btn-secondary" type="button" disabled={isLoading || (!hasFilters && !Object.values(filters).some(Boolean))} onClick={clearFilters}>Clear filters</button>
+          <button className="btn btn-primary" type="submit" disabled={isLoading}>{loadingAction === "apply" ? "Applying..." : "Apply filters"}</button>
+          <button className="btn btn-secondary" type="button" disabled={isLoading || (!hasFilters && !Object.values(filters).some(Boolean))} onClick={clearFilters}>{loadingAction === "clear" ? "Clearing..." : "Clear filters"}</button>
         </div>
       </form>
 
@@ -8331,9 +8374,9 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
       </section>
 
       {nextCursor ? (
-        <button className="btn btn-secondary activity-load-more" type="button" disabled={isLoading} onClick={() => loadEvents({ append: true, cursor: nextCursor, filterValues: appliedFilters })}>
+        <button className="btn btn-secondary activity-load-more" type="button" disabled={isLoading} onClick={() => loadEvents({ append: true, cursor: nextCursor, filterValues: appliedFilters, actionKind: "more" })}>
           <History aria-hidden="true" />
-          <span>{isLoading ? "Loading..." : "Load older activity"}</span>
+          <span>{loadingAction === "more" ? "Loading older..." : "Load older activity"}</span>
         </button>
       ) : null}
     </div>
@@ -8746,6 +8789,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isStartingInventory, setIsStartingInventory] = useState(false);
+  const [isRefreshingWorkspace, setIsRefreshingWorkspace] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -8757,6 +8802,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const tenantSidebarRef = useRef(null);
   const tenantMobileNavToggleRef = useRef(null);
   const startInventoryActionRef = useRef(false);
+  const notificationActionRef = useRef(false);
+  const workspaceRefreshActionRef = useRef(false);
+  const logoutActionRef = useRef(false);
   const userName = me?.user?.display_name || me?.user?.displayName || me?.user?.email || "Signed in";
   const userRole = isCrew ? "Crew member" : me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
@@ -8819,11 +8867,20 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   async function handleLogout() {
-    setIsUserMenuOpen(false);
+    if (logoutActionRef.current) return;
+    logoutActionRef.current = true;
+    setIsLoggingOut(true);
+    setStatus({ text: isCrew ? "Leaving inventory..." : "Signing out...", isError: false });
     try {
       await onLogout();
     } catch (error) {
-      setStatus({ text: `${getApiErrorMessage(error)} Try leaving the inventory again.`, isError: true });
+      setStatus({
+        text: `${getApiErrorMessage(error)} ${isCrew ? "Try leaving the inventory again." : "Try signing out again."}`,
+        isError: true
+      });
+    } finally {
+      logoutActionRef.current = false;
+      setIsLoggingOut(false);
     }
   }
 
@@ -8864,7 +8921,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setProvisioningAvailable(false);
       setProvisioningPollFailures(0);
       if (!silent) setStatus({ text: "", isError: false });
-      return;
+      return true;
     }
 
     try {
@@ -8889,29 +8946,36 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       }
 
       if (!silent) setStatus({ text: "", isError: false });
+      return true;
     } catch (error) {
       if (silent) {
         setProvisioningPollFailures(current => Math.min(current + 1, 5));
       } else {
         setStatus({ text: getApiErrorMessage(error), isError: true });
       }
+      return false;
     }
   }
 
   async function loadNotifications() {
-    if (isCrew || !tenantSlug || !token) return;
+    if (isCrew || !tenantSlug || !token) return true;
+    if (notificationActionRef.current) return null;
 
+    notificationActionRef.current = true;
     setIsLoadingNotifications(true);
     try {
       const data = await apiRequest("/tenant/notifications", { token, tenantSlug });
       setNotifications(data.notifications || []);
       setNotificationUnreadCount(Number(data.unreadCount || 0));
       setNotificationStatus("");
+      return true;
     } catch (error) {
       setNotifications([]);
       setNotificationUnreadCount(0);
       setNotificationStatus(getApiErrorMessage(error));
+      return false;
     } finally {
+      notificationActionRef.current = false;
       setIsLoadingNotifications(false);
     }
   }
@@ -9264,10 +9328,28 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     selectTenantTab("tasks");
   }
 
-  function refreshTenantWorkspace() {
-    loadTenant();
-    loadNotifications();
-    onRefresh?.();
+  async function refreshTenantWorkspace() {
+    if (workspaceRefreshActionRef.current) return;
+    workspaceRefreshActionRef.current = true;
+    setIsRefreshingWorkspace(true);
+    setStatus({ text: "Refreshing workspace...", isError: false });
+    try {
+      const [tenantLoaded, notificationsLoaded, refreshedIdentity] = await Promise.all([
+        loadTenant(),
+        loadNotifications(),
+        onRefresh?.()
+      ]);
+      if (tenantLoaded === false || refreshedIdentity === null) return;
+      setStatus({
+        text: notificationsLoaded === false
+          ? "Workspace refreshed, but alerts could not be loaded. Try refreshing alerts again."
+          : "Workspace refreshed.",
+        isError: notificationsLoaded === false
+      });
+    } finally {
+      workspaceRefreshActionRef.current = false;
+      setIsRefreshingWorkspace(false);
+    }
   }
 
   if (!tenantSlug) {
@@ -9377,7 +9459,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               className="icon-button leader-topbar-refresh"
               type="button"
               onClick={refreshTenantWorkspace}
-              aria-label="Refresh"
+              disabled={isRefreshingWorkspace || isLoggingOut}
+              aria-label={isRefreshingWorkspace ? "Refreshing workspace" : "Refresh workspace"}
             >
               <RefreshCw aria-hidden="true" />
             </button>
@@ -9444,9 +9527,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     </div>
                   )}
                   <div className="leader-menu-actions">
-                    <button type="button" onClick={loadNotifications}>
+                    <button type="button" onClick={loadNotifications} disabled={isLoadingNotifications || isLoggingOut}>
                       <RefreshCw aria-hidden="true" />
-                      <span>Refresh alerts</span>
+                      <span>{isLoadingNotifications ? "Refreshing alerts..." : "Refresh alerts"}</span>
                     </button>
                     <button type="button" onClick={() => selectTenantTab("tasks")}>
                       <CalendarDays aria-hidden="true" />
@@ -9490,12 +9573,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     </div>
                   </div>
                   <div className="leader-menu-actions">
-                    <button type="button" onClick={() => {
-                      refreshTenantWorkspace();
-                      setIsUserMenuOpen(false);
-                    }}>
+                    <button type="button" onClick={refreshTenantWorkspace} disabled={isRefreshingWorkspace || isLoggingOut}>
                       <RefreshCw aria-hidden="true" />
-                      <span>Refresh workspace</span>
+                      <span>{isRefreshingWorkspace ? "Refreshing workspace..." : "Refresh workspace"}</span>
                     </button>
                     <button type="button" onClick={() => selectTenantTab("dashboard")}>
                       <Home aria-hidden="true" />
@@ -9533,9 +9613,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                         <span>Temporary access to this inventory only.</span>
                       </div>
                     )}
-                    <button type="button" onClick={handleLogout}>
+                    <button type="button" onClick={handleLogout} disabled={isLoggingOut || isRefreshingWorkspace}>
                       <LogOut aria-hidden="true" />
-                      <span>{isCrew ? "Leave inventory" : "Sign out"}</span>
+                      <span>{isLoggingOut ? (isCrew ? "Leaving..." : "Signing out...") : (isCrew ? "Leave inventory" : "Sign out")}</span>
                     </button>
                   </div>
                 </section>

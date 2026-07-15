@@ -1133,6 +1133,8 @@ Goal: every async action should feel deliberate.
 
 Status: in progress, 2026-07-14. The async-action audit is complete. Session Found/Not found and close/reopen mutations use synchronous duplicate guards, disable conflicting controls, expose reachable loading labels, preserve failure dialogs and reference-bearing feedback, and support retry. Proof submit/remove/cancel, leader start/session/packet-import, Review Queue decision/request/match, newsletter content/issue/subscriber actions, and Platform create/refresh actions have the same duplicate protection, scoped field/control locking, stale-response fencing, and action-specific feedback with desktop/mobile QA. Platform create failures stay inside the modal without discarding entered values, and initial tenant-load failures provide a direct retry. Newsletter publishing is also single-shot at the API boundary. Legacy viewer login and public unsubscribe reject repeat submissions while pending. Remaining lower-frequency platform/admin follow-ups remain.
 
+Status: in progress, 2026-07-15. Tenant workspace/alert refresh, Settings load/save/copy, Reports refresh, Activity filter/refresh/pagination, and tenant sign-out now use synchronous action guards, scoped disabled states, action-specific labels, and nearby failure/success feedback. Report refresh failures preserve the last useful result, and the compact mobile action trigger remains visibly busy after its menu closes. A desktop/Pixel 7 suite deliberately dispatches same-tick duplicate actions and proves one request. Final fallback-auth-shell and non-mutating export/copy classification remains before this task is complete.
+
 Primary files:
 
 - `react-app/src/components/AdminConsole.jsx`
