@@ -84,6 +84,48 @@ test.describe("QA smoke", () => {
     await expect(page).toHaveURL(/admin\.localhost:5175\/#\/admin/);
   });
 
+  test("a deleted workspace redirects platform admins before rendering its dashboard", async ({ page }) => {
+    await page.addInitScript(identity => {
+      localStorage.setItem("inventory.qa.identity", JSON.stringify(identity));
+      localStorage.setItem("inventory.auth.session", JSON.stringify({
+        accessToken: "qa-dev",
+        expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+        createdAt: Date.now(),
+        qa: true
+      }));
+    }, qaIdentities.root);
+    await page.route("**/api/me", async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          user: {
+            id: "00000000-0000-4000-8000-000000000094",
+            email: qaIdentities.root.email,
+            display_name: qaIdentities.root.name
+          },
+          identity: {
+            subject: qaIdentities.root.sub,
+            email: qaIdentities.root.email,
+            displayName: qaIdentities.root.name
+          },
+          groups: qaIdentities.root.groups,
+          isPlatformAdmin: true,
+          isFrgAdmin: true,
+          tenant: null,
+          membership: null,
+          access: null,
+          workspaces: []
+        })
+      });
+    });
+
+    await page.goto("http://deleted.localhost:5175/#/admin");
+
+    await expect(page).toHaveURL(/admin\.localhost:5175\/#\/admin/);
+    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toHaveCount(0);
+    await expect(page.getByText(/Tenant not found for this hostname/i)).toHaveCount(0);
+  });
+
   test("launch router sends newsletter admins to newsletter admin", async ({ page }) => {
     await seedQaLaunchSession(page, qaIdentities.frg);
     await page.goto(LAUNCH_URL);

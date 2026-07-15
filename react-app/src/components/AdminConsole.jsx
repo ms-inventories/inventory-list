@@ -476,6 +476,27 @@ function getProtectedAuthErrorMessage(error) {
   return getApiErrorMessage(error);
 }
 
+function getMissingTenantRedirectUrl(profile) {
+  const hostname = String(window.location.hostname || "").toLowerCase();
+  const isLocal = appConfig.baseDomain === "localhost"
+    || hostname === "localhost"
+    || hostname.endsWith(".localhost");
+  const destination = profile?.isPlatformAdmin ? "admin" : "";
+
+  if (isLocal) {
+    const port = window.location.port ? `:${window.location.port}` : "";
+    const targetHost = destination ? `${destination}.localhost` : "localhost";
+    const hash = destination ? "/#/admin" : "/#/launch";
+    return `${window.location.protocol}//${targetHost}${port}${hash}`;
+  }
+
+  const targetHost = destination
+    ? `${destination}.${appConfig.baseDomain}`
+    : appConfig.baseDomain;
+  const hash = destination ? "/#/admin" : "/#/launch";
+  return `https://${targetHost}${hash}`;
+}
+
 function StatusLine({ status }) {
   if (!status?.text) return null;
   const text = /failed to fetch/i.test(status.text) ? getApiErrorMessage(new Error(status.text)) : status.text;
@@ -9866,6 +9887,12 @@ export default function AdminConsole() {
     try {
       if (!silent) setStatus({ text: "Checking access...", isError: false });
       const data = await apiRequest("/me", { token: activeToken, tenantSlug });
+      if (tenantSlug && !data?.tenant) {
+        setMe(null);
+        setStatus({ text: "That workspace no longer exists. Redirecting...", isError: false });
+        window.location.replace(getMissingTenantRedirectUrl(data));
+        return null;
+      }
       setMe(data);
       setStatus({ text: "", isError: false });
       return data;
@@ -10067,7 +10094,7 @@ export default function AdminConsole() {
   const canUsePlatform = Boolean(me?.isPlatformAdmin);
   const canUseNewsletter = Boolean(me?.isPlatformAdmin || me?.isFrgAdmin);
   const canUseTenant = Boolean(
-    tenantSlug && (me?.authKind === "crew" || me?.isPlatformAdmin || ["tenant_admin", "contributor", "crew", "viewer"].includes(me?.membership?.role))
+    tenantSlug && me?.tenant && (me?.authKind === "crew" || me?.isPlatformAdmin || ["tenant_admin", "contributor", "crew", "viewer"].includes(me?.membership?.role))
   );
   const isTenantDashboard = Boolean(me && !isPlatformPage && canUseTenant);
   const isNewsletterDashboard = Boolean(

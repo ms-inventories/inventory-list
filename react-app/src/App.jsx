@@ -707,23 +707,18 @@ function LaunchRouter() {
         const data = await apiRequest("/me", { token, tenantSlug });
         if (ignore) return;
 
-        setMe(data);
         const groups = normalizeGroupLabels(data.groups);
         const workspaceOptions = getWorkspaceOptionsFromProfile(data);
         const slugs = workspaceOptions.map(workspace => workspace.slug);
 
         if (tenantSlug) {
           if (!data.tenant) {
-            setStatus({
-              ...getLaunchStatusFromHealth({
-                code: "tenant_missing",
-                tenant: { requestedSlug: tenantSlug }
-              }),
-              isError: true
-            });
+            setStatus({ text: "That workspace no longer exists. Redirecting...", isError: false });
+            window.location.replace(data.isPlatformAdmin ? getAdminUrl() : getLaunchUrl());
             return;
           }
 
+          setMe(data);
           if (data.isPlatformAdmin || data.membership?.role || slugs.includes(tenantSlug)) {
             window.location.assign(getTenantUrl(tenantSlug));
             return;
@@ -739,6 +734,7 @@ function LaunchRouter() {
           return;
         }
 
+        setMe(data);
         if (data.isPlatformAdmin || groups.includes("876en-admins")) {
           window.location.assign(getAdminUrl());
           return;
