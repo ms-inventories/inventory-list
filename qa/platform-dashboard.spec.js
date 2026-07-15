@@ -35,6 +35,17 @@ test.describe("Platform dashboard", () => {
 
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
     await expect(page.getByText("Total platoons", { exact: true })).toBeVisible();
+    const setup = page.locator(".platform-setup-card");
+    await expect(setup.getByRole("heading", { name: "Workspace setup" })).toBeVisible();
+    await expect(setup.getByRole("combobox", { name: "Platoon setup" })).toBeVisible();
+    await expect(setup.getByRole("listitem")).toHaveCount(5);
+    await expect(setup.getByText("Workspace address", { exact: true })).toBeVisible();
+    await expect(setup.getByText("Account group", { exact: true })).toBeVisible();
+    await expect(setup.getByText("Leader access", { exact: true })).toBeVisible();
+    await expect(setup.getByText("First packet", { exact: true })).toBeVisible();
+    await expect(setup.getByText("Photo storage", { exact: true })).toBeVisible();
+    await expect(setup.getByText("Permanent account setup is not connected.", { exact: true })).toBeVisible();
+    await expect(setup.getByRole("button", { name: "Open setup details" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Recent platoons" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Admin actions" })).toHaveCount(0);
 
@@ -49,12 +60,12 @@ test.describe("Platform dashboard", () => {
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
 
     await activatePlatformNav(page, "Dashboard", isMobileProject);
-    const viewAllShortcut = page.getByRole("button", { name: "View all" });
-    await expect(viewAllShortcut).toBeVisible();
+    const openPlatoonsShortcut = page.getByRole("button", { name: "Open platoons" });
+    await expect(openPlatoonsShortcut).toBeVisible();
     if (isMobileProject) {
       await activatePlatformNav(page, "Platoons", true);
     } else {
-      await viewAllShortcut.click();
+      await openPlatoonsShortcut.click();
     }
     await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
   });
@@ -69,7 +80,9 @@ test.describe("Platform dashboard", () => {
 
       const main = page.locator("main");
       const recent = page.locator(".platform-dashboard-card").filter({ hasText: "Recent platoons" });
+      const setup = page.locator(".platform-setup-card");
       const table = recent.getByRole("table");
+      await expect(setup).toBeVisible();
       await expect(recent).toBeVisible();
       await expect(table).toBeVisible();
 
@@ -83,6 +96,7 @@ test.describe("Platform dashboard", () => {
       expect(tableBox.x).toBeGreaterThanOrEqual(cardBox.x - 1);
       expect(tableBox.x + tableBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
       expect(await recent.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      expect(await setup.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
       expect(await page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
       )).toBeTruthy();

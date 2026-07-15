@@ -1086,7 +1086,7 @@ function countLabel(count, singular, plural = `${singular}s`) {
 }
 
 function tenantHost(tenant) {
-  return `${tenant.slug}.${appConfig.baseDomain}`;
+  return tenant?.hostname || `${tenant.slug}.${appConfig.baseDomain}`;
 }
 
 function tenantDisplayName(tenant) {
@@ -6159,6 +6159,8 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [createStatus, setCreateStatus] = useState({ text: "", isError: false });
   const [platformActions, setPlatformActions] = useState(() => new Map());
   const [platformProvisioningAvailable, setPlatformProvisioningAvailable] = useState(false);
+  const [platformSetup, setPlatformSetup] = useState(null);
+  const [setupTenantId, setSetupTenantId] = useState("");
   const [hasLoadedTenants, setHasLoadedTenants] = useState(false);
   const [tenantLoadError, setTenantLoadError] = useState(false);
   const platformActionRef = useRef(new Map());
@@ -6175,6 +6177,8 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const recentlyCreatedTenants = [...tenants]
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     .slice(0, isMobileViewport ? 2 : 4);
+  const setupTenant = tenants.find(tenant => tenant.id === setupTenantId) || tenants[0] || null;
+  const tenantSetup = setupTenant ? platformSetup?.tenants?.[setupTenant.id] || null : null;
   const searchMatchedTenants = tenants.filter(tenant => {
     const matchesQuery = matchesSearch([
       tenant.name,
@@ -6210,6 +6214,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     ["QA auth", appConfig.enableQaAuth ? "enabled" : "disabled"],
     ["Auth diagnostics", appConfig.enableAuthDiagnostics ? "enabled" : "disabled"],
     ["Demo fallback", appConfig.enableDemoFallback ? "enabled" : "disabled"],
+    ["Permanent accounts", platformProvisioningAvailable ? "connected" : "not connected"],
     ["Last request ID", readLastApiRequestId() || "none recorded"],
     ["Signed in as", me?.user?.email || me?.identity?.email || "unknown"]
   ];
@@ -6328,6 +6333,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
       if (requestId !== platformLoadRequestRef.current) return { ok: false, stale: true };
       setTenants(data.tenants || []);
       setHasLoadedTenants(true);
+      setPlatformSetup(data.setup || { unavailable: true, tenants: {} });
       const accountSetupAvailable = data.provisioningAvailable === true;
       setPlatformProvisioningAvailable(accountSetupAvailable);
       if (!accountSetupAvailable) {
@@ -6340,6 +6346,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
       setPlatformProvisioningAvailable(false);
       setHasLoadedTenants(true);
       setTenantLoadError(true);
+      if (!quiet) setPlatformSetup(null);
       if (!quiet) setStatus({ text: getApiErrorMessage(error), isError: true });
       return { ok: false, error };
     }
@@ -6526,6 +6533,136 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           </div>
         </div>
       </section>
+    );
+  }
+
+  function renderSetupChecklist() {
+    if (!hasLoadedTenants) {
+      return <EmptyPanel title="Checking setup" body="Verifying workspace access, imports, and storage." />;
+    }
+    if (tenantLoadError || platformSetup?.unavailable) {
+      return (
+        <EmptyPanel
+          title="Could not check setup"
+          body="Refresh the platform to run the setup checks again."
+          action={<button className="btn btn-secondary btn-small" type="button" disabled={hasPlatformAction} onClick={refreshPlatform}>Try again</button>}
+        />
+      );
+    }
+    if (!setupTenant) {
+      return (
+        <EmptyPanel
+          title="No platoon to check"
+          body="Create the first platoon, then finish its access and packet setup here."
+          action={<button className="btn btn-primary btn-small" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>Create platoon</button>}
+        />
+      );
+    }
+    if (!tenantSetup) {
+      return (
+        <EmptyPanel
+          title="Setup checks unavailable"
+          body="Refresh the platform to check this platoon again."
+          action={<button className="btn btn-secondary btn-small" type="button" disabled={hasPlatformAction} onClick={refreshPlatform}>Try again</button>}
+        />
+      );
+    }
+
+    const workspaceHref = tenantWorkspaceHref(setupTenant);
+    const hostname = tenantSetup.hostname || tenantHost(setupTenant);
+    const steps = [
+      {
+        id: "dns",
+        label: "Workspace address",
+        state: tenantSetup.dns?.state || "missing",
+        detail: tenantSetup.dns?.state === "ready" ? `${hostname} resolves.` : `${hostname} does not resolve yet.`,
+        action: tenantSetup.dns?.state === "ready" ? null : (
+          <button className="btn btn-secondary btn-small" type="button" onClick={() => copyTenantLink(setupTenant)}>Copy address</button>
+        )
+      },
+      {
+        id: "authentik",
+        label: "Account group",
+        state: tenantSetup.authentikGroup?.state || "not_connected",
+        detail: tenantSetup.authentikGroup?.state === "ready"
+          ? `${tenantSetup.authentikGroup.name} is ready.`
+          : tenantSetup.authentikGroup?.state === "missing"
+            ? `${tenantSetup.authentikGroup.name} still needs to be created.`
+            : tenantSetup.authentikGroup?.state === "unavailable"
+              ? "Authentik could not be checked."
+              : "Permanent account setup is not connected.",
+        action: tenantSetup.authentikGroup?.state === "ready" ? null : (
+          <button className="btn btn-secondary btn-small" type="button" onClick={openSupportDetails}>Open setup details</button>
+        )
+      },
+      {
+        id: "leader",
+        label: "Leader access",
+        state: tenantSetup.leaderAccess?.state || "missing",
+        detail: tenantSetup.leaderAccess?.state === "ready"
+          ? countLabel(tenantSetup.leaderAccess.activeAdminCount, "active leader")
+          : tenantSetup.leaderAccess?.state === "pending"
+            ? `${countLabel(tenantSetup.leaderAccess.pendingInviteCount, "leader invite")} pending.`
+            : "No leader has access yet.",
+        action: tenantSetup.leaderAccess?.state === "ready" ? null : (
+          <a className="btn btn-secondary btn-small" href={workspaceHref}>{tenantSetup.leaderAccess?.state === "pending" ? "Check Team" : "Add leader"}</a>
+        )
+      },
+      {
+        id: "packet",
+        label: "First packet",
+        state: tenantSetup.packetImport?.state || "missing",
+        detail: tenantSetup.packetImport?.state === "ready"
+          ? `${countLabel(tenantSetup.packetImport.count, "packet import")} complete.`
+          : "No packet has been imported.",
+        action: tenantSetup.packetImport?.state === "ready" ? null : (
+          <a className="btn btn-secondary btn-small" href={workspaceHref}>Import packet</a>
+        )
+      },
+      {
+        id: "storage",
+        label: "Photo storage",
+        state: platformSetup?.storage?.state || "unavailable",
+        detail: platformSetup?.storage?.state === "ready" ? "Uploads can be saved." : "Storage is not writable.",
+        action: platformSetup?.storage?.state === "ready" ? null : (
+          <button className="btn btn-secondary btn-small" type="button" onClick={openSupportDetails}>Open diagnostics</button>
+        )
+      }
+    ];
+    const completeCount = steps.filter(step => step.state === "ready").length;
+
+    return (
+      <>
+        <div className="platform-setup-toolbar">
+          <label>
+            <span>Platoon</span>
+            <select className="select" aria-label="Platoon setup" value={setupTenant.id} onChange={event => setSetupTenantId(event.target.value)}>
+              {tenants.map(tenant => <option key={tenant.id} value={tenant.id}>{tenantDisplayName(tenant)}</option>)}
+            </select>
+          </label>
+          <span className="platform-setup-progress" aria-label={`${completeCount} of ${steps.length} setup steps ready`}>{completeCount} of {steps.length} ready</span>
+        </div>
+        <div className="platform-setup-list" role="list" aria-label={`${tenantDisplayName(setupTenant)} setup checks`}>
+          {steps.map(step => {
+            const isReady = step.state === "ready";
+            const isPending = step.state === "pending";
+            const statusLabel = isReady ? "Ready" : isPending ? "Invite sent" : "Needs setup";
+            return (
+              <article className={`platform-setup-step ${isReady ? "ready" : isPending ? "pending" : "needs-setup"}`} role="listitem" key={step.id}>
+                <span className="platform-setup-icon" aria-hidden="true">{isReady ? <CheckCircle2 /> : <AlertCircle />}</span>
+                <div className="platform-setup-copy">
+                  <div>
+                    <strong>{step.label}</strong>
+                    <span className="platform-setup-state">{statusLabel}</span>
+                  </div>
+                  <p>{step.detail}</p>
+                </div>
+                {step.action ? <div className="platform-setup-action">{step.action}</div> : null}
+              </article>
+            );
+          })}
+        </div>
+      </>
     );
   }
 
@@ -6761,6 +6898,15 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
             <>
               {renderStats()}
               <div className="platform-dashboard-grid">
+                <section className="platform-table-card platform-dashboard-card platform-setup-card">
+                  <div className="platform-card-header">
+                    <div>
+                      <h2>Workspace setup</h2>
+                      <p>Finish the essentials before field work starts.</p>
+                    </div>
+                  </div>
+                  {renderSetupChecklist()}
+                </section>
                 <section className="platform-table-card platform-dashboard-card">
                   <div className="platform-card-header">
                     <div>
@@ -6768,7 +6914,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                       <p>{tenants.length ? `${countLabel(tenants.length, "workspace")} configured.` : "No workspaces configured."}</p>
                     </div>
                     <button className="btn btn-secondary btn-small" type="button" onClick={() => setActiveView("platoons")}>
-                      <span>View all</span>
+                      <span>Open platoons</span>
                     </button>
                   </div>
                   {renderTenantTable(recentlyCreatedTenants, { compact: true })}

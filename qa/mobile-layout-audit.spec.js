@@ -108,6 +108,13 @@ test.describe("mobile layout audit", () => {
     expect(Math.abs(statBoxes[0].y - statBoxes[1].y)).toBeLessThanOrEqual(1);
     expect(statBoxes[2].y).toBeGreaterThan(statBoxes[0].y);
 
+    const setup = page.locator(".platform-setup-card");
+    await expect(setup.getByRole("listitem")).toHaveCount(5);
+    await expectMinFontSize(setup.getByRole("heading", { name: "Workspace setup" }), 18);
+    await expectMinTargetSize(setup.getByRole("combobox", { name: "Platoon setup" }), { height: 44 });
+    await expectMinTargetSize(setup.getByRole("button", { name: "Open setup details" }), { height: 44 });
+    expect(await setup.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+
     const recentPlatoons = page.locator(".platform-dashboard-card").filter({ hasText: "Recent platoons" });
     await expect(recentPlatoons.getByRole("row")).toHaveCount(2);
     await expectMinFontSize(recentPlatoons.getByRole("heading", { name: "Recent platoons" }), 18);

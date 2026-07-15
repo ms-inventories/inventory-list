@@ -2444,6 +2444,147 @@ button {
   font-weight: 680;
 }
 
+.platform-setup-card {
+  overflow: hidden;
+}
+
+.platform-setup-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--platform-line-soft);
+  padding: 14px 16px;
+}
+
+.platform-setup-toolbar label {
+  display: grid;
+  min-width: min(320px, 100%);
+  gap: 6px;
+  color: var(--platform-muted);
+  font-size: 0.76rem;
+  font-weight: 840;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.platform-setup-toolbar .select {
+  min-height: 44px;
+  color: var(--platform-ink);
+  font-size: 0.94rem;
+  font-weight: 780;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.platform-setup-progress {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  border: 1px solid #cbd8c8;
+  border-radius: 999px;
+  background: #f3f8f1;
+  color: #275233;
+  font-size: 0.78rem;
+  font-weight: 860;
+  padding: 0 11px;
+  white-space: nowrap;
+}
+
+.platform-setup-list {
+  display: grid;
+}
+
+.platform-setup-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border-bottom: 1px solid var(--platform-line-soft);
+  padding: 14px 16px;
+}
+
+.platform-setup-step:last-child {
+  border-bottom: 0;
+}
+
+.platform-setup-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff4e7;
+  color: #a85a00;
+}
+
+.platform-setup-step.ready .platform-setup-icon {
+  background: #ecf8ef;
+  color: #18713a;
+}
+
+.platform-setup-step.pending .platform-setup-icon {
+  background: #eef4ff;
+  color: #2759a5;
+}
+
+.platform-setup-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.platform-setup-copy {
+  min-width: 0;
+}
+
+.platform-setup-copy > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.platform-setup-copy strong {
+  color: var(--platform-ink);
+  font-size: 0.9rem;
+}
+
+.platform-setup-copy p {
+  overflow-wrap: anywhere;
+  margin: 4px 0 0;
+  color: var(--platform-muted);
+  font-size: 0.81rem;
+  font-weight: 650;
+}
+
+.platform-setup-state {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  background: #fff4e7;
+  color: #8e4d00;
+  font-size: 0.7rem;
+  font-weight: 880;
+  padding: 0 8px;
+}
+
+.platform-setup-step.ready .platform-setup-state {
+  background: #ecf8ef;
+  color: #176235;
+}
+
+.platform-setup-step.pending .platform-setup-state {
+  background: #eef4ff;
+  color: #234d91;
+}
+
+.platform-setup-action .btn {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
 .platform-action-list {
   display: grid;
   gap: 10px;
@@ -7958,6 +8099,35 @@ button {
   .platform-role-grid,
   .platform-diagnostics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .platform-setup-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .platform-setup-toolbar label {
+    min-width: 0;
+  }
+
+  .platform-setup-progress {
+    align-self: flex-start;
+  }
+
+  .platform-setup-step {
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .platform-setup-action {
+    grid-column: 2;
+    width: 100%;
+  }
+
+  .platform-setup-action .btn {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
   }
 
   .platform-diagnostic,

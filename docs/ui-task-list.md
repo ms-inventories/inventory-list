@@ -234,7 +234,7 @@ Use this as the working backlog before turning individual items into implementat
 - [ ] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
   - Desired behavior: labels map to clear destinations: `Open workspace`, `Open session`, `Review queue`, `Import packet`, `Launch app`.
-  - Status: in progress, 2026-07-14. Existing-work destinations consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`; proof entry says `Submit proof`; packet setup says `Choose source`, the exact `Import N row(s)` action, and `Review again`; and newsletter administration now uses `homepage update`/`Write newsletter` instead of technical `block`/`issue` creation labels. Remaining lower-frequency platform/support labels still need consolidation.
+  - Status: in progress, 2026-07-14. Existing-work destinations consistently say `Open session` or `Open item`; the one-action mobile overflow was replaced with a visible packet action; assignment lists use `Unclaimed`, `Mine`, and `Others`; review shortcuts say `Open review queue`; proof entry says `Submit proof`; packet setup says `Choose source`, the exact `Import N row(s)` action, and `Review again`; platform navigation now says `Open platoons`; and newsletter administration uses `homepage update`/`Write newsletter` instead of technical `block`/`issue` creation labels. Remaining lower-frequency platform/support labels still need consolidation.
 
 - [x] **UI-031: Mobile-first toolbar cleanup**
   - Current issue: desktop layout is improving, but mobile needs repeated inspection.
@@ -278,13 +278,14 @@ Use this as the working backlog before turning individual items into implementat
   - Desired behavior: platoon admins can update the workspace display name and notification preferences without seeing deployment-only identity configuration.
   - Status: field-refined, 2026-07-11, through `TENANT-004`. Display name and in-app/email preferences remain editable, the workspace link remains copyable, and retired guidance plus read-only slug/Authentik group internals are no longer tenant-facing.
 
-- [ ] **UI-040: Admin setup checklist**
+- [x] **UI-040: Admin setup checklist**
   - Desired behavior: platform admin sees setup completion for DNS, Authentik group, tenant admin invite, packet import, and storage.
+  - Status: complete, 2026-07-14. The platform dashboard now evaluates each platoon against bounded DNS, exact Authentik-group, leader-access, packet-import, and writable-storage checks; presents a responsive five-step checklist with one direct recovery action per incomplete step; and distinguishes a deliberately disconnected provisioner from an unavailable service. Backend unit coverage and desktop/Pixel 7 browser coverage protect the readiness states, touch targets, and overflow behavior.
 
 ## Current Suggested Work Order
 
 1. Configure and production-verify the implemented `UI-048` permanent Authentik provisioning feature using its dedicated service identity and recovery stage.
-2. Complete `UI-036`, `UI-029`, and `UI-030` across the remaining newsletter/platform surfaces while preserving the deployed leader/helper accountability flow.
+2. Complete `UI-036`, `UI-029`, and `UI-030` across the remaining lower-frequency administration surfaces while preserving the deployed leader/helper accountability flow.
 3. Replay leader upload/invite/assign/proof/review/close and verify temporary-account cleanup in production after Authentik activation; keep `OPS-002` as an owner-only deferred verification.
 
 This order follows the actual field event: leader starts work, brings the crew in, people claim and prove items, the leader closes the event, and the next event benefits from verified history.

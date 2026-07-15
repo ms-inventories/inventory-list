@@ -24,6 +24,7 @@ import {
   mediaStorageKeyFromUrl,
   normalizeMediaStorageKey
 } from "./media.js";
+import { inspectPlatformSetup } from "./platform-setup.js";
 import {
   enqueueMembershipProvisioning,
   kickProvisioningWorker,
@@ -3048,22 +3049,54 @@ export function registerRoutes(app) {
     const result = await query(
       `
         SELECT t.id, t.slug, t.name, t.status, t.created_at,
-          COUNT(m.id)::int AS member_count,
-          COUNT(m.id) FILTER (WHERE m.role = 'tenant_admin' AND m.status = 'active')::int AS admin_count
+          COALESCE((
+            SELECT d.hostname
+            FROM tenant_domains d
+            WHERE d.tenant_id = t.id
+            ORDER BY d.is_primary DESC, d.created_at ASC
+            LIMIT 1
+          ), t.slug || '.' || $1) AS hostname,
+          (SELECT COUNT(*)::int FROM tenant_memberships m WHERE m.tenant_id = t.id) AS member_count,
+          (
+            SELECT COUNT(*)::int
+            FROM tenant_memberships m
+            WHERE m.tenant_id = t.id
+              AND m.role = 'tenant_admin'
+              AND m.status = 'active'
+          ) AS admin_count,
+          (
+            (SELECT COUNT(*) FROM tenant_memberships m
+              WHERE m.tenant_id = t.id
+                AND m.role = 'tenant_admin'
+                AND m.status = 'invited')
+            +
+            (SELECT COUNT(*) FROM tenant_invitations i
+              WHERE i.tenant_id = t.id
+                AND i.role = 'tenant_admin'
+                AND i.status = 'pending'
+                AND i.expires_at > now())
+          )::int AS pending_admin_invite_count,
+          (SELECT COUNT(*)::int FROM packet_import_batches b WHERE b.tenant_id = t.id) AS packet_import_count
         FROM tenants t
-        LEFT JOIN tenant_memberships m ON m.tenant_id = t.id
-        GROUP BY t.id
         ORDER BY t.slug ASC
-      `
+      `,
+      [config.baseDomain]
     );
 
+    const tenants = result.rows.map(row => ({
+      ...rowToTenant(row),
+      hostname: row.hostname,
+      memberCount: row.member_count,
+      adminCount: row.admin_count,
+      pendingAdminInviteCount: row.pending_admin_invite_count,
+      packetImportCount: row.packet_import_count
+    }));
+    const setup = await inspectPlatformSetup(tenants);
+
     return {
-      tenants: result.rows.map(row => ({
-        ...rowToTenant(row),
-        memberCount: row.member_count,
-        adminCount: row.admin_count
-      })),
-      provisioningAvailable: provisioningAvailable()
+      tenants,
+      provisioningAvailable: provisioningAvailable(),
+      setup
     };
   });
 
