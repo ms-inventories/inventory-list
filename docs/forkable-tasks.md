@@ -21,10 +21,9 @@ Each task is designed to be worked mostly independently. If a task needs to touc
 
 ## Current Priority Order
 
-1. Activate and production-verify `USER-MANAGEMENT-006` permanent Authentik provisioning with its dedicated least-privilege service identity and recovery stage.
-2. Continue `UX-003` plus the empty-state/action-label cleanup while preserving the current accountability regression suite.
-3. Run the final leader/helper production replay and automatic temporary-account cleanup verification after Authentik activation.
-4. Owner follow-up, deferred and unverified: resolve `OPS-002` credential rotation and confirm the old credential is rejected. This does not block local feature work.
+1. Finish the signed-in phone/desktop create-link-email-login smoke test for `USER-MANAGEMENT-006`, then remove its tagged disposable identity.
+2. Run the final leader/helper production replay and automatic temporary-account cleanup verification.
+3. Owner follow-up, deferred and unverified: resolve `OPS-002` credential rotation and confirm the old credential is rejected. This does not block local feature work.
 
 ## QA
 
@@ -813,7 +812,7 @@ Lifecycle note: this flow never creates an Authentik login. Logout, leader remov
 
 Goal: create a real permanent login, tenant group, and app membership from the Team screen.
 
-Status: implementation and deployment foundation is in place behind a disabled-by-default feature flag, including authoritative database membership, intended-email matching, the additive identity/job schema, bounded Authentik 2026.5.3 client, durable reconciliation, API/UI states, and safe retry handling. Production activation remains pending a dedicated least-privilege service token, recovery Email Stage UUID, signed-in phone/desktop verification, and cleanup of the tagged test identity. Do not mark complete until that pass succeeds.
+Status: production activation is in progress, 2026-07-15. The authoritative database membership, intended-email matching, additive identity/job schema, bounded Authentik 2026.5.3 client, durable reconciliation, API/UI states, dedicated least-privilege service identity, and recovery Email Stage are deployed. Coolify's complete SMTP credential is installed in the backend and Authentik; synchronous delivery and the exact recovery-stage test succeed; provisioning is enabled; and the backend redeploy plus health check succeed. Signed-in phone/desktop creation, email, first-login, and tagged test-identity cleanup remain before completion.
 
 Primary files:
 

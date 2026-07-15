@@ -349,7 +349,7 @@ function ResponsiveActionMenu({ label = "More actions", ariaLabel = label, child
   );
 }
 
-function AdminHeader({ me, tenantSlug, mode = "", onRefresh, onLogout }) {
+function AdminHeader({ me, tenantSlug, mode = "", authAction = "", onRefresh, onLogout }) {
   const adminHost = isAdminHostname();
   const isNewsletterMode = mode === "newsletter";
   const title = isNewsletterMode ? "Newsletter Admin" : adminHost || !tenantSlug ? "Platform Admin" : "Platoon Admin";
@@ -371,14 +371,14 @@ function AdminHeader({ me, tenantSlug, mode = "", onRefresh, onLogout }) {
           <LogIn aria-hidden="true" />
           <span>Launch app</span>
         </a>
-        <button className="btn btn-secondary" type="button" onClick={onRefresh}>
+        <button className="btn btn-secondary" type="button" disabled={Boolean(authAction)} onClick={onRefresh}>
           <RefreshCw aria-hidden="true" />
-          <span>Refresh</span>
+          <span>{authAction === "refresh" ? "Refreshing..." : "Refresh"}</span>
         </button>
         {me ? (
-          <button className="btn btn-secondary" type="button" onClick={onLogout}>
+          <button className="btn btn-secondary" type="button" disabled={Boolean(authAction)} onClick={onLogout}>
             <LogOut aria-hidden="true" />
-            <span>Sign out</span>
+            <span>{authAction === "logout" ? "Signing out..." : "Sign out"}</span>
           </button>
         ) : null}
       </div>
@@ -386,9 +386,10 @@ function AdminHeader({ me, tenantSlug, mode = "", onRefresh, onLogout }) {
   );
 }
 
-function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave, onSignIn, onUseQaIdentity }) {
+function AuthPanel({ status, authAction = "", manualToken, onManualTokenChange, onManualTokenSave, onSignIn, onUseQaIdentity }) {
   const showQaUsers = appConfig.enableQaAuth;
   const showManualToken = appConfig.enableManualTokenAuth;
+  const isWorking = Boolean(authAction);
 
   return (
     <section className="admin-card admin-auth-card">
@@ -403,9 +404,9 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
       </div>
 
       <div className="admin-actions-row">
-        <button className="btn btn-primary" type="button" onClick={onSignIn}>
+        <button className="btn btn-primary" type="button" disabled={isWorking} onClick={onSignIn}>
           <LogIn aria-hidden="true" />
-          <span>Continue with Authentik</span>
+          <span>{authAction === "signIn" ? "Opening Authentik..." : "Continue with Authentik"}</span>
         </button>
       </div>
 
@@ -415,17 +416,17 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
             <span>QA users</span>
           </summary>
           <div className="disclosure-panel qa-persona-grid">
-            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("root")}>
-              <span>Root admin</span>
+            <button className="btn btn-secondary" type="button" disabled={isWorking} onClick={() => onUseQaIdentity("root")}>
+              <span>{authAction === "qa:root" ? "Signing in..." : "Root admin"}</span>
             </button>
-            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("lead")}>
-              <span>Platoon admin</span>
+            <button className="btn btn-secondary" type="button" disabled={isWorking} onClick={() => onUseQaIdentity("lead")}>
+              <span>{authAction === "qa:lead" ? "Signing in..." : "Platoon admin"}</span>
             </button>
-            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("frg")}>
-              <span>Newsletter admin</span>
+            <button className="btn btn-secondary" type="button" disabled={isWorking} onClick={() => onUseQaIdentity("frg")}>
+              <span>{authAction === "qa:frg" ? "Signing in..." : "Newsletter admin"}</span>
             </button>
-            <button className="btn btn-secondary" type="button" onClick={() => onUseQaIdentity("nco")}>
-              <span>NCO</span>
+            <button className="btn btn-secondary" type="button" disabled={isWorking} onClick={() => onUseQaIdentity("nco")}>
+              <span>{authAction === "qa:nco" ? "Signing in..." : "NCO"}</span>
             </button>
           </div>
         </details>
@@ -440,12 +441,13 @@ function AuthPanel({ status, manualToken, onManualTokenChange, onManualTokenSave
             <textarea
               className="input admin-token-input"
               value={manualToken}
+              disabled={isWorking}
               placeholder="Paste bearer token..."
               onChange={e => onManualTokenChange(e.target.value)}
             />
-            <button className="btn btn-secondary" type="button" onClick={onManualTokenSave}>
+            <button className="btn btn-secondary" type="button" disabled={isWorking || !manualToken.trim()} onClick={onManualTokenSave}>
               <ShieldCheck aria-hidden="true" />
-              <span>Use token</span>
+              <span>{authAction === "token" ? "Checking token..." : "Use token"}</span>
             </button>
           </div>
         </details>
@@ -9831,7 +9833,21 @@ export default function AdminConsole() {
   const [me, setMe] = useState(null);
   const [manualToken, setManualToken] = useState("");
   const [status, setStatus] = useState({ text: "Checking access...", isError: false });
+  const [authAction, setAuthAction] = useState("");
+  const authActionRef = useRef("");
   const token = getSessionAccessToken(session);
+
+  async function runAuthAction(kind, action) {
+    if (authActionRef.current) return null;
+    authActionRef.current = kind;
+    setAuthAction(kind);
+    try {
+      return await action();
+    } finally {
+      if (authActionRef.current === kind) authActionRef.current = "";
+      setAuthAction(current => current === kind ? "" : current);
+    }
+  }
 
   function endCrewAccess(message = "This inventory access has ended.", notice = "ended") {
     clearAuthSession();
@@ -9955,38 +9971,39 @@ export default function AdminConsole() {
   }, []);
 
   async function logout() {
-    const wasCrew = me?.authKind === "crew";
-    if (wasCrew) {
-      try {
+    return runAuthAction("logout", async () => {
+      const wasCrew = me?.authKind === "crew";
+      if (wasCrew) {
         await apiRequest("/crew/logout", { method: "POST", tenantSlug });
-      } catch (error) {
-        throw error;
       }
-    }
-    clearAuthSession();
-    clearQaIdentity();
-    setSession(null);
-    setMe(null);
-    setStatus({ text: "", isError: false });
-    if (wasCrew) endCrewAccess("You left the inventory. Open a new private invite to join again.", "left");
+      clearAuthSession();
+      clearQaIdentity();
+      setSession(null);
+      setMe(null);
+      setStatus({ text: "", isError: false });
+      if (wasCrew) endCrewAccess("You left the inventory. Open a new private invite to join again.", "left");
+      return true;
+    });
   }
 
-  function saveManualToken() {
+  async function saveManualToken() {
     const accessToken = manualToken.trim();
     if (!accessToken) return;
-    const nextSession = {
-      accessToken,
-      expiresAt: Date.now() + 60 * 60 * 1000,
-      createdAt: Date.now(),
-      manual: true
-    };
-    saveAuthSession(nextSession);
-    setSession(nextSession);
-    setManualToken("");
-    loadMe(accessToken);
+    await runAuthAction("token", async () => {
+      const nextSession = {
+        accessToken,
+        expiresAt: Date.now() + 60 * 60 * 1000,
+        createdAt: Date.now(),
+        manual: true
+      };
+      saveAuthSession(nextSession);
+      setSession(nextSession);
+      setManualToken("");
+      return loadMe(accessToken);
+    });
   }
 
-  function useQaIdentity(kind) {
+  async function useQaIdentity(kind) {
     const identities = {
       root: {
         sub: "qa-root",
@@ -10014,26 +10031,34 @@ export default function AdminConsole() {
       }
     };
     const identity = identities[kind] || identities.root;
-    saveQaIdentity(identity);
-    const nextSession = {
-      accessToken: "qa-dev",
-      expiresAt: Date.now() + 8 * 60 * 60 * 1000,
-      createdAt: Date.now(),
-      qa: true
-    };
-    saveAuthSession(nextSession);
-    setSession(nextSession);
-    setStatus({ text: `Using ${identity.name}`, isError: false });
-    loadMe(nextSession.accessToken);
+    await runAuthAction(`qa:${kind}`, async () => {
+      saveQaIdentity(identity);
+      const nextSession = {
+        accessToken: "qa-dev",
+        expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+        createdAt: Date.now(),
+        qa: true
+      };
+      saveAuthSession(nextSession);
+      setSession(nextSession);
+      setStatus({ text: `Signing in as ${identity.name}...`, isError: false });
+      return loadMe(nextSession.accessToken);
+    });
   }
 
   async function signIn() {
-    try {
-      setStatus({ text: "Redirecting to Authentik...", isError: false });
-      await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
-    } catch (error) {
-      setStatus({ text: error.message || "Could not start login", isError: true });
-    }
+    await runAuthAction("signIn", async () => {
+      try {
+        setStatus({ text: "Redirecting to Authentik...", isError: false });
+        await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
+      } catch (error) {
+        setStatus({ text: error.message || "Could not start login", isError: true });
+      }
+    });
+  }
+
+  async function refreshAccess() {
+    return runAuthAction("refresh", () => loadMe());
   }
 
   const normalizedHash = typeof window === "undefined" ? "" : window.location.hash.toLowerCase();
@@ -10054,12 +10079,13 @@ export default function AdminConsole() {
   return (
     <div className={shellClassName}>
       {!isTenantDashboard && !isPlatformDashboard && !isNewsletterDashboard ? (
-        <AdminHeader me={me} tenantSlug={tenantSlug} mode={isNewsletterPage ? "newsletter" : ""} onRefresh={() => loadMe()} onLogout={logout} />
+        <AdminHeader me={me} tenantSlug={tenantSlug} mode={isNewsletterPage ? "newsletter" : ""} authAction={authAction} onRefresh={refreshAccess} onLogout={logout} />
       ) : null}
 
       {!me ? (
         <AuthPanel
           status={status}
+          authAction={authAction}
           manualToken={manualToken}
           onManualTokenChange={setManualToken}
           onManualTokenSave={saveManualToken}
@@ -10079,14 +10105,14 @@ export default function AdminConsole() {
 
           {isNewsletterPage || (isPlatformPage && canUseNewsletter && !canUsePlatform) ? (
             canUseNewsletter
-              ? <NewsletterPanel token={token} me={me} onRefresh={() => loadMe()} onLogout={logout} />
+              ? <NewsletterPanel token={token} me={me} onRefresh={refreshAccess} onLogout={logout} />
               : <EmptyPanel title="Newsletter admin access required" body="This account can sign in, but it is not assigned newsletter publishing access." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           ) : isPlatformPage ? (
             canUsePlatform
-              ? <PlatformPanel token={token} me={me} onRefresh={() => loadMe()} onLogout={logout} />
+              ? <PlatformPanel token={token} me={me} onRefresh={refreshAccess} onLogout={logout} />
               : <EmptyPanel title="Platform access required" body="This account can sign in, but it is not a root admin." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           ) : canUseTenant ? (
-            <TenantPanel token={token} tenantSlug={tenantSlug} me={me} onRefresh={() => loadMe()} onLogout={logout} />
+            <TenantPanel token={token} tenantSlug={tenantSlug} me={me} onRefresh={refreshAccess} onLogout={logout} />
           ) : (
             <EmptyPanel title="Workspace access required" body="This account does not have access to this platoon." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           )}

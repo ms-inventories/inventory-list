@@ -1,6 +1,6 @@
 # Permanent Authentik Provisioning
 
-The permanent-account schema, client, and authority foundation is deployed, and the end-to-end workflow is guarded by a disabled-by-default backend feature flag. Keep it off until the dedicated Authentik service identity, recovery email stage, and every required Coolify value below are ready. The app database is authoritative for each tenant role and disabled state; Authentik provides the login identity and group claims, but must not re-enable an explicitly disabled database membership.
+The permanent-account schema, client, and authority foundation are deployed. Production provisioning was enabled on 2026-07-15 after the dedicated Authentik service identity, recovery email stage, Coolify values, synchronous SMTP send, exact recovery-stage send, backend redeploy, and health check succeeded. The signed-in phone/desktop create-link-email-login smoke test and its tagged test-identity cleanup remain the final activation verification. The app database is authoritative for each tenant role and disabled state; Authentik provides the login identity and group claims, but must not re-enable an explicitly disabled database membership.
 
 ## Trust Boundary
 

@@ -69,7 +69,7 @@ test.describe("QA smoke", () => {
     const recentPlatoons = page.locator(".platform-dashboard-card").filter({
       has: page.getByRole("heading", { name: "Recent platoons", exact: true })
     });
-    await recentPlatoons.getByRole("button", { name: "View all", exact: true }).click();
+    await recentPlatoons.getByRole("button", { name: "Open platoons", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Platoons", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByRole("button", { name: "Create platoon" }).first()).toBeVisible();
     await expect(page.getByText("ms.localhost").first()).toBeVisible();
