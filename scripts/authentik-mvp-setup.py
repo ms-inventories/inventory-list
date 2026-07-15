@@ -25,7 +25,7 @@ from authentik.core.models import (
 )
 from authentik.flows.models import Flow, FlowStageBinding, Stage
 from authentik.providers.oauth2.models import ScopeMapping
-from authentik.rbac.models import Role, RoleModelPermission, RoleObjectPermission
+from authentik.rbac.models import Role
 from authentik.stages.email.models import EmailStage, EmailTemplates
 
 
@@ -142,10 +142,11 @@ def configure() -> None:
     service_user.save()
     service_user.groups.clear()
 
-    role, _ = Role.objects.get_or_create(name=ROLE_NAME)
+    # This role is owned exclusively by the inventory provisioning service.
+    # Recreate it so reruns cannot retain permissions added outside this setup.
+    Role.objects.filter(name=ROLE_NAME).delete()
+    role = Role.objects.create(name=ROLE_NAME)
     service_user.roles.set([role])
-    RoleModelPermission.objects.filter(role=role).delete()
-    RoleObjectPermission.objects.filter(role=role).delete()
     role.assign_perms(MODEL_PERMISSIONS)
     role.assign_perms("authentik_stages_email.view_emailstage", email_stage)
 
