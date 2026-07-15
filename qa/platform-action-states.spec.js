@@ -141,6 +141,107 @@ test.describe("platform async action states", () => {
     expect(refreshAttempts).toBe(1);
   });
 
+  test("duplicate admin email requires an eligible identity choice before creating a platoon", async ({ page }) => {
+    const blockedIdentityId = "91111111-1111-4111-8111-111111111111";
+    const selectedIdentityId = "92222222-2222-4222-8222-222222222222";
+    const slug = `qa-identity-${Date.now()}`.slice(0, 63);
+    const name = "QA Identity Platoon";
+    const adminEmail = "duplicate-admin@example.test";
+    const adminDisplayName = "Duplicate Admin";
+    const tenant = mockedTenant(slug, name);
+    const identityChecks = [];
+    const createBodies = [];
+    let created = false;
+
+    await page.route("**/api/platform/identity-check", async route => {
+      identityChecks.push(route.request().postDataJSON());
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "ambiguous",
+          candidateCount: 2,
+          candidates: [
+            {
+              id: blockedIdentityId,
+              username: "privileged.duplicate",
+              displayName: "Privileged duplicate",
+              active: true,
+              eligible: false,
+              blockedReason: "Privileged administrator accounts cannot be linked through a platoon invite."
+            },
+            {
+              id: selectedIdentityId,
+              username: "field.leader",
+              displayName: "Field leader",
+              active: true,
+              eligible: true,
+              blockedReason: null
+            }
+          ]
+        })
+      });
+    });
+    await page.route("**/api/platform/tenants", async route => {
+      if (route.request().method() === "POST") {
+        createBodies.push(route.request().postDataJSON());
+        created = true;
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ tenant, adminMembership: null })
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          tenants: created ? [tenant] : [],
+          provisioningAvailable: true,
+          setup: { tenants: {} }
+        })
+      });
+    });
+
+    await seedQaRootSession(page);
+    await page.goto(ADMIN_URL);
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Create platoon", exact: true }).first().click();
+
+    const dialog = page.getByRole("dialog", { name: "Create platoon" });
+    await dialog.getByLabel("Platoon name").fill(name);
+    await dialog.getByLabel("Subdomain").fill(slug);
+    await dialog.getByLabel("Platoon admin email").fill("Duplicate-Admin@Example.Test");
+    await dialog.getByLabel("Platoon admin name").fill(adminDisplayName);
+
+    const createButton = dialog.getByRole("button", { name: "Create platoon", exact: true });
+    await createButton.click();
+
+    await expect(dialog.getByRole("group", { name: "Choose the correct sign-in account" })).toBeVisible();
+    const blockedChoice = dialog.getByRole("radio", { name: /Privileged duplicate/ });
+    const eligibleChoice = dialog.getByRole("radio", { name: /Field leader/ });
+    await expect(blockedChoice).toBeDisabled();
+    await expect(eligibleChoice).toBeEnabled();
+    expect(identityChecks).toEqual([{ email: adminEmail }]);
+    expect(createBodies).toEqual([]);
+    await expect(createButton).toBeDisabled();
+
+    await eligibleChoice.check();
+    await expect(createButton).toBeEnabled();
+    await createButton.click();
+
+    await expect.poll(() => createBodies.length).toBe(1);
+    expect(identityChecks).toEqual([{ email: adminEmail }, { email: adminEmail }]);
+    expect(createBodies[0]).toEqual({
+      name,
+      slug,
+      adminEmail,
+      adminDisplayName,
+      authentikUserUuid: selectedIdentityId
+    });
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText(`Created ${slug}.localhost.`);
+  });
+
   test("an initial platoon load failure offers one clear retry", async ({ page }) => {
     let loadAttempts = 0;
     let allowLoad = false;

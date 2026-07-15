@@ -2092,6 +2092,7 @@ function SessionPanel({
   const sessionCreateActionRef = useRef(false);
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
+  const sessionLoadContextRef = useRef({ tenantSlug: null, token: null });
   const sessionItemFilterSessionRef = useRef("");
   const directCheckActionRef = useRef(new Map());
   const assignmentActionRef = useRef(new Map());
@@ -2165,7 +2166,12 @@ function SessionPanel({
     }
   }
 
-  async function loadSessionDetail(sessionId = selectedSessionId, showStatus = true, sessionListRequestId = null) {
+  async function loadSessionDetail(
+    sessionId = selectedSessionId,
+    showStatus = true,
+    sessionListRequestId = null,
+    reportErrors = true
+  ) {
     if (!sessionId) {
       setDetail(null);
       return true;
@@ -2173,7 +2179,6 @@ function SessionPanel({
 
     const requestId = sessionDetailRequestRef.current + 1;
     sessionDetailRequestRef.current = requestId;
-
     try {
       if (showStatus) setStatus({ text: "Loading session...", isError: false });
       const data = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
@@ -2185,6 +2190,7 @@ function SessionPanel({
       return true;
     } catch (error) {
       if (requestId === sessionDetailRequestRef.current && (!sessionListRequestId || sessionListRequestId === sessionListRequestRef.current)) {
+        if (!reportErrors) return false;
         if (error?.status === 404 && !sessionListRequestId) {
           clearSelectedSessionState();
           await loadSessions("");
@@ -2201,6 +2207,10 @@ function SessionPanel({
   }
 
   useEffect(() => {
+    const previousContext = sessionLoadContextRef.current;
+    const contextChanged = previousContext.tenantSlug !== tenantSlug || previousContext.token !== token;
+    sessionLoadContextRef.current = { tenantSlug, token };
+    if (!contextChanged && preferredSessionId && preferredSessionId === selectedSessionId) return;
     loadSessions(preferredSessionId || selectedSessionId);
   }, [tenantSlug, token, preferredSessionId]);
 
@@ -2397,7 +2407,7 @@ function SessionPanel({
         setPacketWizardSessionId(sessionId);
         setPacketWizardStep(2);
         setStatus({ text: "", isError: false });
-        void loadSessionDetail(sessionId, false);
+        void loadSessionDetail(sessionId, false, null, false);
         return sessionId;
       }
 
@@ -6166,6 +6176,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [tenants, setTenants] = useState([]);
   const [form, setForm] = useState({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
+  const [createIdentityCheck, setCreateIdentityCheck] = useState(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [activeView, setActiveView] = useState("dashboard");
@@ -6190,6 +6201,10 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const platformUserInitial = String(platformUserName || "A").slice(0, 1).toUpperCase();
   const totalMembers = tenants.reduce((sum, tenant) => sum + Number(tenant.memberCount || 0), 0);
   const totalAdmins = tenants.reduce((sum, tenant) => sum + Number(tenant.adminCount || 0), 0);
+  const normalizedCreateAdminEmail = String(form.adminEmail || "").trim().toLowerCase();
+  const visibleCreateIdentityCheck = createIdentityCheck?.email === normalizedCreateAdminEmail
+    ? createIdentityCheck
+    : null;
   const activeTenants = tenants.filter(tenant => tenant.status === "active");
   const recentlyCreatedTenants = [...tenants]
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
@@ -6355,6 +6370,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
       setPlatformProvisioningAvailable(accountSetupAvailable);
       if (!accountSetupAvailable) {
         setForm(current => ({ ...current, adminEmail: "", adminDisplayName: "" }));
+        setCreateIdentityCheck(null);
       }
       if (!quiet) setStatus({ text: "", isError: false });
       return { ok: true };
@@ -6414,6 +6430,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   function openCreateTenant() {
     if (platformActionRef.current.size) return;
     setCreateStatus({ text: "", isError: false });
+    setCreateIdentityCheck(null);
     setIsCreateOpen(true);
   }
 
@@ -6421,6 +6438,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     if (platformActionRef.current.has("create")) return;
     setIsCreateOpen(false);
     setCreateStatus({ text: "", isError: false });
+    setCreateIdentityCheck(null);
   }
 
   function selectPlatformView(view) {
@@ -6441,6 +6459,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   }
 
   function updateForm(key, value) {
+    if (key === "adminEmail") setCreateIdentityCheck(null);
     setForm(current => {
       const next = { ...current, [key]: value };
       if (key === "name" && !current.slug) {
@@ -6458,14 +6477,54 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     setCreateStatus({ text: "Creating platoon...", isError: false });
     setStatus({ text: "", isError: false });
     try {
+      const adminEmail = platformProvisioningAvailable ? form.adminEmail.trim().toLowerCase() : "";
+      let selectedIdentityId = "";
+      if (adminEmail) {
+        setCreateStatus({ text: "Checking the admin sign-in account...", isError: false });
+        const identityData = await apiRequest("/platform/identity-check", {
+          method: "POST",
+          token,
+          body: { email: adminEmail }
+        });
+        if (identityData.status === "ambiguous") {
+          const candidates = identityData.candidates || [];
+          const previousSelection = createIdentityCheck?.email === adminEmail
+            ? createIdentityCheck.selectedId
+            : "";
+          selectedIdentityId = candidates.some(candidate => candidate.id === previousSelection && candidate.eligible)
+            ? previousSelection
+            : "";
+          setCreateIdentityCheck({
+            email: adminEmail,
+            status: "ambiguous",
+            candidates,
+            selectedId: selectedIdentityId
+          });
+          if (!selectedIdentityId) {
+            setCreateStatus({
+              text: "Choose the correct existing sign-in account before creating the platoon.",
+              isError: false
+            });
+            return;
+          }
+        } else {
+          setCreateIdentityCheck(null);
+        }
+      } else {
+        setCreateIdentityCheck(null);
+      }
+
+      setCreateStatus({ text: "Creating platoon...", isError: false });
       const body = {
         name: form.name.trim(),
         slug: form.slug.trim().toLowerCase(),
-        adminEmail: platformProvisioningAvailable ? form.adminEmail.trim() || undefined : undefined,
-        adminDisplayName: platformProvisioningAvailable ? form.adminDisplayName.trim() || undefined : undefined
+        adminEmail: adminEmail || undefined,
+        adminDisplayName: platformProvisioningAvailable ? form.adminDisplayName.trim() || undefined : undefined,
+        ...(selectedIdentityId ? { authentikUserUuid: selectedIdentityId } : {})
       };
       const data = await apiRequest("/platform/tenants", { method: "POST", token, body });
       setForm({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
+      setCreateIdentityCheck(null);
       setIsCreateOpen(false);
       setCreateStatus({ text: "", isError: false });
       const refreshed = await loadTenants({ quiet: true });
@@ -6693,7 +6752,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           <EmptyPanel
             title="Could not load platoons"
             body="Refresh the platform to try again."
-            action={<button className="btn btn-secondary btn-small" type="button" disabled={hasPlatformAction} onClick={refreshPlatform}>Try again</button>}
+            action={activeView === "dashboard" ? null : (
+              <button className="btn btn-secondary btn-small" type="button" disabled={hasPlatformAction} onClick={refreshPlatform}>Try again</button>
+            )}
           />
         );
       }
@@ -7164,6 +7225,32 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 onChange={e => updateForm("adminEmail", e.target.value)}
               />
 
+              {visibleCreateIdentityCheck?.status === "ambiguous" ? (
+                <fieldset className="identity-choice-fieldset">
+                  <legend>Choose the correct sign-in account</legend>
+                  <p>Multiple existing accounts use this email. Select the account for the first platoon admin.</p>
+                  <div className="identity-choice-list">
+                    {visibleCreateIdentityCheck.candidates.map(candidate => (
+                      <label className={`identity-choice${candidate.eligible ? "" : " blocked"}`} key={candidate.id}>
+                        <input
+                          type="radio"
+                          name="createTenantIdentity"
+                          value={candidate.id}
+                          checked={visibleCreateIdentityCheck.selectedId === candidate.id}
+                          disabled={Boolean(createAction) || !candidate.eligible}
+                          onChange={() => setCreateIdentityCheck(current => current ? { ...current, selectedId: candidate.id } : current)}
+                        />
+                        <span>
+                          <strong>{candidate.displayName}</strong>
+                          <small>@{candidate.username}</small>
+                          {candidate.blockedReason ? <small className="identity-blocked-reason">{candidate.blockedReason}</small> : null}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              ) : null}
+
               <label className="field-label" htmlFor="tenantAdminName">Platoon admin name</label>
               <input
                 id="tenantAdminName"
@@ -7175,7 +7262,11 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               />
 
               <div className="button-row platform-modal-actions">
-                <button className="btn btn-primary btn-full" type="submit" disabled={Boolean(createAction)}>
+                <button
+                  className="btn btn-primary btn-full"
+                  type="submit"
+                  disabled={Boolean(createAction) || (visibleCreateIdentityCheck?.status === "ambiguous" && !visibleCreateIdentityCheck.selectedId)}
+                >
                   <Plus aria-hidden="true" />
                   <span>{createAction ? "Creating platoon..." : "Create platoon"}</span>
                 </button>
@@ -8417,10 +8508,15 @@ function TenantPeoplePanel({
   onOpenSessions,
   memberForm,
   onMemberFormChange,
+  memberIdentityCheck,
+  onClearMemberIdentityCheck,
+  onSelectMemberIdentity,
   onCreateMember,
   onUpdateMember,
   onDisableMember,
   onRetryMember,
+  onResolveMemberIdentity,
+  onCancelMemberInvitation,
   onResendEnrollment,
   onCopyInviteLink,
   onResendInvitation,
@@ -8430,7 +8526,12 @@ function TenantPeoplePanel({
   memberActionId,
   lastInviteUrl,
   isSaving,
-  provisioningAvailable
+  provisioningAvailable,
+  canResolveIdentities,
+  identityResolution,
+  onSelectResolutionIdentity,
+  onConfirmResolution,
+  onCloseResolution
 }) {
   const activeAdminCount = members.filter(member => member.role === "tenant_admin" && member.status === "active").length;
   const hasSearchQuery = searchTerms(query).length > 0;
@@ -8452,6 +8553,10 @@ function TenantPeoplePanel({
     invite.status,
     formatInviteStatus(invite.status)
   ], query));
+  const normalizedMemberEmail = String(memberForm.email || "").trim().toLowerCase();
+  const visibleIdentityCheck = memberIdentityCheck?.email === normalizedMemberEmail
+    ? memberIdentityCheck
+    : null;
   const addTeammateRef = useRef(null);
   const memberNameRef = useRef(null);
 
@@ -8549,8 +8654,37 @@ function TenantPeoplePanel({
                     disabled={isSaving}
                     value={memberForm.email}
                     placeholder="name@example.com"
-                    onChange={e => onMemberFormChange(current => ({ ...current, email: e.target.value }))}
+                    onChange={e => {
+                      onClearMemberIdentityCheck?.();
+                      onMemberFormChange(current => ({ ...current, email: e.target.value }));
+                    }}
                   />
+
+                  {visibleIdentityCheck?.status === "ambiguous" && visibleIdentityCheck.candidates?.length ? (
+                    <fieldset className="identity-choice-fieldset">
+                      <legend>Choose the correct sign-in account</legend>
+                      <p>More than one existing account uses this email. Select the account this teammate should use.</p>
+                      <div className="identity-choice-list">
+                        {visibleIdentityCheck.candidates.map(candidate => (
+                          <label className={`identity-choice${candidate.eligible ? "" : " blocked"}`} key={candidate.id}>
+                            <input
+                              type="radio"
+                              name="memberIdentity"
+                              value={candidate.id}
+                              checked={visibleIdentityCheck.selectedId === candidate.id}
+                              disabled={isSaving || !candidate.eligible}
+                              onChange={() => onSelectMemberIdentity(candidate.id)}
+                            />
+                            <span>
+                              <strong>{candidate.displayName}</strong>
+                              <small>@{candidate.username}</small>
+                              {candidate.blockedReason ? <small className="identity-blocked-reason">{candidate.blockedReason}</small> : null}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  ) : null}
 
                   <label className="field-label" htmlFor="memberRole">Access</label>
                   <select
@@ -8565,7 +8699,11 @@ function TenantPeoplePanel({
                     ))}
                   </select>
 
-                  <button className="btn btn-primary btn-full" type="submit" disabled={isSaving}>
+                  <button
+                    className="btn btn-primary btn-full"
+                    type="submit"
+                    disabled={isSaving || (visibleIdentityCheck?.status === "ambiguous" && !visibleIdentityCheck.selectedId)}
+                  >
                     <UserPlus aria-hidden="true" />
                     <span>{isSaving ? "Adding teammate..." : "Add teammate"}</span>
                   </button>
@@ -8594,7 +8732,10 @@ function TenantPeoplePanel({
                 const isLastActiveAdmin = member.role === "tenant_admin" && member.status === "active" && activeAdminCount <= 1;
                 const accountState = memberAccountState(member, { provisioningAvailable });
                 const provisioning = member.provisioning || null;
-                const canRetry = provisioningAvailable && accountState.label === "Needs attention";
+                const isIdentityAmbiguous = provisioning?.error?.code === "identity_ambiguous";
+                const canRetry = provisioningAvailable
+                  && accountState.label === "Needs attention"
+                  && provisioning?.retryable === true;
                 const canResendEnrollment = provisioningAvailable
                   && provisioning?.canResendEnrollment === true;
 
@@ -8614,11 +8755,27 @@ function TenantPeoplePanel({
                       <div className="member-provisioning-alert" role="status">
                         <AlertCircle aria-hidden="true" />
                         <span>{provisioning?.safeError || "Account setup did not finish. Try it again."}</span>
-                        {canRetry ? (
-                          <button className="btn btn-secondary btn-small" type="button" disabled={isWorking} onClick={() => onRetryMember(member)}>
-                            <RefreshCw aria-hidden="true" />
-                            <span>{isWorking ? "Retrying..." : "Retry"}</span>
-                          </button>
+                        {canRetry || isIdentityAmbiguous ? (
+                          <div className="member-provisioning-actions">
+                            {canRetry ? (
+                              <button className="btn btn-secondary btn-small" type="button" disabled={isWorking} onClick={() => onRetryMember(member)}>
+                                <RefreshCw aria-hidden="true" />
+                                <span>{isWorking ? "Retrying..." : "Retry"}</span>
+                              </button>
+                            ) : null}
+                            {isIdentityAmbiguous && canResolveIdentities ? (
+                              <button className="btn btn-secondary btn-small" type="button" disabled={isWorking} onClick={() => onResolveMemberIdentity(member)}>
+                                <Users aria-hidden="true" />
+                                <span>{isWorking ? "Checking..." : "Resolve duplicate"}</span>
+                              </button>
+                            ) : null}
+                            {isIdentityAmbiguous ? (
+                              <button className="btn btn-danger-soft btn-small" type="button" disabled={isWorking} onClick={() => onCancelMemberInvitation(member)}>
+                                <Trash2 aria-hidden="true" />
+                                <span>{isWorking ? "Canceling..." : "Cancel invite"}</span>
+                              </button>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     ) : null}
@@ -8766,6 +8923,67 @@ function TenantPeoplePanel({
           )}
         </div>
       </details>
+
+      {identityResolution ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget && !identityResolution.isSaving) onCloseResolution();
+          }}
+        >
+          <div className="modal-panel member-identity-panel" role="dialog" aria-modal="true" aria-labelledby="identityResolutionTitle">
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">Duplicate sign-in</p>
+                <h2 id="identityResolutionTitle">Choose the correct account</h2>
+                <p className="modal-copy">
+                  {identityResolution.member.displayName || identityResolution.member.email} has more than one account using {identityResolution.member.email}.
+                </p>
+              </div>
+              <button className="icon-button" type="button" aria-label="Close account chooser" disabled={identityResolution.isSaving} onClick={onCloseResolution}>
+                <X aria-hidden="true" />
+              </button>
+            </div>
+
+            {identityResolution.error ? <div className="error-banner" role="alert">{identityResolution.error}</div> : null}
+
+            <div className="identity-choice-list identity-resolution-list">
+              {identityResolution.candidates.length ? identityResolution.candidates.map(candidate => (
+                <label className={`identity-choice${candidate.eligible ? "" : " blocked"}`} key={candidate.id}>
+                  <input
+                    type="radio"
+                    name="resolvedMemberIdentity"
+                    value={candidate.id}
+                    checked={identityResolution.selectedId === candidate.id}
+                    disabled={identityResolution.isSaving || !candidate.eligible}
+                    onChange={() => onSelectResolutionIdentity(candidate.id)}
+                  />
+                  <span>
+                    <strong>{candidate.displayName}</strong>
+                    <small>@{candidate.username}</small>
+                    {candidate.blockedReason ? <small className="identity-blocked-reason">{candidate.blockedReason}</small> : null}
+                  </span>
+                </label>
+              )) : <div className="error-banner" role="status">No matching sign-in accounts are available now. Close this window and cancel the stale invitation.</div>}
+            </div>
+
+            <p className="member-manage-note">This links the invitation to one existing sign-in account. It does not merge or delete either account.</p>
+            <div className="modal-actions identity-resolution-actions">
+              <button className="btn btn-secondary" type="button" disabled={identityResolution.isSaving} onClick={onCloseResolution}>Back</button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={identityResolution.isSaving || !identityResolution.selectedId}
+                onClick={onConfirmResolution}
+              >
+                <Users aria-hidden="true" />
+                <span>{identityResolution.isSaving ? "Linking account..." : "Use selected account"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -8801,6 +9019,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [provisioningAvailable, setProvisioningAvailable] = useState(false);
   const [provisioningPollFailures, setProvisioningPollFailures] = useState(0);
   const [memberForm, setMemberForm] = useState({ email: "", displayName: "", role: "contributor" });
+  const [memberIdentityCheck, setMemberIdentityCheck] = useState(null);
+  const [identityResolution, setIdentityResolution] = useState(null);
   const [status, setStatus] = useState({ text: "Loading tenant...", isError: false });
   const [lastInviteUrl, setLastInviteUrl] = useState("");
   const [inviteLinksById, setInviteLinksById] = useState({});
@@ -9055,17 +9275,54 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
     setIsSaving(true);
     try {
+      const email = memberForm.email.trim().toLowerCase();
+      const identityData = await apiRequest("/tenant/members/identity-check", {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { email }
+      });
+      let selectedIdentityId = "";
+      if (identityData.status === "ambiguous") {
+        const candidates = identityData.candidates || [];
+        const previousSelection = memberIdentityCheck?.email === email
+          ? memberIdentityCheck.selectedId
+          : "";
+        selectedIdentityId = candidates.some(candidate => candidate.id === previousSelection && candidate.eligible)
+          ? previousSelection
+          : "";
+        setMemberIdentityCheck({
+          email,
+          status: "ambiguous",
+          candidates,
+          selectedId: selectedIdentityId
+        });
+        if (!selectedIdentityId) {
+          setStatus({
+            text: candidates.length
+              ? "Choose the correct existing sign-in account, then add the teammate."
+              : "More than one sign-in account uses this email. Ask a platform administrator to choose the correct account.",
+            isError: !candidates.length
+          });
+          return;
+        }
+      } else {
+        setMemberIdentityCheck(null);
+      }
+
       const data = await apiRequest("/tenant/members", {
         method: "POST",
         token,
         tenantSlug,
         body: {
-          email: memberForm.email.trim(),
+          email,
           displayName: memberForm.displayName.trim(),
-          role: memberForm.role
+          role: memberForm.role,
+          ...(selectedIdentityId ? { authentikUserUuid: selectedIdentityId } : {})
         }
       });
       setMemberForm({ email: "", displayName: "", role: "contributor" });
+      setMemberIdentityCheck(null);
       if (data.member) {
         setMembers(current => {
           const withoutCurrent = current.filter(member => member.id !== data.member.id);
@@ -9154,6 +9411,89 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       await loadTenant({ silent: true });
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setMemberActionId("");
+    }
+  }
+
+  async function openMemberIdentityResolution(member) {
+    setMemberActionId(member.id);
+    try {
+      const data = await apiRequest(`/tenant/members/${member.id}/identity-candidates`, {
+        token,
+        tenantSlug
+      });
+      setIdentityResolution({
+        member: data.member || member,
+        candidates: data.candidates || [],
+        selectedId: "",
+        isSaving: false,
+        error: ""
+      });
+      setStatus({ text: "", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setMemberActionId("");
+    }
+  }
+
+  function selectResolutionIdentity(candidateId) {
+    setIdentityResolution(current => current ? { ...current, selectedId: candidateId, error: "" } : current);
+  }
+
+  async function confirmMemberIdentityResolution() {
+    if (!identityResolution?.member?.id || !identityResolution.selectedId || identityResolution.isSaving) return;
+    const memberId = identityResolution.member.id;
+    setIdentityResolution(current => current ? { ...current, isSaving: true, error: "" } : current);
+    try {
+      const data = await apiRequest(`/tenant/members/${memberId}/resolve-identity`, {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { authentikUserUuid: identityResolution.selectedId }
+      });
+      if (data.member) {
+        setMembers(current => current.map(member => member.id === data.member.id ? data.member : member));
+      }
+      setIdentityResolution(null);
+      setStatus({ text: "Sign-in account selected. Account setup is continuing.", isError: false });
+      await loadTenant({ silent: true });
+    } catch (error) {
+      setIdentityResolution(current => current ? {
+        ...current,
+        isSaving: false,
+        error: getApiErrorMessage(error)
+      } : current);
+    }
+  }
+
+  async function cancelFailedMemberInvitation(member) {
+    if (!member?.id || memberActionId === member.id) return;
+    const confirmed = window.confirm(
+      `Cancel the invitation for ${member.displayName || member.email}? This removes it from the team but does not delete either sign-in account.`
+    );
+    if (!confirmed) return;
+
+    setMemberActionId(member.id);
+    if (identityResolution?.member?.id === member.id) {
+      setIdentityResolution(current => current ? { ...current, isSaving: true, error: "" } : current);
+    }
+    try {
+      await apiRequest(`/tenant/members/${member.id}`, {
+        method: "DELETE",
+        token,
+        tenantSlug
+      });
+      setMembers(current => current.filter(item => item.id !== member.id));
+      setIdentityResolution(current => current?.member?.id === member.id ? null : current);
+      setStatus({ text: "Invitation canceled", isError: false });
+      await loadTenant({ silent: true });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+      setIdentityResolution(current => current?.member?.id === member.id
+        ? { ...current, isSaving: false, error: getApiErrorMessage(error) }
+        : current);
     } finally {
       setMemberActionId("");
     }
@@ -9717,10 +10057,15 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               onOpenSessions={() => openSessions()}
               memberForm={memberForm}
               onMemberFormChange={setMemberForm}
+              memberIdentityCheck={memberIdentityCheck}
+              onClearMemberIdentityCheck={() => setMemberIdentityCheck(null)}
+              onSelectMemberIdentity={candidateId => setMemberIdentityCheck(current => current ? { ...current, selectedId: candidateId } : current)}
               onCreateMember={createPermanentMember}
               onUpdateMember={updateMember}
               onDisableMember={disableMember}
               onRetryMember={retryMemberProvisioning}
+              onResolveMemberIdentity={openMemberIdentityResolution}
+              onCancelMemberInvitation={cancelFailedMemberInvitation}
               onResendEnrollment={resendMemberEnrollment}
               onCopyInviteLink={copyInviteLink}
               onResendInvitation={resendInvitation}
@@ -9731,6 +10076,13 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               lastInviteUrl={lastInviteUrl}
               isSaving={isSaving}
               provisioningAvailable={provisioningAvailable}
+              canResolveIdentities={Boolean(me?.isPlatformAdmin)}
+              identityResolution={identityResolution}
+              onSelectResolutionIdentity={selectResolutionIdentity}
+              onConfirmResolution={confirmMemberIdentityResolution}
+              onCloseResolution={() => {
+                if (!identityResolution?.isSaving) setIdentityResolution(null);
+              }}
             />
           ) : null}
 

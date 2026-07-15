@@ -3697,6 +3697,135 @@ button {
   min-height: 34px;
 }
 
+.member-provisioning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.identity-choice-fieldset {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid #e0b56d;
+  border-radius: var(--radius);
+  background: #fff9ef;
+  padding: 12px;
+}
+
+.identity-choice-fieldset legend {
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 900;
+  padding: 0 5px;
+}
+
+.identity-choice-fieldset > p,
+.member-identity-panel .member-manage-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.identity-choice-list {
+  display: grid;
+  gap: 8px;
+}
+
+.identity-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  padding: 10px;
+}
+
+.identity-choice:has(input:checked) {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(47, 101, 65, 0.12);
+}
+
+.identity-choice.blocked {
+  background: var(--surface-muted);
+  cursor: not-allowed;
+  opacity: 0.82;
+}
+
+.identity-choice input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--primary);
+}
+
+.identity-choice > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.identity-choice strong,
+.identity-choice small {
+  overflow-wrap: anywhere;
+}
+
+.identity-choice small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.identity-choice .identity-blocked-reason {
+  color: var(--danger);
+}
+
+.member-identity-panel {
+  display: grid;
+  width: min(100%, 620px);
+  max-height: calc(100dvh - 36px);
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.member-identity-panel .modal-heading {
+  align-items: flex-start;
+}
+
+.member-identity-panel .modal-heading > .icon-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.member-identity-panel .modal-heading h2 {
+  margin: 2px 0 4px;
+}
+
+.error-banner {
+  border: 1px solid #efb3ad;
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.84rem;
+  font-weight: 760;
+  line-height: 1.4;
+  padding: 10px 12px;
+}
+
+.identity-resolution-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .team-member-manage {
   border-top: 1px solid var(--line);
   margin-top: 2px;
@@ -8409,6 +8538,21 @@ button {
     grid-column: 1 / -1;
     width: 100%;
     justify-content: center;
+  }
+
+  .member-provisioning-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .member-provisioning-actions .btn,
+  .identity-resolution-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .member-identity-panel {
+    padding: 16px;
   }
 
   .team-member-action-row,

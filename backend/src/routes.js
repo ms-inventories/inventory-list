@@ -299,6 +299,66 @@ function reservedAuthentikGroupNames() {
   ].filter(Boolean));
 }
 
+function privilegedAuthentikGroupNames() {
+  return new Set([
+    "876en-admins",
+    "876en-frg-admins",
+    "876en-platoon-admin",
+    String(config.oidc.platformAdminGroup || "").toLowerCase(),
+    String(config.oidc.frgAdminGroup || "").toLowerCase(),
+    String(config.oidc.tenantAdminGroup || "").toLowerCase()
+  ].filter(Boolean));
+}
+
+const authentikUserUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function authentikIdentityGroupNames(identity) {
+  const groupObjects = Array.isArray(identity?.groups_obj) ? identity.groups_obj : [];
+  const embeddedGroups = Array.isArray(identity?.groups) ? identity.groups : [];
+  return [...groupObjects, ...embeddedGroups]
+    .map(group => typeof group === "string"
+      ? group.trim().toLowerCase()
+      : String(group?.name || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function safeAuthentikIdentityCandidate(identity, {
+  linkedElsewhere = false,
+  appAccountLinkedElsewhere = false,
+  providerOwnerConflict = false
+} = {}) {
+  const providerPk = Number(identity?.pk);
+  const id = String(identity?.uuid || "").trim().toLowerCase();
+  const username = String(identity?.username || "").trim();
+  const displayName = String(identity?.name || username || "Existing account").trim();
+  const privilegedGroups = privilegedAuthentikGroupNames();
+  const hasPrivilegedGroup = authentikIdentityGroupNames(identity).some(name => privilegedGroups.has(name));
+
+  let blockedReason = "";
+  if (!Number.isSafeInteger(providerPk) || providerPk < 1 || !authentikUserUuidPattern.test(id)) {
+    blockedReason = "This account could not be verified safely.";
+  } else if (identity?.is_active !== true) {
+    blockedReason = "This sign-in account is disabled.";
+  } else if (identity?.is_superuser !== false || hasPrivilegedGroup) {
+    blockedReason = "Privileged administrator accounts cannot be linked through a platoon invite.";
+  } else if (appAccountLinkedElsewhere) {
+    blockedReason = "This app account is already linked to a different sign-in account.";
+  } else if (providerOwnerConflict) {
+    blockedReason = "This sign-in account is already managed for another app account.";
+  } else if (linkedElsewhere) {
+    blockedReason = "This sign-in account is already linked to another app account.";
+  }
+
+  return {
+    id,
+    username: username || "Existing account",
+    displayName,
+    active: identity?.is_active === true,
+    eligible: !blockedReason,
+    blockedReason: blockedReason || null
+  };
+}
+
 function getTenantGroupSlugs(identity) {
   const prefix = String(config.oidc.tenantGroupPrefix || "876en-").toLowerCase();
   const reserved = reservedAuthentikGroupNames();
@@ -490,6 +550,7 @@ async function findMemberWithProvisioning(queryFn, tenantId, memberId, { forUpda
     `
       SELECT m.id, m.tenant_id, m.user_id, m.role, m.status, m.created_at,
         u.email, u.display_name, u.account_type, u.authentik_subject,
+        u.authentik_user_pk, u.authentik_user_uuid, u.authentik_oidc_user_uuid,
         p.id AS provisioning_job_id,
         p.status AS provisioning_status,
         p.current_step AS provisioning_step,
@@ -604,6 +665,179 @@ function requirePermanentProvisioning() {
       "Permanent account setup is not available yet.",
       503,
       "provisioning_unavailable"
+    );
+  }
+}
+
+function permanentIdentityClient() {
+  requirePermanentProvisioning();
+  return createAuthentikClient({
+    origin: config.authentikProvisioning.origin,
+    token: config.authentikProvisioning.token,
+    timeoutMs: config.authentikProvisioning.requestTimeoutMs
+  });
+}
+
+async function inspectPermanentIdentityEmail(email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  let identities;
+  try {
+    identities = await permanentIdentityClient().listUsersByExactEmail(normalizedEmail);
+  } catch {
+    throw permanentAccountError(
+      "The account service could not check this email. Try again.",
+      503,
+      "identity_check_unavailable"
+    );
+  }
+
+  const expectedUsers = await query(
+    `
+      SELECT id, authentik_subject, authentik_user_pk,
+        authentik_user_uuid::text AS authentik_user_uuid,
+        authentik_oidc_user_uuid::text AS authentik_oidc_user_uuid
+      FROM app_users
+      WHERE lower(email) = $1
+      ORDER BY id
+    `,
+    [normalizedEmail]
+  );
+  const expectedUserIds = new Set(expectedUsers.rows.map(row => row.id));
+  const candidateUuids = identities
+    .map(identity => String(identity?.uuid || "").trim().toLowerCase())
+    .filter(value => authentikUserUuidPattern.test(value));
+  const candidatePks = identities
+    .map(identity => Number(identity?.pk))
+    .filter(value => Number.isSafeInteger(value) && value > 0);
+  const linkedUsers = candidateUuids.length || candidatePks.length
+    ? await query(
+      `
+        SELECT id, authentik_subject, authentik_user_pk,
+          authentik_user_uuid::text AS authentik_user_uuid,
+          authentik_oidc_user_uuid::text AS authentik_oidc_user_uuid
+        FROM app_users
+        WHERE authentik_user_uuid = ANY($1::uuid[])
+          OR authentik_oidc_user_uuid = ANY($1::uuid[])
+          OR authentik_user_pk = ANY($2::bigint[])
+          OR lower(authentik_subject) = ANY($3::text[])
+      `,
+      [candidateUuids, candidatePks, candidateUuids]
+    )
+    : { rows: [] };
+
+  const entries = identities.map(identity => {
+    const uuid = String(identity?.uuid || "").trim().toLowerCase();
+    const pk = Number(identity?.pk);
+    const linked = linkedUsers.rows.find(row => (
+      String(row.authentik_user_uuid || "").toLowerCase() === uuid
+      || String(row.authentik_oidc_user_uuid || "").toLowerCase() === uuid
+      || String(row.authentik_subject || "").toLowerCase() === uuid
+      || Number(row.authentik_user_pk) === pk
+    ));
+    const appAccountLinkedElsewhere = expectedUsers.rows.some(row => {
+      const expectedUuid = String(row.authentik_user_uuid || "").trim().toLowerCase();
+      const expectedOidcUuid = String(row.authentik_oidc_user_uuid || "").trim().toLowerCase();
+      const rawExpectedSubject = String(row.authentik_subject || "").trim().toLowerCase();
+      const expectedSubjectUuid = authentikUserUuidPattern.test(rawExpectedSubject)
+        ? rawExpectedSubject
+        : "";
+      const expectedPk = row.authentik_user_pk === null ? null : Number(row.authentik_user_pk);
+      const hasProviderLink = Boolean(expectedUuid || expectedOidcUuid || expectedSubjectUuid || expectedPk !== null);
+      const isCompatibleLink = (!expectedUuid || expectedUuid === uuid)
+        && (!expectedOidcUuid || expectedOidcUuid === uuid)
+        && (!expectedSubjectUuid || expectedSubjectUuid === uuid)
+        && (expectedPk === null || expectedPk === pk);
+      return hasProviderLink && !isCompatibleLink;
+    });
+    const providerOwnerId = String(identity?.attributes?.inventory_app_user_id || "").trim();
+    return {
+      identity,
+      safe: safeAuthentikIdentityCandidate(identity, {
+        linkedElsewhere: Boolean(linked && !expectedUserIds.has(linked.id)),
+        appAccountLinkedElsewhere,
+        providerOwnerConflict: Boolean(providerOwnerId && !expectedUserIds.has(providerOwnerId))
+      })
+    };
+  });
+
+  return { normalizedEmail, entries };
+}
+
+function choosePermanentIdentity(inspection, selectedUuid, { isPlatformAdmin = false } = {}) {
+  const selectedId = String(selectedUuid || "").trim().toLowerCase();
+  const entries = inspection.entries || [];
+
+  if (!entries.length) {
+    if (selectedId) {
+      throw permanentAccountError(
+        "That sign-in account no longer matches this email. Check the address and try again.",
+        409,
+        "identity_selection_stale"
+      );
+    }
+    return null;
+  }
+
+  if (selectedId && !isPlatformAdmin) {
+    throw permanentAccountError(
+      "Only a platform administrator can choose between existing sign-in accounts.",
+      403,
+      "identity_resolution_forbidden"
+    );
+  }
+
+  if (entries.length > 1 && !selectedId) {
+    throw permanentAccountError(
+      isPlatformAdmin
+        ? "More than one sign-in account uses this email. Choose the correct account before inviting this teammate."
+        : "More than one sign-in account uses this email. Ask a platform administrator to choose the correct account.",
+      409,
+      "identity_ambiguous"
+    );
+  }
+
+  const selected = selectedId
+    ? entries.find(entry => entry.safe.id === selectedId)
+    : entries[0];
+  if (!selected) {
+    throw permanentAccountError(
+      "That sign-in account no longer matches this email. Check the address and try again.",
+      409,
+      "identity_selection_stale"
+    );
+  }
+  if (!selected.safe.eligible) {
+    throw permanentAccountError(
+      selected.safe.blockedReason || "This sign-in account cannot be linked safely.",
+      409,
+      "identity_not_eligible"
+    );
+  }
+  return selected;
+}
+
+async function bindPermanentUserIdentity(client, userId, entry) {
+  const providerPk = Number(entry?.identity?.pk);
+  const providerUuid = String(entry?.identity?.uuid || "").trim().toLowerCase();
+  const result = await client.query(
+    `
+      UPDATE app_users
+      SET authentik_user_pk = $2,
+        authentik_user_uuid = $3,
+        authentik_linked_at = COALESCE(authentik_linked_at, now())
+      WHERE id = $1
+        AND (authentik_user_pk IS NULL OR authentik_user_pk = $2)
+        AND (authentik_user_uuid IS NULL OR authentik_user_uuid = $3)
+        AND (authentik_oidc_user_uuid IS NULL OR authentik_oidc_user_uuid = $3)
+      RETURNING id
+    `,
+    [userId, providerPk, providerUuid]
+  );
+  if (!result.rows[0]) {
+    throw permanentAccountError(
+      "This app account is already linked to a different sign-in account.",
+      409,
+      "identity_conflict"
     );
   }
 }
@@ -3086,6 +3320,23 @@ export function registerRoutes(app) {
     return { testSend: result, email };
   });
 
+  route(app, "post", "/api/platform/identity-check", async (request, reply) => {
+    await requirePlatformAdmin(request, reply);
+    const body = parseBody(
+      z.object({
+        email: z.string().trim().email().max(254).transform(value => value.toLowerCase())
+      }).strict(),
+      request.body
+    );
+    const inspection = await inspectPermanentIdentityEmail(body.email);
+    const candidateCount = inspection.entries.length;
+    return {
+      status: candidateCount > 1 ? "ambiguous" : candidateCount === 1 ? "existing" : "new",
+      candidateCount,
+      candidates: inspection.entries.map(entry => entry.safe)
+    };
+  });
+
   route(app, "get", "/api/platform/tenants", async (request, reply) => {
     await requirePlatformAdmin(request, reply);
 
@@ -3152,7 +3403,8 @@ export function registerRoutes(app) {
           .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/),
         hostname: z.string().trim().min(4).optional(),
         adminEmail: z.string().trim().email().max(254).transform(value => value.toLowerCase()).optional(),
-        adminDisplayName: z.string().trim().min(2).max(120).optional()
+        adminDisplayName: z.string().trim().min(2).max(120).optional(),
+        authentikUserUuid: z.string().uuid().optional()
       }).strict(),
       request.body
     );
@@ -3169,6 +3421,19 @@ export function registerRoutes(app) {
       );
     }
     if (body.adminEmail) requirePermanentProvisioning();
+    if (body.authentikUserUuid && !body.adminEmail) {
+      throw permanentAccountError(
+        "Choose an admin email before selecting a sign-in account.",
+        400,
+        "identity_email_required"
+      );
+    }
+    const adminIdentityInspection = body.adminEmail
+      ? await inspectPermanentIdentityEmail(body.adminEmail)
+      : null;
+    const selectedAdminIdentity = adminIdentityInspection
+      ? choosePermanentIdentity(adminIdentityInspection, body.authentikUserUuid, { isPlatformAdmin: true })
+      : null;
 
     const created = await withTransaction(async client => {
       const tenantResult = await client.query(
@@ -3189,6 +3454,9 @@ export function registerRoutes(app) {
           email: body.adminEmail,
           displayName: body.adminDisplayName || null
         });
+        if (selectedAdminIdentity) {
+          await bindPermanentUserIdentity(client, adminUser.id, selectedAdminIdentity);
+        }
 
         const membershipResult = await client.query(
           `
@@ -3240,7 +3508,12 @@ export function registerRoutes(app) {
         action: "tenant.created",
         entityType: "tenant",
         entityId: tenant.id,
-        metadata: { slug: body.slug, hostname, adminEmail: body.adminEmail || null }
+        metadata: {
+          slug: body.slug,
+          hostname,
+          adminEmail: body.adminEmail || null,
+          linkedExistingIdentity: Boolean(selectedAdminIdentity)
+        }
       });
 
       return { tenant, adminMembership };
@@ -4027,6 +4300,25 @@ export function registerRoutes(app) {
     };
   });
 
+  route(app, "post", "/api/tenant/members/identity-check", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({
+        email: z.string().trim().email().max(254).transform(value => value.toLowerCase())
+      }).strict(),
+      request.body
+    );
+    const inspection = await inspectPermanentIdentityEmail(body.email);
+    const candidateCount = inspection.entries.length;
+    return {
+      status: candidateCount > 1 ? "ambiguous" : candidateCount === 1 ? "existing" : "new",
+      candidateCount,
+      candidates: context.identity.isPlatformAdmin
+        ? inspection.entries.map(entry => entry.safe)
+        : []
+    };
+  });
+
   route(app, "post", "/api/tenant/members", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     requirePermanentProvisioning();
@@ -4034,9 +4326,34 @@ export function registerRoutes(app) {
       z.object({
         email: z.string().trim().email().max(254).transform(value => value.toLowerCase()),
         displayName: z.string().trim().min(2).max(120).optional(),
-        role: z.enum(tenantRoles).default("contributor")
+        role: z.enum(tenantRoles).default("contributor"),
+        authentikUserUuid: z.string().uuid().optional()
       }).strict(),
       request.body
+    );
+    const existingMembership = await query(
+      `
+        SELECT m.id
+        FROM tenant_memberships m
+        JOIN app_users u ON u.id = m.user_id
+        WHERE m.tenant_id = $1
+          AND lower(u.email) = $2
+        LIMIT 1
+      `,
+      [context.tenant.id, body.email]
+    );
+    if (existingMembership.rows[0]) {
+      throw permanentAccountError(
+        "This teammate already has access or a pending invitation. Use Manage to update it.",
+        409,
+        "member_exists"
+      );
+    }
+    const identityInspection = await inspectPermanentIdentityEmail(body.email);
+    const selectedIdentity = choosePermanentIdentity(
+      identityInspection,
+      body.authentikUserUuid,
+      { isPlatformAdmin: context.identity.isPlatformAdmin }
     );
 
     const member = await withTransaction(async client => {
@@ -4044,6 +4361,9 @@ export function registerRoutes(app) {
         email: body.email,
         displayName: body.displayName || null
       });
+      if (selectedIdentity) {
+        await bindPermanentUserIdentity(client, user.id, selectedIdentity);
+      }
       const legacyInvitations = await client.query(
         `
           SELECT id
@@ -4126,6 +4446,7 @@ export function registerRoutes(app) {
           displayName: user.display_name || null,
           role: body.role,
           status: memberResult.rows[0].status,
+          linkedExistingIdentity: Boolean(selectedIdentity),
           adoptedLegacyInvitation: memberResult.rows[0].adopted_legacy_invitation === true
         }
       });
@@ -4140,6 +4461,173 @@ export function registerRoutes(app) {
     startProvisioningWork();
     reply.code(202);
     return { member: rowToMember(member) };
+  });
+
+  route(app, "get", "/api/tenant/members/:memberId/identity-candidates", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    if (!context.identity.isPlatformAdmin) {
+      throw permanentAccountError(
+        "A platform administrator must resolve duplicate sign-in accounts.",
+        403,
+        "identity_resolution_forbidden"
+      );
+    }
+    const memberId = z.string().uuid().parse(request.params.memberId);
+    const current = await findMemberWithProvisioning(query, context.tenant.id, memberId);
+    if (!current) {
+      reply.code(404);
+      throw new Error("Member not found");
+    }
+    assertPermanentAccount(current);
+    if (current.provisioning_error_code !== "identity_ambiguous") {
+      throw permanentAccountError(
+        "This teammate does not have a duplicate-account issue to resolve.",
+        409,
+        "identity_resolution_not_needed"
+      );
+    }
+    const inspection = await inspectPermanentIdentityEmail(current.email);
+    return {
+      member: rowToMember(current),
+      candidates: inspection.entries.map(entry => entry.safe)
+    };
+  });
+
+  route(app, "post", "/api/tenant/members/:memberId/resolve-identity", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    if (!context.identity.isPlatformAdmin) {
+      throw permanentAccountError(
+        "A platform administrator must resolve duplicate sign-in accounts.",
+        403,
+        "identity_resolution_forbidden"
+      );
+    }
+    requirePermanentProvisioning();
+    const memberId = z.string().uuid().parse(request.params.memberId);
+    const body = parseBody(
+      z.object({ authentikUserUuid: z.string().uuid() }).strict(),
+      request.body
+    );
+    const initial = await findMemberWithProvisioning(query, context.tenant.id, memberId);
+    if (!initial) {
+      reply.code(404);
+      throw new Error("Member not found");
+    }
+    const inspection = await inspectPermanentIdentityEmail(initial.email);
+    const selectedIdentity = choosePermanentIdentity(
+      inspection,
+      body.authentikUserUuid,
+      { isPlatformAdmin: true }
+    );
+
+    const member = await withTransaction(async client => {
+      const current = await findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId,
+        { forUpdate: true }
+      );
+      if (!current) {
+        reply.code(404);
+        throw new Error("Member not found");
+      }
+      assertPermanentAccount(current);
+      if (
+        current.status !== "invited"
+        || String(current.email || "").trim().toLowerCase() !== inspection.normalizedEmail
+        || current.authentik_subject
+        || current.authentik_user_pk
+        || current.authentik_user_uuid
+        || current.provisioning_status !== "failed"
+        || current.provisioning_error_code !== "identity_ambiguous"
+      ) {
+        throw permanentAccountError(
+          "This invitation changed while it was being resolved. Refresh the team list and try again.",
+          409,
+          "identity_resolution_stale"
+        );
+      }
+
+      await bindPermanentUserIdentity(client, current.user_id, selectedIdentity);
+      const job = await retryMembershipProvisioning(memberId, context.user.id, {
+        tenantId: context.tenant.id,
+        client
+      });
+      if (!job) {
+        throw permanentAccountError(
+          "Account setup could not be restarted. Refresh the team list and try again.",
+          409,
+          "identity_resolution_stale"
+        );
+      }
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "member.identity_resolved",
+        entityType: "tenant_membership",
+        entityId: memberId,
+        metadata: {
+          email: current.email,
+          role: current.role,
+          selectedUsername: selectedIdentity.safe.username
+        }
+      });
+      return findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId
+      );
+    });
+
+    startProvisioningWork();
+    reply.code(202);
+    return { member: rowToMember(member) };
+  });
+
+  route(app, "delete", "/api/tenant/members/:memberId", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const memberId = z.string().uuid().parse(request.params.memberId);
+    await withTransaction(async client => {
+      const current = await findMemberWithProvisioning(
+        (text, params) => client.query(text, params),
+        context.tenant.id,
+        memberId,
+        { forUpdate: true }
+      );
+      if (!current) {
+        reply.code(404);
+        throw new Error("Member not found");
+      }
+      assertPermanentAccount(current);
+      const canCancel = current.status === "invited"
+        && !current.authentik_subject
+        && !current.authentik_user_pk
+        && !current.authentik_user_uuid
+        && current.provisioning_status === "failed"
+        && current.provisioning_step === "identity";
+      if (!canCancel) {
+        throw permanentAccountError(
+          "This invitation can no longer be canceled safely. Disable access instead.",
+          409,
+          "member_cancel_unavailable"
+        );
+      }
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "member.invitation_canceled",
+        entityType: "tenant_membership",
+        entityId: memberId,
+        metadata: { email: current.email, role: current.role }
+      });
+      await client.query(
+        "DELETE FROM tenant_memberships WHERE tenant_id = $1 AND id = $2",
+        [context.tenant.id, memberId]
+      );
+    });
+    return { removed: true };
   });
 
   route(app, "patch", "/api/tenant/members/:memberId", async (request, reply) => {

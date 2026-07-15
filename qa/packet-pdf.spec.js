@@ -57,6 +57,45 @@ test.describe("PDF packet import", () => {
     await expect(page.getByText("Name the inventory session first.")).toHaveCount(0);
   });
 
+  test("keeps packet source usable when the background session refresh loses its connection", async ({ page }) => {
+    test.setTimeout(60_000);
+    let abortedDetailRequests = 0;
+
+    await page.goto(TENANT_URL);
+    await signInWithQaPersona(page, "Platoon admin");
+    await openPacketUpload(page);
+
+    const dialog = page.getByRole("dialog", { name: "Upload packet" });
+    const chooseSourceButton = dialog.getByRole("button", { name: "Choose source" });
+    await expect(chooseSourceButton).toBeEnabled();
+
+    await page.route("**/api/inventory/sessions/*", async route => {
+      const url = new URL(route.request().url());
+      const isSessionDetail = /^\/api\/inventory\/sessions\/[0-9a-f-]{36}\/?$/.test(url.pathname);
+      if (isSessionDetail && route.request().method() === "GET") {
+        abortedDetailRequests += 1;
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+
+    await chooseSourceButton.click();
+    await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
+    await expect.poll(() => abortedDetailRequests).toBeGreaterThan(0);
+    await expect(dialog.getByText("Could not reach the inventory API.", { exact: false })).toHaveCount(0);
+
+    const chooseFileButton = dialog.getByRole("button", { name: "Choose file PDF, CSV, text, or image up to 10MB" });
+    await expect(chooseFileButton).toBeEnabled();
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await chooseFileButton.click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(PACKET_FIXTURE);
+
+    await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible({ timeout: 45_000 });
+    await expect(dialog.getByText(/27 ready to import/)).toBeVisible();
+  });
+
   test("platoon admin can upload an Army-style PDF and review parsed rows", async ({ page }) => {
     test.setTimeout(60_000);
 

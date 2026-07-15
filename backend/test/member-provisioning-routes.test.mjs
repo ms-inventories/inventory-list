@@ -8,6 +8,7 @@ import {
   platformTenantResetStoragePath,
   registerRoutes,
   rowToMember,
+  safeAuthentikIdentityCandidate,
   safeMemberProvisioning
 } from "../src/routes.js";
 
@@ -121,6 +122,62 @@ test("member responses expose server-authorized setup email resend state", () =>
   assert.equal(signedIn.canResendEnrollment, false);
 });
 
+test("duplicate identity choices expose only safe display fields and block privileged accounts", () => {
+  const regularIdentity = {
+    pk: 42,
+    uuid: "db7a5d19-32f5-4d86-a7c8-87951129ad05",
+    username: "soldier",
+    name: "SSG Soldier",
+    email: "private@example.test",
+    is_active: true,
+    is_superuser: false,
+    groups_obj: [{ name: "876en" }, { name: "876en-ms" }]
+  };
+  const regular = safeAuthentikIdentityCandidate(regularIdentity);
+  const privileged = safeAuthentikIdentityCandidate({
+    pk: 43,
+    uuid: "91e8139a-c2ff-4dc1-b423-016a6738a877",
+    username: "platform-admin",
+    name: "Platform Admin",
+    is_active: true,
+    is_superuser: true,
+    groups_obj: []
+  });
+
+  assert.deepEqual(regular, {
+    id: "db7a5d19-32f5-4d86-a7c8-87951129ad05",
+    username: "soldier",
+    displayName: "SSG Soldier",
+    active: true,
+    eligible: true,
+    blockedReason: null
+  });
+  assert.equal("email" in regular, false);
+  assert.equal("pk" in regular, false);
+  assert.equal(privileged.eligible, false);
+  assert.match(privileged.blockedReason, /privileged/i);
+  assert.equal(safeAuthentikIdentityCandidate({
+    ...regularIdentity,
+    groups_obj: [{ name: "876en-admins" }]
+  }).eligible, false);
+  assert.equal(safeAuthentikIdentityCandidate(regularIdentity, { linkedElsewhere: true }).eligible, false);
+  assert.equal(safeAuthentikIdentityCandidate(regularIdentity, { providerOwnerConflict: true }).eligible, false);
+});
+
+test("duplicate identity inspection honors identities linked through OIDC sign-in", async () => {
+  const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const source = await fs.readFile(path.resolve(currentDirectory, "../src/routes.js"), "utf8");
+
+  assert.match(
+    source,
+    /SELECT id, authentik_subject, authentik_user_pk,[\s\S]*authentik_oidc_user_uuid::text AS authentik_oidc_user_uuid[\s\S]*WHERE authentik_user_uuid = ANY\(\$1::uuid\[\]\)[\s\S]*OR authentik_oidc_user_uuid = ANY\(\$1::uuid\[\]\)[\s\S]*OR lower\(authentik_subject\) = ANY\(\$3::text\[\]\)/i
+  );
+  assert.match(
+    source,
+    /expectedOidcUuid[\s\S]*expectedSubjectUuid[\s\S]*hasProviderLink[\s\S]*isCompatibleLink/i
+  );
+});
+
 test("permanent member retry and enrollment routes remain registered beside legacy invitations", () => {
   const routes = new Set();
   const app = new Proxy({
@@ -135,11 +192,16 @@ test("permanent member retry and enrollment routes remain registered beside lega
   registerRoutes(app);
 
   assert.equal(routes.has("GET /api/tenant/members"), true);
+  assert.equal(routes.has("POST /api/tenant/members/identity-check"), true);
   assert.equal(routes.has("POST /api/tenant/members"), true);
+  assert.equal(routes.has("GET /api/tenant/members/:memberId/identity-candidates"), true);
+  assert.equal(routes.has("POST /api/tenant/members/:memberId/resolve-identity"), true);
+  assert.equal(routes.has("DELETE /api/tenant/members/:memberId"), true);
   assert.equal(routes.has("PATCH /api/tenant/members/:memberId"), true);
   assert.equal(routes.has("POST /api/tenant/members/:memberId/retry"), true);
   assert.equal(routes.has("POST /api/tenant/members/:memberId/resend-enrollment"), true);
   assert.equal(routes.has("POST /api/tenant/invitations"), true);
+  assert.equal(routes.has("POST /api/platform/identity-check"), true);
   assert.equal(routes.has("DELETE /api/platform/tenants/:tenantId"), true);
 });
 

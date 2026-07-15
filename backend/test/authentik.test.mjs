@@ -115,6 +115,33 @@ test("exact email lookup uses the Authentik filter and distinguishes zero, one, 
   assert.equal(calls[1].options.headers.Authorization, `Bearer ${token}`);
 });
 
+test("exact email listing returns every bounded exact normalized match", async () => {
+  const first = { pk: 42, email: "Person@Example.Test", groups: [] };
+  const second = { pk: 43, email: " person@example.test ", groups: [] };
+  const { fetchImpl, calls } = mockFetch(json({
+    results: [
+      first,
+      { pk: 44, email: "other@example.test", groups: [] },
+      second
+    ]
+  }));
+  const authentik = client(fetchImpl);
+
+  assert.deepEqual(
+    await authentik.listUsersByExactEmail(" PERSON@example.test "),
+    [first, second]
+  );
+
+  const url = calls[0].url;
+  assert.equal(url.origin, origin);
+  assert.equal(url.pathname, "/api/v3/core/users/");
+  assert.equal(url.searchParams.get("email"), "person@example.test");
+  assert.equal(url.searchParams.get("page_size"), "20");
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(calls[0].options.redirect, "error");
+  assert.equal(calls[0].options.headers.Authorization, `Bearer ${token}`);
+});
+
 test("immutable UUID lookup uses the exact Authentik UUID filter", async () => {
   const userUuid = "db7a5d19-32f5-4d86-a7c8-87951129ad05";
   const user = { pk: 42, uuid: userUuid, email: "person@example.test" };

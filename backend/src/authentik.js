@@ -301,6 +301,17 @@ export function createAuthentikClient({
     );
   }
 
+  async function listUsersByExactEmail(email) {
+    const normalizedEmail = requiredText(email).toLowerCase();
+    const payload = await request("/core/users/", {
+      query: { email: normalizedEmail, page_size: 20 },
+      expectedStatus: 200
+    });
+    return listResults(payload).filter(
+      user => String(user?.email || "").trim().toLowerCase() === normalizedEmail
+    );
+  }
+
   async function findUserByUuid(userUuid) {
     const exactUuid = uuid(userUuid).toLowerCase();
     const payload = await request("/core/users/", {
@@ -483,6 +494,7 @@ export function createAuthentikClient({
   return Object.freeze({
     origin: canonicalOrigin,
     findUserByEmail,
+    listUsersByExactEmail,
     findUserByUuid,
     getUserById,
     findGroupByName,
