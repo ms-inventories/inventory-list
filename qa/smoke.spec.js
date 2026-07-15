@@ -103,12 +103,12 @@ test.describe("QA smoke", () => {
     await signInWithQaPersona(page, "Newsletter admin");
 
     await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "New block" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Family readiness updates" })).toBeVisible();
+    await expect(page.locator(".newsletter-heading-actions").getByRole("button", { name: "Add homepage update" })).toBeVisible();
+    await expect(page.locator(".frg-content-list").getByText("Family readiness updates", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Issues", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Newsletter issues", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "New issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Write newsletter" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Export deliveries" })).toBeVisible();
     await page.getByRole("button", { name: /^Black Shadow Family Update/ }).click();
     await expect(page.getByRole("heading", { name: "Black Shadow Family Update" })).toBeVisible();

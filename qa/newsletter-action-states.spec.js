@@ -130,7 +130,7 @@ test.describe("newsletter async action states", () => {
     await expect(editor.getByRole("button", { name: "Publishing..." })).toBeDisabled();
     await expect(editor.getByLabel("Title")).toBeDisabled();
     await expect(editor.getByRole("button", { name: "Send test" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "New issue" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Write newsletter" })).toBeDisabled();
     await expect(editor.getByText(/Published\. Delivered \d+, skipped \d+, failed \d+\./)).toBeVisible();
     await expect(editor.getByRole("button", { name: "Published", exact: true })).toBeDisabled();
     await expect(editor.getByRole("button", { name: "Save issue" })).toBeDisabled();
@@ -171,10 +171,10 @@ test.describe("newsletter async action states", () => {
       });
 
       await expect.poll(() => saveAttempts).toBe(1);
-      await expect(contentEditor.getByRole("button", { name: "Saving block..." })).toBeDisabled();
+      await expect(contentEditor.getByRole("button", { name: "Saving homepage update..." })).toBeDisabled();
       await expect(contentEditor.getByLabel("Title")).toBeDisabled();
       await expect(contentEditor.getByRole("button", { name: "Remove" })).toBeDisabled();
-      await expect(page.getByRole("button", { name: "New block" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Add homepage update" })).toBeDisabled();
       await expect(contentEditor.getByText("Public content saved.")).toBeVisible();
       expect(saveAttempts).toBe(1);
 

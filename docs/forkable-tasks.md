@@ -968,9 +968,9 @@ Definition of done:
 
 Goal: make newsletter administration clearer on desktop and usable on phones.
 
-Status: complete and QA-verified, 2026-07-14. Newsletter editors and subscriber review use synchronous scoped action guards, lock conflicting fields without freezing unrelated subscriber rows, retain local success/failure feedback through refreshes, and fence stale loads. Publishing is single-shot in both the UI and API, and published issues are read-only, so the saved record cannot drift from what recipients received or send a second delivery accidentally.
+Status: complete and QA-verified, 2026-07-14. Newsletter editors and subscriber review use synchronous scoped action guards, lock conflicting fields without freezing unrelated subscriber rows, retain local success/failure feedback through refreshes, and fence stale loads. Publishing is single-shot in both the UI and API, and published issues are read-only, so the saved record cannot drift from what recipients received or send a second delivery accidentally. The final clarity pass replaces implementation-facing `block` language with `homepage update`, distinguishes filtered-empty from true-empty lists, and gives content, newsletter, and subscriber empty states one direct action with mobile focus handoff.
 
-Coordination note: newsletter admin mobile overflow, queue-first subscriber filtering, compact email status treatment, subscriber details disclosure, public newsletter request helper copy, and duplicate-safe content/issue/review actions are implemented and QA-covered.
+Coordination note: newsletter admin mobile overflow, queue-first subscriber filtering, compact email status treatment, subscriber details disclosure, public newsletter request helper copy, plain-language editor actions, actionable empty states, and duplicate-safe content/issue/review actions are implemented and QA-covered.
 
 Primary files:
 
@@ -978,6 +978,7 @@ Primary files:
 - `react-app/src/App.jsx`
 - `react-app/src/styles.css`
 - `qa/smoke.spec.js`
+- `qa/newsletter-empty-states.spec.js`
 
 Subtasks:
 
@@ -989,6 +990,7 @@ Subtasks:
 - [x] Shorten public signup placeholders and add helper text.
 - [x] Make save, remove, test-send, publish, refresh, and subscriber review actions duplicate-safe with local recovery feedback.
 - [x] Prevent repeated or concurrent publish requests from delivering an already-published issue again, and keep published issue content read-only.
+- [x] Replace technical `block` labels and add one clear create/reset/signup action to every newsletter empty state.
 - [x] Verify desktop and mobile newsletter screenshots.
 
 Definition of done:
@@ -1054,7 +1056,7 @@ Definition of done:
 
 Goal: make every empty page tell the user what to do next.
 
-Status: in progress, 2026-07-14. The full empty-state/action-label audit is complete. Dashboard pending-row and card actions route to existing sessions instead of the create-session wizard, duplicate Platform `Admin view` destinations are removed, fallback access points to `Launch app`, and active legacy-viewer destinations are explicit. Platform platoon and workspace-access results now distinguish loading, failed load, no matches, and true-empty states with one direct `Try again`, `Clear filters`, or `Create platoon` action. Broader lower-frequency administration cleanup remains.
+Status: in progress, 2026-07-14. The full empty-state/action-label audit is complete. Dashboard pending-row and card actions route to existing sessions instead of the create-session wizard, duplicate Platform `Admin view` destinations are removed, fallback access points to `Launch app`, and active legacy-viewer destinations are explicit. Platform platoon/workspace-access and newsletter content/issue/subscriber results now distinguish loading or filtered-empty from true-empty states, then provide one direct retry, clear, create, or signup action. Newsletter editor actions use `homepage update` rather than implementation-facing `block` language. Broader lower-frequency administration cleanup remains.
 
 Primary files:
 

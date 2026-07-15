@@ -4853,6 +4853,8 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [newsletterActions, setNewsletterActions] = useState(() => new Map());
   const newsletterActionRef = useRef(new Map());
   const newsletterLoadRequestRef = useRef(0);
+  const contentTitleRef = useRef(null);
+  const issueTitleRef = useRef(null);
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
   const selectedContentBlock = contentBlocks.find(block => block.id === selectedContentBlockId) || null;
@@ -4896,6 +4898,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const issueAction = newsletterActions.get("issue") || "";
   const refreshAction = newsletterActions.get("refresh") || "";
   const hasNewsletterAction = newsletterActions.size > 0;
+  const hasContentFilters = Boolean(contentQuery.trim()) || contentTypeFilter !== "all";
+  const hasIssueSearch = Boolean(query.trim());
+  const hasSubscriberFilters = Boolean(subscriberQuery.trim()) || subscriberStatusFilter !== "all";
 
   function beginNewsletterAction(scope, action) {
     if (!scope || newsletterActionRef.current.has(scope)) return false;
@@ -5006,7 +5011,8 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setContentForm(frgContentForm());
     setActiveSection("content");
     setActionStatus(current => current.scope === "content" ? { scope: "", text: "", isError: false } : current);
-    setStatus({ text: "New public content block ready", isError: false });
+    setStatus({ text: "New homepage update ready.", isError: false });
+    window.requestAnimationFrame(() => contentTitleRef.current?.focus());
   }
 
   function selectIssue(issue) {
@@ -5022,7 +5028,22 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setSelectedIssueId("");
     setForm(newsletterIssueForm());
     setActionStatus(current => current.scope === "issue" ? { scope: "", text: "", isError: false } : current);
-    setStatus({ text: "New draft ready", isError: false });
+    setStatus({ text: "New newsletter draft ready.", isError: false });
+    window.requestAnimationFrame(() => issueTitleRef.current?.focus());
+  }
+
+  function clearContentFilters() {
+    setContentQuery("");
+    setContentTypeFilter("all");
+  }
+
+  function clearIssueSearch() {
+    setQuery("");
+  }
+
+  function clearSubscriberFilters() {
+    setSubscriberQuery("");
+    setSubscriberStatusFilter("all");
   }
 
   async function saveContentBlock(event) {
@@ -5031,7 +5052,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     const action = "save";
     if (!beginNewsletterAction(scope, action)) return;
     const contentBlockId = selectedContentBlockId;
-    showActionStatus(scope, contentBlockId ? "Saving block..." : "Creating block...");
+    showActionStatus(scope, contentBlockId ? "Saving homepage update..." : "Creating homepage update...");
     setStatus({ text: "", isError: false });
     try {
       const payload = frgContentPayload(contentForm);
@@ -5071,7 +5092,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     const action = "delete";
     if (!beginNewsletterAction(scope, action)) return;
     const contentBlockId = selectedContentBlockId;
-    showActionStatus(scope, "Removing block...");
+    showActionStatus(scope, "Removing homepage update...");
     setStatus({ text: "", isError: false });
     try {
       await apiRequest(`/newsletter/admin/content-blocks/${contentBlockId}`, {
@@ -5083,7 +5104,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setContentForm(frgContentForm());
       const refreshed = await loadNewsletter({ quiet: true, preferredContentBlockId: "" });
       if (!refreshed.ok && !refreshed.stale) {
-        showActionStatus(scope, `Block removed, but the latest list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
+        showActionStatus(scope, `Homepage update removed, but the latest list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
       } else {
         showActionStatus(scope, "Public content removed.");
       }
@@ -5365,15 +5386,15 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const publishedContentCount = contentBlocks.filter(block => block.status === "published").length;
   const isEmailConfigured = Boolean(deliverySettings.emailConfigured);
   const subscriberEmptyTitle = subscribers.length
-    ? subscriberStatusFilter === "pending"
+    ? !subscriberQuery.trim() && subscriberStatusFilter === "pending"
       ? "No pending requests"
       : "No matching subscribers"
     : "No subscribers yet";
   const subscriberEmptyBody = subscribers.length
-    ? subscriberStatusFilter === "pending"
-      ? "New public newsletter requests will appear here first."
-      : "Adjust the search or status filter."
-    : "Public newsletter signups will appear here.";
+    ? !subscriberQuery.trim() && subscriberStatusFilter === "pending"
+      ? "There are no signup requests waiting for review."
+      : "Clear the search and status filter to see every subscriber."
+    : "People can request newsletter access from the public signup form.";
 
   return (
     <div className="platform-shell newsletter-shell">
@@ -5458,7 +5479,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               {activeSection === "content" ? (
                 <button className="btn btn-primary" type="button" disabled={Boolean(contentAction)} onClick={startNewContentBlock}>
                   <Plus aria-hidden="true" />
-                  <span>New block</span>
+                  <span>Add homepage update</span>
                 </button>
               ) : null}
               {activeSection === "issues" ? (
@@ -5469,7 +5490,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                   </button>
                   <button className="btn btn-primary" type="button" disabled={Boolean(issueAction)} onClick={startNewDraft}>
                     <Plus aria-hidden="true" />
-                    <span>New issue</span>
+                    <span>Write newsletter</span>
                   </button>
                 </>
               ) : null}
@@ -5611,7 +5632,15 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <span className={`status-pill ${block.status}`}>{block.status}</span>
                     </button>
                   )) : (
-                    <EmptyPanel title="No public content" body="Create announcements, events, or resources for the public homepage." />
+                    <EmptyPanel
+                      title={hasContentFilters ? "No matching homepage updates" : "No homepage updates yet"}
+                      body={hasContentFilters ? "Clear the search and type filter to see every update." : "Add an announcement, event, or resource to the public homepage."}
+                      action={hasContentFilters ? (
+                        <button className="btn btn-secondary btn-small" type="button" onClick={clearContentFilters}>Clear filters</button>
+                      ) : (
+                        <button className="btn btn-primary btn-small" type="button" onClick={startNewContentBlock}>Add homepage update</button>
+                      )}
+                    />
                   )}
                 </div>
               </section>
@@ -5622,7 +5651,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     <div className="newsletter-editor-heading">
                       <div>
                         <p className="eyebrow">{selectedContentBlock ? contentTypeLabel(selectedContentBlock.blockType) : "Public content"}</p>
-                        <h2>{selectedContentBlockId ? "Edit block" : "New block"}</h2>
+                        <h2>{selectedContentBlockId ? "Edit homepage update" : "New homepage update"}</h2>
                       </div>
                       {selectedContentBlock ? <span className={`status-pill ${selectedContentBlock.status}`}>{selectedContentBlock.status}</span> : null}
                     </div>
@@ -5663,6 +5692,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     <label className="field-label" htmlFor="frgContentTitle">Title</label>
                     <input
                       id="frgContentTitle"
+                      ref={contentTitleRef}
                       className="input"
                       value={contentForm.title}
                       placeholder="Family readiness update"
@@ -5739,12 +5769,12 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     <div className="button-row">
                       <button className="btn btn-primary" type="submit">
                         <FileText aria-hidden="true" />
-                        <span>{contentAction === "save" ? (selectedContentBlockId ? "Saving block..." : "Creating block...") : selectedContentBlockId ? "Save block" : "Create block"}</span>
+                        <span>{contentAction === "save" ? (selectedContentBlockId ? "Saving homepage update..." : "Creating homepage update...") : selectedContentBlockId ? "Save homepage update" : "Create homepage update"}</span>
                       </button>
                       {selectedContentBlockId ? (
                         <button className="btn btn-danger-soft" type="button" onClick={deleteContentBlock}>
                           <Trash2 aria-hidden="true" />
-                          <span>{contentAction === "delete" ? "Removing block..." : "Remove"}</span>
+                          <span>{contentAction === "delete" ? "Removing homepage update..." : "Remove update"}</span>
                         </button>
                       ) : null}
                     </div>
@@ -5804,7 +5834,15 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     <span className={`status-pill ${issue.status}`}>{issue.status}</span>
                   </button>
                 )) : (
-                  <EmptyPanel title="No issues yet" body="Create the first newsletter issue to publish an update." />
+                  <EmptyPanel
+                    title={hasIssueSearch ? "No matching newsletters" : "No newsletters yet"}
+                    body={hasIssueSearch ? "Clear the search to see every newsletter." : "Write the first newsletter and save it as a draft before publishing."}
+                    action={hasIssueSearch ? (
+                      <button className="btn btn-secondary btn-small" type="button" onClick={clearIssueSearch}>Clear search</button>
+                    ) : (
+                      <button className="btn btn-primary btn-small" type="button" onClick={startNewDraft}>Write first newsletter</button>
+                    )}
+                  />
                 )}
               </div>
             </section>
@@ -5815,7 +5853,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                   <div className="newsletter-editor-heading">
                     <div>
                       <p className="eyebrow">{selectedIssue?.status || "Draft"}</p>
-                      <h2>{selectedIssueId ? "Edit issue" : "New issue"}</h2>
+                      <h2>{selectedIssueId ? "Edit newsletter" : "New newsletter"}</h2>
                     </div>
                     {selectedIssue ? <span className={`status-pill ${selectedIssue.status}`}>{selectedIssue.status}</span> : null}
                   </div>
@@ -5831,6 +5869,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                   <label className="field-label" htmlFor="newsletterTitle">Title</label>
                   <input
                     id="newsletterTitle"
+                    ref={issueTitleRef}
                     className="input"
                     value={form.title}
                     placeholder="Company newsletter title"
@@ -6089,6 +6128,13 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               <EmptyPanel
                 title={subscriberEmptyTitle}
                 body={subscriberEmptyBody}
+                action={subscribers.length && hasSubscriberFilters ? (
+                  <button className="btn btn-secondary btn-small" type="button" onClick={clearSubscriberFilters}>
+                    {!subscriberQuery.trim() && subscriberStatusFilter === "pending" ? "Show all subscribers" : "Clear filters"}
+                  </button>
+                ) : !subscribers.length ? (
+                  <a className="btn btn-secondary btn-small" href={`https://${appConfig.baseDomain}/`} target="_blank" rel="noreferrer">View signup page</a>
+                ) : null}
               />
             )}
           </section>
