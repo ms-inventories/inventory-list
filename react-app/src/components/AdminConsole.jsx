@@ -56,7 +56,7 @@ import {
   readAuthSession,
   saveAuthSession
 } from "../lib/auth.js";
-import { readPacketFileText } from "../lib/ocr.js";
+import { packetFileReadErrorMessage, readPacketFileText } from "../lib/ocr.js";
 import {
   analyzePacketRows,
   createPacketDraftRows,
@@ -2517,7 +2517,7 @@ function SessionPanel({
       );
       if (rows.length) setPacketWizardStep(3);
     } catch (error) {
-      setStatus({ text: error.message || "Could not read packet file.", isError: true });
+      setStatus({ text: packetFileReadErrorMessage(error, file), isError: true });
     } finally {
       finishPacketAction(action);
     }

@@ -128,6 +128,37 @@ test.describe("PDF packet import", () => {
     await expect(dialog.getByRole("button", { name: "Import 27 rows" })).toBeVisible();
   });
 
+  test("explains a PDF reader asset failure without blaming the inventory API", async ({ page }) => {
+    test.setTimeout(60_000);
+    let blockedWorkerRequests = 0;
+
+    await page.goto(TENANT_URL);
+    await signInWithQaPersona(page, "Platoon admin");
+    await openPacketUpload(page);
+
+    const dialog = page.getByRole("dialog", { name: "Upload packet" });
+    await dialog.getByRole("button", { name: "Choose source" }).click();
+    await page.route("**/*pdf.worker*", async route => {
+      const url = new URL(route.request().url());
+      if (/pdf\.worker(?:\.min)?[^/]*\.(?:mjs|js)$/i.test(url.pathname)) {
+        blockedWorkerRequests += 1;
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await dialog.getByRole("button", { name: "Choose file PDF, CSV, text, or image up to 10MB" }).click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(PACKET_FIXTURE);
+
+    await expect.poll(() => blockedWorkerRequests).toBeGreaterThan(0);
+    await expect(dialog.getByRole("alert")).toContainText("The PDF reader could not start.");
+    await expect(dialog.getByRole("alert")).not.toContainText("inventory API");
+    await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Choose file PDF, CSV, text, or image up to 10MB" })).toBeEnabled();
+  });
+
   test("rejects unsupported packet files before parsing", async ({ page }) => {
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");

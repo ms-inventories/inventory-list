@@ -192,6 +192,19 @@ function isPdfFile(file) {
   return type.includes("pdf") || name.endsWith(".pdf");
 }
 
+function packetFileReadErrorMessage(error, file) {
+  const message = String(error?.message || error || "").trim();
+
+  if (
+    isPdfFile(file)
+    && /(?:pdf reader did not load|worker|module script|dynamically imported module|mime type|failed to fetch|networkerror|load failed)/i.test(message)
+  ) {
+    return "The PDF reader could not start. Refresh and try again, or use a CSV/text file or paste the packet rows below.";
+  }
+
+  return message || "Could not read packet file.";
+}
+
 function pageTextItemsToLines(items) {
   const positioned = items
     .map(item => ({
@@ -291,6 +304,7 @@ async function readPacketFileText(file, onStatus) {
 export {
   getPacketCandidateDisplay,
   getPacketLineCandidates,
+  packetFileReadErrorMessage,
   parsePacketLine,
   readPacketFileText,
   recognizePacketFile,
