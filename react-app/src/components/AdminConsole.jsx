@@ -2617,20 +2617,31 @@ function SessionPanel({
         tenantSlug,
         body: { items, importBatch }
       });
+      const savedItemCount = Array.isArray(data.sessionItems) ? data.sessionItems.length : 0;
+      if (savedItemCount !== items.length) {
+        await loadSessions(targetSessionId);
+        setStatus({
+          text: savedItemCount
+            ? `We could confirm only ${savedItemCount} of ${items.length} packet rows. Your reviewed rows and location hints are still here, and the session was refreshed. Check the list before trying again.`
+            : "We couldn't confirm that any packet rows were saved. Your reviewed rows and location hints are still here, and the session was refreshed. Check the list before trying again.",
+          isError: true
+        });
+        return null;
+      }
       const possibleMatchCount = Number(
         data.possibleMatchCount
         ?? (data.sessionItems || []).filter(item => item.suggestedInventoryItemId || item.suggested_inventory_item_id).length
         ?? 0
       );
+      await loadSessions(targetSessionId);
       clearPacketImport();
       setStatus({
         text: possibleMatchCount
-          ? `Added ${items.length} packet rows. ${possibleMatchCount} possible previous ${possibleMatchCount === 1 ? "record needs" : "records need"} review.`
-          : `Added ${items.length} packet rows.`,
+          ? `Added ${savedItemCount} packet rows. ${possibleMatchCount} possible previous ${possibleMatchCount === 1 ? "record needs" : "records need"} review.`
+          : `Added ${savedItemCount} packet rows.`,
         isError: false
       });
-      await loadSessions(targetSessionId);
-      return { count: items.length, sourceName, sessionId: targetSessionId, possibleMatchCount };
+      return { count: savedItemCount, sourceName, sessionId: targetSessionId, possibleMatchCount };
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
       return null;

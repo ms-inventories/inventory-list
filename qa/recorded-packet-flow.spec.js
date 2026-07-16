@@ -55,6 +55,9 @@ test.describe("recorded packet and session regression", () => {
     await expect(packetDialog.getByRole("heading", { name: "Review before saving" })).toBeVisible({ timeout: 45_000 });
     await expect(packetDialog.getByText("army-packet-clean.pdf")).toBeVisible();
     await expect(packetDialog.getByText(/27 ready to import/)).toBeVisible();
+    const locationHints = packetDialog.getByLabel("Location hint");
+    await expect(locationHints).toHaveCount(27);
+    await locationHints.first().fill("Vault 2, rack 4");
     await captureStep(page, testInfo, "02-packet-review");
 
     await packetDialog.getByRole("button", { name: "Import 27 rows" }).click();
@@ -67,7 +70,10 @@ test.describe("recorded packet and session regression", () => {
     if (await itemDrawer.isVisible()) {
       await itemDrawer.getByRole("button", { name: "Close item details" }).click();
     }
-    await expect(page.locator(".session-summary", { hasText: sessionName })).toBeVisible();
+    const selectedSessionSummary = page.locator(".session-summary", { hasText: sessionName });
+    await expect(selectedSessionSummary).toBeVisible();
+    await expect(selectedSessionSummary).toContainText("27 packet rows");
+    await expect(page.locator(".session-item", { hasText: "Vault 2, rack 4" })).toHaveCount(1);
     const importHistoryDisclosure = page.locator("details.packet-import-history");
     await expect(importHistoryDisclosure).toBeVisible();
     await importHistoryDisclosure.locator("summary").click();

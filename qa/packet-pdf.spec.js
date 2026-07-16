@@ -200,7 +200,10 @@ test.describe("PDF packet import", () => {
       return route.fulfill({
         status: 201,
         contentType: "application/json",
-        body: JSON.stringify({ sessionItems: [], possibleMatchCount: 0 })
+        body: JSON.stringify({
+          sessionItems: [{ id: "ea1f9ddf-8703-46df-ab2b-a24112589fa0" }],
+          possibleMatchCount: 0
+        })
       });
     });
 
@@ -233,5 +236,43 @@ test.describe("PDF packet import", () => {
     await dialog.getByRole("button", { name: "Import 1 row" }).click();
     await expect(dialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
     expect(importAttempts).toBe(2);
+  });
+
+  test("keeps reviewed packet rows when a successful response does not confirm every save", async ({ page }) => {
+    test.setTimeout(60_000);
+    let importAttempts = 0;
+    await page.route("**/api/inventory/sessions/*/items/bulk", async route => {
+      if (route.request().method() !== "POST") return route.continue();
+      importAttempts += 1;
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ sessionItems: [], possibleMatchCount: 0 })
+      });
+    });
+
+    await page.goto(TENANT_URL);
+    await signInWithQaPersona(page, "Platoon admin");
+    await openPacketUpload(page);
+
+    const dialog = page.getByRole("dialog", { name: "Upload packet" });
+    await dialog.getByRole("button", { name: "Choose source" }).click();
+    const sourceText = dialog.getByPlaceholder(/Paste hand-receipt text/);
+    await sourceText.fill("000009148 R20684 RADIAC SET: AN/VDR-2");
+    await dialog.getByRole("button", { name: "Review rows" }).click();
+
+    const packetRow = dialog.locator(".packet-review-line").first();
+    const locationHint = dialog.locator(".packet-review-row").first().getByLabel("Location hint");
+    await locationHint.fill("Vault 2, rack 4");
+    await dialog.getByRole("button", { name: "Import 1 row" }).click();
+
+    await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
+    await expect(dialog.getByRole("alert")).toContainText("couldn't confirm that any packet rows were saved");
+    await expect(dialog.getByText("Pasted packet text", { exact: true })).toBeVisible();
+    await expect(packetRow).toHaveValue(/R20684 RADIAC SET/);
+    await expect(locationHint).toHaveValue("Vault 2, rack 4");
+    await expect(dialog.getByText("army-packet-clean.pdf")).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Import 1 row" })).toBeEnabled();
+    expect(importAttempts).toBe(1);
   });
 });
