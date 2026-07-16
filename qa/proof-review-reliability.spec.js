@@ -141,25 +141,110 @@ test.describe("proof review reliability", () => {
     expect(queueAfterApproval.submissions.some(item => item.sessionItem.id === scenario.sessionItemId)).toBeFalsy();
   });
 
-  test("rejects proof with more than three photos", async ({ request }, testInfo) => {
+  test("accepts ten evidence photos and rejects an eleventh", async ({ request }, testInfo) => {
     const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
     const scenario = await createScenario(request, suffix);
-    const uploadIds = [
-      "00000000-0000-4000-8000-000000000001",
-      "00000000-0000-4000-8000-000000000002",
-      "00000000-0000-4000-8000-000000000003",
-      "00000000-0000-4000-8000-000000000004"
-    ];
+    const photos = [];
+    for (let index = 0; index < 10; index += 1) {
+      photos.push(await uploadPhoto(request, `ten-photo-${suffix}-${index + 1}`));
+    }
+
+    const accepted = await responseJson(await request.post(`${API_URL}/session-items/${scenario.sessionItemId}/submissions`, {
+      headers: qaHeaders(qaNco),
+      data: {
+        status: "found",
+        photos: photos.map(photo => ({ uploadId: photo.uploadId, kind: "general" }))
+      }
+    }));
+
+    const queue = await responseJson(await request.get(`${API_URL}/inventory/review-queue`, {
+      headers: qaHeaders(qaAdmin)
+    }));
+    expect(queue.submissions.find(submission => submission.id === accepted.submission.id)?.photos).toHaveLength(10);
 
     const result = await request.post(`${API_URL}/session-items/${scenario.sessionItemId}/submissions`, {
       headers: qaHeaders(qaNco),
       data: {
         status: "found",
-        photos: uploadIds.map(uploadId => ({ uploadId, kind: "general" }))
+        photos: Array.from({ length: 11 }, (_, index) => ({
+          uploadId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          kind: "general"
+        }))
       }
     });
 
     expect(result.status()).toBe(400);
     expect(await result.json()).toMatchObject({ code: "validation_failed", error: "Validation failed" });
+
+    await responseJson(await request.patch(`${API_URL}/submissions/${accepted.submission.id}/review`, {
+      headers: qaHeaders(qaAdmin),
+      data: { decision: "approved" }
+    }));
+    await responseJson(await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
+      headers: qaHeaders(qaAdmin),
+      data: { status: "closed" }
+    }));
+  });
+
+  test("note-only accountability evidence can be approved and saved with zero reference photos", async ({ request }, testInfo) => {
+    const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-note-${Date.now()}`;
+    const scenario = await createScenario(request, suffix);
+
+    for (const status of ["found", "not_found", "mismatch"]) {
+      const emptyEvidence = await request.post(`${API_URL}/session-items/${scenario.sessionItemId}/submissions`, {
+        headers: qaHeaders(qaNco),
+        data: { status, note: "  " }
+      });
+      expect(emptyEvidence.status()).toBe(400);
+      expect(await emptyEvidence.json()).toMatchObject({
+        code: "invalid_request",
+        error: "Add at least one photo or an accountability note with at least 12 characters."
+      });
+    }
+
+    const note = `Verified with supply; signed out to SGT Smith for maintenance (${suffix}).`;
+    const submitted = await responseJson(await request.post(`${API_URL}/session-items/${scenario.sessionItemId}/submissions`, {
+      headers: qaHeaders(qaNco),
+      data: {
+        status: "found",
+        locationText: "Maintenance shop",
+        serialNumber: "N/A",
+        note
+      }
+    }));
+
+    const queue = await responseJson(await request.get(`${API_URL}/inventory/review-queue`, {
+      headers: qaHeaders(qaAdmin)
+    }));
+    const queued = queue.submissions.find(submission => submission.id === submitted.submission.id);
+    expect(queued).toMatchObject({ note, serialNumber: null, locationText: "Maintenance shop" });
+    expect(queued.photos).toEqual([]);
+    if (queued.sessionItem.suggestedInventoryItem) {
+      await responseJson(await request.patch(`${API_URL}/session-items/${scenario.sessionItemId}/inventory-match`, {
+        headers: qaHeaders(qaAdmin),
+        data: { action: "dismiss" }
+      }));
+    }
+
+    const approved = await responseJson(await request.patch(`${API_URL}/submissions/${submitted.submission.id}/review`, {
+      headers: qaHeaders(qaAdmin),
+      data: {
+        decision: "approved",
+        saveItem: true,
+        savedMediaUploadIds: []
+      }
+    }));
+    expect(approved.savedItem).toMatchObject({ currentLocation: "Maintenance shop", serialNumber: null });
+    expect(approved.savedItem.photos).toEqual([]);
+
+    const queueAfterApproval = await responseJson(await request.get(`${API_URL}/inventory/review-queue`, {
+      headers: qaHeaders(qaAdmin)
+    }));
+    expect(queueAfterApproval.submissions.some(submission => submission.id === submitted.submission.id)).toBeFalsy();
+
+    await responseJson(await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
+      headers: qaHeaders(qaAdmin),
+      data: { status: "closed" }
+    }));
   });
 });

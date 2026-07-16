@@ -76,6 +76,25 @@ test("Authentik tenant-group fallback defaults on and can be disabled explicitly
   assert.equal(disabledResult.stdout, "false");
 });
 
+test("crew staging quota always leaves room for a ten-photo evidence submission", () => {
+  const script = `
+    import { config } from ${JSON.stringify(configUrl)};
+    process.stdout.write(String(config.crewAccess.maxStagedUploadsPerAuthSession));
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: path.resolve("."),
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      CREW_MAX_STAGED_UPLOADS_PER_SESSION: "4"
+    },
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "12");
+});
+
 test("Authentik provisioning is inert by default and validates every required setting when enabled", () => {
   const disabled = checkProductionConfig({
     AUTHENTIK_PROVISIONING_ENABLED: "false",

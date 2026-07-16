@@ -50,6 +50,50 @@ const itemStatuses = ["unchecked", "found", "not_found", "mismatch", "needs_revi
 const submissionStatuses = ["found", "not_found", "mismatch", "needs_review"];
 const reviewDecisions = ["approved", "request_more_info", "rejected"];
 const photoKinds = ["general", "serial", "location", "damage"];
+export const evidenceSubmissionPhotoLimit = 10;
+export const savedInventoryPhotoLimit = 3;
+const minimumNoteOnlyEvidenceLength = 12;
+const nonSerialPlaceholders = new Set([
+  "na",
+  "n/a",
+  "none",
+  "not applicable",
+  "not serialized",
+  "unserialized"
+]);
+const evidenceSubmissionSchema = z.object({
+  status: z.enum(submissionStatuses),
+  locationText: z.string().optional(),
+  note: z.string().trim().optional(),
+  serialNumber: z.string().optional(),
+  photoIds: z.array(z.string().uuid()).max(evidenceSubmissionPhotoLimit).optional(),
+  photos: z.array(z.object({
+    uploadId: z.string().uuid(),
+    caption: z.string().nullish(),
+    kind: z.enum(photoKinds).default("general")
+  })).max(evidenceSubmissionPhotoLimit).optional()
+});
+
+export function parseEvidenceSubmissionBody(body) {
+  const parsed = parseBody(evidenceSubmissionSchema, body);
+  if (!(parsed.photos || []).length && String(parsed.note || "").length < minimumNoteOnlyEvidenceLength) {
+    throw requestError("Add at least one photo or an accountability note with at least 12 characters.");
+  }
+  if (parsed.serialNumber !== undefined) {
+    parsed.serialNumber = normalizeEvidenceSerialNumber(parsed.serialNumber);
+  }
+  return parsed;
+}
+
+export function normalizeEvidenceSerialNumber(value) {
+  const serialNumber = String(value || "").trim();
+  const placeholder = serialNumber.toLowerCase().replace(/\s+/g, " ");
+  return serialNumber && !nonSerialPlaceholders.has(placeholder) ? serialNumber : null;
+}
+
+export function defaultSavedEvidenceMediaUploadIds(existingReferenceIds = []) {
+  return [...new Set(existingReferenceIds)].slice(0, savedInventoryPhotoLimit);
+}
 const newsletterIssueSchema = z.object({
   title: z.string().min(2).max(160),
   editionLabel: z.string().max(80).optional(),
@@ -6836,21 +6880,7 @@ export function registerRoutes(app) {
       ["tenant_admin", "contributor"],
       { allowCrew: true }
     );
-    const body = parseBody(
-      z.object({
-        status: z.enum(submissionStatuses),
-        locationText: z.string().optional(),
-        note: z.string().optional(),
-        serialNumber: z.string().optional(),
-        photoIds: z.array(z.string().uuid()).max(3).optional(),
-        photos: z.array(z.object({
-          uploadId: z.string().uuid(),
-          caption: z.string().nullish(),
-          kind: z.enum(photoKinds).default("general")
-        })).max(3).optional()
-      }),
-      request.body
-    );
+    const body = parseEvidenceSubmissionBody(request.body);
     const photos = body.photos || [];
     const photoUploadIds = photos.map(photo => photo.uploadId);
     if (new Set(photoUploadIds).size !== photoUploadIds.length) {
@@ -6888,10 +6918,6 @@ export function registerRoutes(app) {
         && sessionItemResult.rows[0].assigned_to !== context.user.id) {
         return { assignmentRequired: true };
       }
-      if (body.status === "found" && !photos.length) {
-        return { foundPhotoRequired: true };
-      }
-
       const lockedUploads = new Map();
       for (const uploadId of [...photoUploadIds].sort()) {
         const upload = await lockStagedMediaUpload(client, {
@@ -7000,10 +7026,6 @@ export function registerRoutes(app) {
       reply.code(409);
       throw new Error("Claim this item before submitting proof.");
     }
-    if (submission.foundPhotoRequired) {
-      throw requestError("Add at least one new photo for found items.");
-    }
-
     runNotification("Proof submission", () => notifyTenantAdminsOfSubmission(context, submission, {
       photoCount: (body.photos || []).length
     }));
@@ -7142,7 +7164,7 @@ export function registerRoutes(app) {
         decision: z.enum(reviewDecisions),
         note: z.string().optional(),
         saveItem: z.boolean().optional(),
-        savedMediaUploadIds: z.array(z.string().uuid()).max(3).optional()
+        savedMediaUploadIds: z.array(z.string().uuid()).max(savedInventoryPhotoLimit).optional()
       }),
       request.body
     );
@@ -7267,7 +7289,7 @@ export function registerRoutes(app) {
           : { rows: [] };
         const existingReferenceIds = existingReferencesResult.rows.map(row => row.media_upload_id);
         const selectedMediaUploadIds = body.savedMediaUploadIds === undefined
-          ? [...new Set([...existingReferenceIds, ...currentPhotoIds])].slice(0, 3)
+          ? defaultSavedEvidenceMediaUploadIds(existingReferenceIds)
           : requestedSavedMediaUploadIds;
         const allowedMediaUploadIds = new Set([...currentPhotoIds, ...existingReferenceIds]);
         if (selectedMediaUploadIds.some(id => !allowedMediaUploadIds.has(id))) {

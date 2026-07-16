@@ -213,26 +213,36 @@ test.describe("verified item reuse UI", () => {
       await expect(proofForm.getByLabel("Location", { exact: true })).toHaveValue("Cage 12, upper shelf");
       await expect(proofForm.getByText("Last saved at Cage 12, upper shelf", { exact: true })).toBeVisible();
       await proofForm.getByLabel("Location", { exact: true }).fill(newLocation);
-      await proofForm.getByLabel("Serial number", { exact: true }).fill(`REUSE-${suffix.toUpperCase()}`);
-      await proofForm.getByLabel("Add proof photos").setInputFiles({
-        name: `new-proof-${suffix}.png`,
+      await proofForm.getByLabel("Serial number (if serialized)", { exact: true }).fill(`REUSE-${suffix.toUpperCase()}`);
+      const newPhotoNames = [1, 2, 3].map(index => `new-proof-${index}-${suffix}.png`);
+      await proofForm.getByLabel("Add item photos").setInputFiles(newPhotoNames.map(name => ({
+        name,
         mimeType: "image/png",
         buffer: PHOTO_BUFFER
-      });
+      })));
 
-      const uploadResponsePromise = page.waitForResponse(response => (
-        response.request().method() === "POST"
-        && new URL(response.url()).pathname === "/api/uploads/photos"
-        && response.ok()
-      ));
+      const uploadedPhotosByName = new Map();
+      const captureUploadedPhoto = async response => {
+        if (
+          response.request().method() !== "POST"
+          || new URL(response.url()).pathname !== "/api/uploads/photos"
+          || !response.ok()
+        ) return;
+        const requestBody = response.request().postDataJSON();
+        const responseBody = await response.json();
+        uploadedPhotosByName.set(requestBody.fileName, responseBody.photo);
+      };
+      page.on("response", captureUploadedPhoto);
       const submissionResponsePromise = page.waitForResponse(response => (
         response.request().method() === "POST"
         && new URL(response.url()).pathname === `/api/session-items/${active.sessionItemId}/submissions`
         && response.ok()
       ));
       await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
-      const uploadedPhoto = (await (await uploadResponsePromise).json()).photo;
       const submitted = await (await submissionResponsePromise).json();
+      await expect.poll(() => uploadedPhotosByName.size).toBe(3);
+      page.off("response", captureUploadedPhoto);
+      const uploadedPhotos = newPhotoNames.map(name => uploadedPhotosByName.get(name));
       await expect(drawer).toBeHidden();
 
       await openWorkspaceView(page, "Review Queue", "Review Queue");
@@ -246,29 +256,42 @@ test.describe("verified item reuse UI", () => {
       await expectMinHeight(evidenceSummary, touchTargetMinimum);
       await evidenceSummary.click();
 
-      const saveRecord = evidencePicker.getByRole("checkbox", { name: /Save or update this item/ });
+      const saveRecord = evidencePicker.getByRole("checkbox", { name: /Update this item's reference record/ });
       await expect(saveRecord).not.toBeChecked();
       await expectMinHeight(evidencePicker.locator(".saved-evidence-enable"), touchTargetMinimum);
       await saveRecord.check();
-      await expect(evidenceSummary.getByText("2/3 photos", { exact: true })).toBeVisible();
+      await expect(evidenceSummary.getByText("1/3 selected", { exact: true })).toBeVisible();
 
-      const savedOption = evidencePicker.locator(".saved-evidence-option", { hasText: "Saved" });
-      const newOption = evidencePicker.locator(".saved-evidence-option", { hasText: "New" });
+      const savedOption = evidencePicker.locator(".saved-evidence-option", { hasText: "Previous" });
+      const newOptions = evidencePicker.locator(".saved-evidence-option", { hasText: "This submission" });
       const savedCheckbox = savedOption.getByRole("checkbox");
-      const newCheckbox = newOption.getByRole("checkbox");
       await expect(savedCheckbox).toBeChecked();
-      await expect(newCheckbox).toBeChecked();
+      await expect(newOptions).toHaveCount(3);
+      for (let index = 0; index < 3; index += 1) {
+        await expect(newOptions.nth(index).getByRole("checkbox")).not.toBeChecked();
+      }
       await expectMinHeight(savedOption, touchTargetMinimum);
-      await expectMinHeight(newOption, touchTargetMinimum);
+      await expectMinHeight(newOptions.first(), touchTargetMinimum);
       await expectContained(page, evidencePicker);
 
-      await savedCheckbox.uncheck();
-      await expect(evidenceSummary.getByText("1/3 photos", { exact: true })).toBeVisible();
-      await savedCheckbox.check();
-      await newCheckbox.uncheck();
-      await expect(evidenceSummary.getByText("1/3 photos", { exact: true })).toBeVisible();
-      await newCheckbox.check();
-      await expect(evidenceSummary.getByText("2/3 photos", { exact: true })).toBeVisible();
+      const firstNewCheckbox = newOptions.nth(0).getByRole("checkbox");
+      const secondNewCheckbox = newOptions.nth(1).getByRole("checkbox");
+      const thirdNewCheckbox = newOptions.nth(2).getByRole("checkbox");
+      await firstNewCheckbox.check();
+      await secondNewCheckbox.check();
+      await expect(evidenceSummary.getByText("3/3 selected", { exact: true })).toBeVisible();
+
+      await thirdNewCheckbox.click();
+      await expect(page.getByText("Keep up to 3 photos with the saved item.", { exact: true })).toBeVisible();
+      await expect(thirdNewCheckbox).not.toBeChecked();
+      await expect(evidenceSummary.getByText("3/3 selected", { exact: true })).toBeVisible();
+
+      await firstNewCheckbox.uncheck();
+      await expect(evidenceSummary.getByText("2/3 selected", { exact: true })).toBeVisible();
+      await thirdNewCheckbox.check();
+      await expect(thirdNewCheckbox).toBeChecked();
+      await expect(firstNewCheckbox).not.toBeChecked();
+      await expect(evidenceSummary.getByText("3/3 selected", { exact: true })).toBeVisible();
 
       let reviewRequests = 0;
       page.on("request", browserRequest => {
@@ -295,7 +318,8 @@ test.describe("verified item reuse UI", () => {
       });
       expect(finalItem.inventoryItem.photos.map(photo => photo.mediaUploadId)).toEqual([
         source.oldPhoto.uploadId,
-        uploadedPhoto.uploadId
+        uploadedPhotos[1].uploadId,
+        uploadedPhotos[2].uploadId
       ]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
     } finally {

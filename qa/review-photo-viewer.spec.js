@@ -147,18 +147,18 @@ test.describe("proof photo viewer", () => {
     const card = page.locator(".review-card", { hasText: scenario.packetLine });
     await expect(card).toBeVisible();
 
-    const serialThumbnail = card.getByRole("button", { name: "View Serial photo: Serial data plate" }).first();
-    await expect(serialThumbnail).toBeVisible();
+    const itemThumbnail = card.getByRole("button", { name: "View Item photo: Serial data plate" }).first();
+    await expect(itemThumbnail).toBeVisible();
     await expect(card.getByRole("button", { name: "View Location photo: Upper shelf placement" }).first()).toBeVisible();
-    await expect(card.getByRole("button", { name: "View General photo: Complete radio set" }).first()).toBeVisible();
+    await expect(card.getByRole("button", { name: "View Item photo: Complete radio set" }).first()).toBeVisible();
 
     const pageCount = page.context().pages().length;
-    await serialThumbnail.click();
+    await itemThumbnail.click();
     expect(page.context().pages()).toHaveLength(pageCount);
 
     const viewer = page.getByRole("dialog", { name: "Evidence photo" });
     await expect(viewer).toBeVisible();
-    await expect(viewer.getByText("Serial photo", { exact: true }).first()).toBeVisible();
+    await expect(viewer.getByText("Item photo", { exact: true }).first()).toBeVisible();
     await expect(viewer.getByText("Serial data plate", { exact: true })).toBeVisible();
     await expect(viewer.getByText(scenario.note, { exact: true })).toBeVisible();
     await expect(viewer.getByText(scenario.requestMessage, { exact: true })).toBeVisible();
@@ -168,7 +168,7 @@ test.describe("proof photo viewer", () => {
     await expect(counter).toHaveText(/^[1-3] of 3$/);
 
     const mainImage = viewer.locator(".proof-viewer-image-scroll img");
-    await expect(mainImage).toHaveAttribute("alt", new RegExp(`Serial photo: Serial data plate for ${scenario.packetLine}`));
+    await expect(mainImage).toHaveAttribute("alt", new RegExp(`Item photo: Serial data plate for ${scenario.packetLine}`));
     await expect.poll(() => mainImage.evaluate(image => image.complete && image.naturalWidth > 0)).toBeTruthy();
 
     const zoomButton = viewer.getByRole("button", { name: "Zoom photo" });
@@ -204,6 +204,6 @@ test.describe("proof photo viewer", () => {
 
     await page.keyboard.press("Escape");
     await expect(viewer).toBeHidden();
-    await expect(serialThumbnail).toBeFocused();
+    await expect(itemThumbnail).toBeFocused();
   });
 });

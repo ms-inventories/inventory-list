@@ -136,7 +136,7 @@ test.describe("review queue decisions", () => {
     await expect(page.getByText(`Rejected proof for ${rejected.packetLine}.`)).toBeVisible();
     await expect(rejectedCard).toHaveCount(0);
 
-    const requestMessage = `Need a closer serial photo for ${suffix}.`;
+    const requestMessage = `Need a closer item photo for ${suffix}.`;
     const requestedCard = page.locator(".review-card", { hasText: requested.packetLine });
     await expect(requestedCard).toBeVisible();
     await requestedCard.getByRole("button", { name: "More proof" }).click();
@@ -243,7 +243,7 @@ test.describe("review queue decisions", () => {
     await expect.poll(() => requestAttempts).toBe(1);
     await expect(requestedCard.getByRole("button", { name: "Sending request..." })).toBeDisabled();
     await expect(requestNote).toBeDisabled();
-    await expect(requestedCard.getByRole("button", { name: "Serial photo" })).toBeDisabled();
+    await expect(requestedCard.getByRole("button", { name: "Item photo", exact: true })).toBeDisabled();
     await expect(requestedCard.getByRole("button", { name: "Cancel" })).toBeDisabled();
     await expect(requestedCard.getByText(/Requested: Need another photo/)).toBeVisible();
     expect(requestAttempts).toBe(1);

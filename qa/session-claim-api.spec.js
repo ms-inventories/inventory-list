@@ -73,10 +73,15 @@ async function sessionItem(request, scenario, identity = qaAdmin) {
 
 async function closeSession(request, scenario, identity) {
   if (!scenario?.sessionId) return;
-  await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
-    headers: qaHeaders(identity),
-    data: { status: "closed" }
-  });
+  try {
+    await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
+      headers: qaHeaders(identity),
+      data: { status: "closed" }
+    });
+  } catch (error) {
+    if (/Target page, context or browser has been closed|Test ended/i.test(String(error?.message || error))) return;
+    throw error;
+  }
 }
 
 async function seedBrowserIdentity(page, identity) {
@@ -89,6 +94,15 @@ async function seedBrowserIdentity(page, identity) {
       qa: true
     }));
   }, identity);
+}
+
+async function openReviewQueue(page) {
+  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
+  if (await mobileMenu.isVisible()) {
+    await mobileMenu.click();
+  }
+  await page.getByRole("button", { name: "Review Queue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
 }
 
 test.describe("session claim API", () => {
@@ -214,20 +228,20 @@ test.describe("session claim API", () => {
       await expect(row.locator(".proof-form")).toHaveCount(0);
       const proofForm = drawer.locator(".proof-form");
       await expect(proofForm).toBeVisible();
-      const foundOutcome = proofForm.getByRole("button", { name: "Found", exact: true });
+      const foundOutcome = proofForm.getByRole("button", { name: "Found / accounted for", exact: true });
       const missingOutcome = proofForm.getByRole("button", { name: "Not found", exact: true });
       await expect(foundOutcome).toHaveAttribute("aria-pressed", "true");
       await missingOutcome.click();
       await expect(missingOutcome).toHaveAttribute("aria-pressed", "true");
       await expect(foundOutcome).toHaveAttribute("aria-pressed", "false");
       await expect(proofForm.getByRole("textbox", { name: "Location" })).toBeVisible();
-      await expect(proofForm.getByRole("textbox", { name: "Serial number" })).toBeVisible();
+      await expect(proofForm.getByRole("textbox", { name: "Serial number (if serialized)" })).toBeVisible();
       await expect(proofForm.getByRole("textbox", { name: "Note" })).toBeVisible();
-      const photoInput = proofForm.getByLabel("Add proof photos");
+      const photoInput = proofForm.getByLabel("Add item photos");
       await expect(photoInput).toBeEnabled();
       await expect(photoInput).toHaveAttribute("multiple", "");
       const drawerBeforePhotos = await drawer.boundingBox();
-      const photoNames = [1, 2, 3].map(index =>
+      const photoNames = Array.from({ length: 11 }, (_, index) =>
         `proof-photo-${index}-with-an-intentionally-long-filename-that-must-not-expand-the-item-drawer.jpg`
       );
       await photoInput.setInputFiles(photoNames.map(name => ({
@@ -236,11 +250,13 @@ test.describe("session claim API", () => {
         buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9])
       })));
       const selectedPhotos = proofForm.getByRole("list", { name: "Selected proof photos" });
-      await expect(selectedPhotos.getByRole("listitem")).toHaveCount(3);
-      await expect(proofForm.getByLabel("Add another proof photo")).toBeDisabled();
-      for (const name of photoNames) {
+      await expect(selectedPhotos.getByRole("listitem")).toHaveCount(10);
+      await expect(proofForm.getByLabel("Add another item photo")).toBeDisabled();
+      for (const name of photoNames.slice(0, 10)) {
         await expect(proofForm.getByText(name, { exact: true })).toBeVisible();
       }
+      await expect(proofForm.getByText(photoNames[10], { exact: true })).toHaveCount(0);
+      await expect(drawer.getByText("You can submit up to 10 photos for review.", { exact: true })).toBeVisible();
       const viewport = page.viewportSize();
       const drawerBox = await drawer.boundingBox();
       expect(Math.abs(drawerBox.x - drawerBeforePhotos.x)).toBeLessThanOrEqual(1);
@@ -261,6 +277,213 @@ test.describe("session claim API", () => {
 
       const saved = await sessionItem(request, scenario, platformAdmin);
       expect(saved.assignedToEmail).toBe(platformAdmin.email);
+    } finally {
+      await closeSession(request, scenario, platformAdmin);
+    }
+  });
+
+  test("submits note-only accountability evidence and approves it with no saved photos", async ({ page, request }, testInfo) => {
+    test.setTimeout(60_000);
+    const suffix = testSuffix(testInfo, "note-only-ui");
+    const platformAdmin = syntheticPlatformAdmin(suffix);
+    const scenario = await createSessionItem(request, platformAdmin, suffix);
+    const packetLine = `QA-CLAIM-${suffix.toUpperCase()}`;
+    const accountabilityNote = "Verified with supply; signed out to SGT Smith for maintenance.";
+    let uploadRequests = 0;
+    let submissionRequests = 0;
+
+    page.on("request", browserRequest => {
+      const pathname = new URL(browserRequest.url()).pathname;
+      if (browserRequest.method() === "POST" && pathname === "/api/uploads/photos") {
+        uploadRequests += 1;
+      }
+      if (
+        browserRequest.method() === "POST"
+        && pathname === `/api/session-items/${scenario.sessionItemId}/submissions`
+      ) {
+        submissionRequests += 1;
+      }
+    });
+
+    try {
+      await seedBrowserIdentity(page, platformAdmin);
+      await page.goto("http://ms.localhost:5175/#/admin");
+      await page.getByRole("heading", { name: "Leader Dashboard" }).waitFor();
+
+      const activeInventory = page.getByRole("region", { name: "Active inventory" });
+      await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
+      await activeInventory.getByRole("button", { name: "Open session" }).click();
+
+      const row = page.locator(".session-item", { hasText: packetLine });
+      await expect(row).toBeVisible();
+      await row.getByRole("button", { name: /Open details for/ }).click();
+      const drawer = page.getByRole("dialog", { name: packetLine });
+      await drawer.getByRole("button", { name: "Claim item" }).click();
+
+      const proofForm = drawer.locator(".proof-form");
+      await expect(proofForm).toBeVisible();
+      await test.step("reject empty evidence without any API write", async () => {
+        await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
+        await expect(drawer.getByText(
+          "Add an item photo, or explain who verified the item and why it is accounted for.",
+          { exact: true }
+        )).toBeVisible();
+        expect(uploadRequests).toBe(0);
+        expect(submissionRequests).toBe(0);
+      });
+
+      await proofForm.getByLabel("Location", { exact: true }).fill("Maintenance shop");
+      await proofForm.getByLabel("Serial number (if serialized)", { exact: true }).fill("N/A");
+      await proofForm.getByRole("textbox", { name: /^Note\b/ }).fill(accountabilityNote);
+
+      let submitted;
+      await test.step("submit the accountability note without an upload", async () => {
+        const submissionRequestPromise = page.waitForRequest(browserRequest => (
+          browserRequest.method() === "POST"
+          && new URL(browserRequest.url()).pathname === `/api/session-items/${scenario.sessionItemId}/submissions`
+        ));
+        const submissionResponsePromise = page.waitForResponse(response => (
+          response.request().method() === "POST"
+          && new URL(response.url()).pathname === `/api/session-items/${scenario.sessionItemId}/submissions`
+          && response.ok()
+        ));
+        await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
+
+        const submissionRequest = await submissionRequestPromise;
+        expect(submissionRequest.postDataJSON()).toMatchObject({
+          status: "found",
+          locationText: "Maintenance shop",
+          note: accountabilityNote,
+          photos: []
+        });
+        expect(submissionRequest.postDataJSON().serialNumber).toBeUndefined();
+        submitted = await (await submissionResponsePromise).json();
+        await expect(drawer).toBeHidden();
+        expect(uploadRequests).toBe(0);
+        expect(submissionRequests).toBe(1);
+      });
+
+      await test.step("approve while saving zero reference photos", async () => {
+        await openReviewQueue(page);
+
+        const reviewCard = page.locator(".review-card", { hasText: packetLine });
+        await expect(reviewCard).toBeVisible();
+        await expect(reviewCard.getByText("Accountability note", { exact: true })).toBeVisible();
+        await expect(reviewCard.getByText(accountabilityNote, { exact: true })).toBeVisible();
+        await expect(reviewCard.locator(".proof-photo-thumbnail")).toHaveCount(0);
+
+        const evidencePicker = reviewCard.locator(".saved-evidence-picker");
+        await evidencePicker.locator("summary").click();
+        const updateReferenceRecord = evidencePicker.getByRole("checkbox", {
+          name: /Update this item's reference record/
+        });
+        await updateReferenceRecord.check();
+        await expect(evidencePicker.getByText("0/3 selected", { exact: true })).toBeVisible();
+        await expect(evidencePicker.locator(".saved-evidence-option")).toHaveCount(0);
+        await expect(evidencePicker.getByText(
+          "No item photos are available. The approved location and serial, when applicable, can still be carried forward.",
+          { exact: true }
+        )).toBeVisible();
+
+        const reviewRequestPromise = page.waitForRequest(browserRequest => (
+          browserRequest.method() === "PATCH"
+          && new URL(browserRequest.url()).pathname === `/api/submissions/${submitted.submission.id}/review`
+        ));
+        const reviewResponsePromise = page.waitForResponse(response => (
+          response.request().method() === "PATCH"
+          && new URL(response.url()).pathname === `/api/submissions/${submitted.submission.id}/review`
+          && response.ok()
+        ));
+        await reviewCard.getByRole("button", { name: "Approve", exact: true }).click();
+
+        const reviewRequest = await reviewRequestPromise;
+        expect(reviewRequest.postDataJSON()).toMatchObject({
+          decision: "approved",
+          saveItem: true,
+          savedMediaUploadIds: []
+        });
+        const approved = await (await reviewResponsePromise).json();
+        expect(approved.savedItem.photos).toEqual([]);
+        await expect(page.getByText(`Approved proof for ${packetLine}.`, { exact: true })).toBeVisible();
+        await expect(reviewCard).toHaveCount(0);
+      });
+    } finally {
+      await closeSession(request, scenario, platformAdmin);
+    }
+  });
+
+  test("treats a nonserialized evidence upload as an item photo", async ({ page, request }, testInfo) => {
+    test.setTimeout(60_000);
+    const suffix = testSuffix(testInfo, "nonserialized-photo-ui");
+    const platformAdmin = syntheticPlatformAdmin(suffix);
+    const scenario = await createSessionItem(request, platformAdmin, suffix);
+    const packetLine = `QA-CLAIM-${suffix.toUpperCase()}`;
+
+    try {
+      await seedBrowserIdentity(page, platformAdmin);
+      await page.goto("http://ms.localhost:5175/#/admin");
+      await page.getByRole("heading", { name: "Leader Dashboard" }).waitFor();
+
+      const activeInventory = page.getByRole("region", { name: "Active inventory" });
+      await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
+      await activeInventory.getByRole("button", { name: "Open session" }).click();
+
+      const row = page.locator(".session-item", { hasText: packetLine });
+      await expect(row).toBeVisible();
+      await row.getByRole("button", { name: /Open details for/ }).click();
+      const drawer = page.getByRole("dialog", { name: packetLine });
+      await drawer.getByRole("button", { name: "Claim item" }).click();
+
+      const proofForm = drawer.locator(".proof-form");
+      await expect(proofForm).toBeVisible();
+      await proofForm.getByLabel("Serial number (if serialized)", { exact: true }).fill("N/A");
+      await proofForm.getByLabel("Add item photos").setInputFiles({
+        name: `nonserialized-item-${suffix}.jpg`,
+        mimeType: "image/jpeg",
+        buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+      });
+
+      const uploadRequestPromise = page.waitForRequest(browserRequest => (
+        browserRequest.method() === "POST"
+        && new URL(browserRequest.url()).pathname === "/api/uploads/photos"
+      ));
+      const submissionRequestPromise = page.waitForRequest(browserRequest => (
+        browserRequest.method() === "POST"
+        && new URL(browserRequest.url()).pathname === `/api/session-items/${scenario.sessionItemId}/submissions`
+      ));
+      const submissionResponsePromise = page.waitForResponse(response => (
+        response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/session-items/${scenario.sessionItemId}/submissions`
+        && response.ok()
+      ));
+      await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
+
+      const uploadRequest = await uploadRequestPromise;
+      expect(uploadRequest.postDataJSON()).toMatchObject({ kind: "general" });
+      const submissionRequest = await submissionRequestPromise;
+      const submissionPayload = submissionRequest.postDataJSON();
+      expect(submissionPayload.serialNumber).toBeUndefined();
+      expect(submissionPayload.photos).toHaveLength(1);
+      expect(submissionPayload.photos[0]).toMatchObject({ kind: "general" });
+      const submitted = await (await submissionResponsePromise).json();
+      await expect(drawer).toBeHidden();
+
+      await openReviewQueue(page);
+      const reviewCard = page.locator(".review-card", { hasText: packetLine });
+      await expect(reviewCard).toBeVisible();
+      await expect(reviewCard.getByRole("button", { name: "View Item photo", exact: true })).toBeVisible();
+      await expect(reviewCard.getByText("Item photo", { exact: true })).toBeVisible();
+      await expect(reviewCard.getByText(/^Serial:/)).toHaveCount(0);
+
+      const reviewResponsePromise = page.waitForResponse(response => (
+        response.request().method() === "PATCH"
+        && new URL(response.url()).pathname === `/api/submissions/${submitted.submission.id}/review`
+        && response.ok()
+      ));
+      await reviewCard.getByRole("button", { name: "Approve", exact: true }).click();
+      await reviewResponsePromise;
+      await expect(page.getByText(`Approved proof for ${packetLine}.`, { exact: true })).toBeVisible();
+      await expect(reviewCard).toHaveCount(0);
     } finally {
       await closeSession(request, scenario, platformAdmin);
     }

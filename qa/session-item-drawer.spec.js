@@ -130,7 +130,7 @@ async function createDrawerScenario(request, projectName) {
     note: "Initial photo did not show the data plate.",
     photos: [{ uploadId: widePhoto.uploadId, caption: widePhoto.caption, kind: widePhoto.kind }]
   });
-  const requestMessage = `Need a clear serial photo for ${suffix}.`;
+  const requestMessage = `Need a clear item photo for ${suffix}.`;
   await responseJson(await request.post(`${API_URL}/submissions/${initial.submission.id}/evidence-requests`, {
     headers: qaHeaders(qaAdmin),
     data: { message: requestMessage, requestedFields: ["serial_photo"] }
@@ -281,7 +281,7 @@ test.describe("session item details", () => {
     const knownImage = drawer.getByRole("link", { name: "Open known item photo 1" }).locator("img");
     await expect.poll(() => knownImage.evaluate(image => image.complete && image.naturalWidth > 0)).toBeTruthy();
 
-    const evidenceButton = drawer.getByRole("button", { name: "View Serial photo: Readable serial plate" });
+    const evidenceButton = drawer.getByRole("button", { name: "View Item photo: Readable serial plate" });
     await evidenceButton.click();
     const viewer = page.getByRole("dialog", { name: "Evidence photo" });
     await expect(viewer).toBeVisible();
@@ -358,7 +358,9 @@ test.describe("session item details", () => {
     await openSessions(page);
     await selectSession(page, scenario, { closed: true });
     const completedItems = page.locator(".session-completed-items");
-    await completedItems.locator("summary").click();
+    if (!(await completedItems.evaluate(element => element.open))) {
+      await completedItems.locator("summary").click();
+    }
     await completedItems.getByRole("button", { name: `Open details for completed item ${scenario.title}` }).click();
     drawer = page.getByRole("dialog", { name: scenario.title });
     await expect(drawer).toBeVisible();

@@ -222,16 +222,16 @@ test.describe("verified item reuse API", () => {
       headers: qaHeaders(qaNco),
       data: { memberId: "self" }
     }));
-    const secondPhoto = await uploadPhoto(request, {
+    const secondPhotos = await Promise.all([1, 2, 3].map(index => uploadPhoto(request, {
       identity: qaNco,
-      label: `reuse-second-${stamp}`
-    });
+      label: `reuse-second-${index}-${stamp}`
+    })));
     const secondSubmission = await submitFound(request, {
       identity: qaNco,
       sessionItemId: second.sessionItemId,
       location: "QA vault shelf two",
       serialNumber: `SERIAL-${stamp}`,
-      photos: [secondPhoto]
+      photos: secondPhotos
     });
 
     const unresolvedApproval = await request.patch(
@@ -292,13 +292,40 @@ test.describe("verified item reuse API", () => {
     );
     expect(foreignPhotoApproval.status()).toBe(400);
 
+    const tooManySavedPhotos = await request.patch(
+      `${API_URL}/submissions/${secondSubmission.submission.id}/review`,
+      {
+        headers: qaHeaders(qaAdmin),
+        data: {
+          decision: "approved",
+          saveItem: true,
+          savedMediaUploadIds: [
+            firstPhotos[0].uploadId,
+            ...secondPhotos.map(photo => photo.uploadId)
+          ]
+        }
+      }
+    );
+    expect(tooManySavedPhotos.status()).toBe(400);
+    expect(await tooManySavedPhotos.json()).toMatchObject({
+      code: "validation_failed",
+      error: "Validation failed"
+    });
+
+    const chosenSavedPhotos = [
+      firstPhotos[0].uploadId,
+      secondPhotos[1].uploadId,
+      secondPhotos[2].uploadId
+    ];
+
     const finalReview = await responseJson(await request.patch(
       `${API_URL}/submissions/${secondSubmission.submission.id}/review`,
       {
         headers: qaHeaders(qaAdmin),
         data: {
           decision: "approved",
-          saveItem: true
+          saveItem: true,
+          savedMediaUploadIds: chosenSavedPhotos
         }
       }
     ));
@@ -307,10 +334,7 @@ test.describe("verified item reuse API", () => {
       currentLocation: "QA vault shelf two",
       serialNumber: `SERIAL-${stamp}`
     });
-    expect(finalReview.savedItem.photos.map(photo => photo.mediaUploadId)).toEqual([
-      firstPhotos[0].uploadId,
-      secondPhoto.uploadId
-    ]);
+    expect(finalReview.savedItem.photos.map(photo => photo.mediaUploadId)).toEqual(chosenSavedPhotos);
 
     const finalDetail = await responseJson(await request.get(
       `${API_URL}/inventory/sessions/${second.sessionId}`,
@@ -319,7 +343,7 @@ test.describe("verified item reuse API", () => {
     const finalRow = finalDetail.items.find(item => item.id === second.sessionItemId);
     expect(finalRow.suggestedInventoryItem).toBeNull();
     expect(finalRow.inventoryItem.currentLocation).toBe("QA vault shelf two");
-    expect(finalRow.inventoryItem.photos).toHaveLength(2);
+    expect(finalRow.inventoryItem.photos.map(photo => photo.mediaUploadId)).toEqual(chosenSavedPhotos);
   });
 
   test("grouped packet quantities cannot be saved as one verified asset", async ({ request }, testInfo) => {
@@ -347,7 +371,7 @@ test.describe("verified item reuse API", () => {
     expect(missingPhoto.status()).toBe(400);
     expect(await missingPhoto.json()).toMatchObject({
       code: "invalid_request",
-      error: "Add at least one new photo for found items."
+      error: "Add at least one photo or an accountability note with at least 12 characters."
     });
 
     const groupedPhoto = await uploadPhoto(request, {

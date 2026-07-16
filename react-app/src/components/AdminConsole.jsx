@@ -911,7 +911,7 @@ function buildSessionReportText(report) {
         formatItemStatus(item.status),
         latest?.reviewState ? formatReviewState(latest.reviewState) : "",
         latest?.reviewNote ? `Request: ${latest.reviewNote}` : "",
-        latest?.serialNumber ? `SN: ${latest.serialNumber}` : "",
+        hasMeaningfulSerial(latest?.serialNumber) ? `SN: ${latest.serialNumber}` : "",
         latest?.locationText ? `Location: ${latest.locationText}` : ""
       ].filter(Boolean);
       lines.push(`- ${parts.join(" | ")}`);
@@ -959,7 +959,7 @@ function buildSessionReportCsv(report) {
       latest?.reviewState ? formatReviewState(latest.reviewState) : "",
       latest?.status ? formatItemStatus(latest.status) : "",
       latest?.locationText || "",
-      latest?.serialNumber || "",
+      hasMeaningfulSerial(latest?.serialNumber) ? latest.serialNumber : "",
       latest?.note || "",
       latest?.reviewNote || "",
       latest ? submissionPerson(latest) : "",
@@ -1004,7 +1004,7 @@ function buildReportsCsv(rows) {
       formatItemStatus(item.status),
       latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof",
       latest?.locationText || item.inventoryItem?.currentLocation || item.locationHint || "",
-      latest?.serialNumber || "",
+      hasMeaningfulSerial(latest?.serialNumber) ? latest.serialNumber : "",
       latest?.note || latest?.reviewNote || "",
       latest ? submissionPerson(latest) : "",
       formatDate(latest?.createdAt || item.updatedAt || item.createdAt)
@@ -1058,26 +1058,50 @@ function downloadTextFile(fileName, text, mimeType) {
 }
 
 const proofRequestOptions = [
-  { value: "serial_photo", label: "Serial photo" },
-  { value: "wide_photo", label: "Wide photo" },
+  { value: "serial_photo", label: "Item photo" },
+  { value: "wide_photo", label: "Location / context photo" },
   { value: "location", label: "Location" },
-  { value: "damage", label: "Damage" }
+  { value: "damage", label: "Condition / damage" }
 ];
 
 const proofPhotoKindLabels = {
-  general: "General photo",
-  serial: "Serial photo",
+  general: "Item photo",
+  serial: "Item photo",
   location: "Location photo",
-  damage: "Damage photo"
+  damage: "Condition photo"
 };
 
+const MAX_EVIDENCE_PHOTOS = 10;
+const MIN_ACCOUNTABILITY_NOTE_LENGTH = 12;
+const emptySerialValues = new Set(["na", "n/a", "none", "not applicable", "not serialized", "unserialized"]);
+
+function hasMeaningfulSerial(value) {
+  const serial = String(value || "").trim();
+  return Boolean(serial) && !emptySerialValues.has(serial.toLowerCase());
+}
+
+function hasMeaningfulAccountabilityNote(value) {
+  return String(value || "").trim().length >= MIN_ACCOUNTABILITY_NOTE_LENGTH;
+}
+
+function isAccountabilityNoteEvidence(submission) {
+  return !(submission?.photos || []).length && hasMeaningfulAccountabilityNote(submission?.note);
+}
+
 function proofPhotoLabel(photo) {
-  return proofPhotoKindLabels[photo?.kind] || "Proof photo";
+  return proofPhotoKindLabels[photo?.kind] || "Item photo";
+}
+
+function proofPhotoCaption(photo) {
+  const caption = String(photo?.caption || "").trim();
+  if (!caption || /^serial(?: number)? photo$/i.test(caption)) return proofPhotoLabel(photo);
+  return caption;
 }
 
 function proofPhotoAlt(photo) {
   const label = proofPhotoLabel(photo);
-  return photo?.caption ? `${label}: ${photo.caption}` : label;
+  const caption = proofPhotoCaption(photo);
+  return caption !== label ? `${label}: ${caption}` : label;
 }
 
 function applicableProofRequest(history = [], evidence = null) {
@@ -1259,6 +1283,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
     photoFiles: []
   });
   const [pendingAction, setPendingAction] = useState("");
+  const [submitProgress, setSubmitProgress] = useState("");
   const isSaving = Boolean(pendingAction);
   const pendingActionRef = useRef("");
   const uploadedPhotosRef = useRef(new Map());
@@ -1322,8 +1347,12 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
     e.preventDefault();
     if (pendingActionRef.current) return;
 
-    if (form.status === "found" && !form.photoFiles.length) {
-      onStatus({ text: "Add a photo for found items.", isError: true });
+    const accountabilityNote = form.note.trim();
+    if (!form.photoFiles.length && !hasMeaningfulAccountabilityNote(accountabilityNote)) {
+      onStatus({
+        text: "Add an item photo, or explain who verified the item and why it is accounted for.",
+        isError: true
+      });
       return;
     }
 
@@ -1333,7 +1362,8 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
       onStatus({ text: "Submitting proof...", isError: false });
       const photos = [];
 
-      for (const photoFile of form.photoFiles) {
+      for (const [photoIndex, photoFile] of form.photoFiles.entries()) {
+        setSubmitProgress(`Uploading photo ${photoIndex + 1} of ${form.photoFiles.length}...`);
         let uploaded = uploadedPhotosRef.current.get(photoFile);
         if (!uploaded) {
           const dataUrl = await fileToDataUrl(photoFile);
@@ -1345,7 +1375,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
               fileName: photoFile.name,
               mimeType: photoFile.type || "image/jpeg",
               dataUrl,
-              kind: form.serialNumber ? "serial" : "general"
+              kind: "general"
             }
           });
           uploadedPhotosRef.current.set(photoFile, uploaded);
@@ -1353,6 +1383,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         photos.push(uploaded.photo);
       }
 
+      setSubmitProgress("Sending evidence...");
       await apiRequest(`/session-items/${item.id}/submissions`, {
         method: "POST",
         token,
@@ -1360,8 +1391,8 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         body: {
           status: form.status,
           locationText: form.locationText.trim() || undefined,
-          note: form.note.trim() || undefined,
-          serialNumber: form.serialNumber.trim() || undefined,
+          note: accountabilityNote || undefined,
+          serialNumber: hasMeaningfulSerial(form.serialNumber) ? form.serialNumber.trim() : undefined,
           photos
         }
       });
@@ -1373,6 +1404,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
       const retryCopy = uploadedPhotosRef.current.size ? " Your uploaded photos will be reused when you retry." : "";
       onStatus({ text: `${getApiErrorMessage(error)}${retryCopy}`, isError: true });
     } finally {
+      setSubmitProgress("");
       finishAction(action);
     }
   }
@@ -1406,7 +1438,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
 
       <div className="segmented-control" role="group" aria-label="Inventory result">
         {[
-          ["found", "Found"],
+          ["found", "Found / accounted for"],
           ["not_found", "Not found"],
           ["mismatch", "Mismatch"]
         ].map(([value, label]) => (
@@ -1424,6 +1456,14 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         ))}
       </div>
 
+      <div className={`proof-evidence-requirement ${form.photoFiles.length || hasMeaningfulAccountabilityNote(form.note) ? "satisfied" : ""}`} role="note">
+        <ShieldCheck aria-hidden="true" />
+        <div>
+          <strong>Item photo or accountability note required</strong>
+          <span>Use a photo when available. If the item is signed out, in maintenance, or confirmed elsewhere, note who verified it and its status.</span>
+        </div>
+      </div>
+
       <label className="proof-field">
         <span>Location</span>
         <input
@@ -1435,12 +1475,12 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         />
       </label>
       <label className="proof-field">
-        <span>Serial number</span>
+        <span>Serial number (if serialized)</span>
         <input
           className="input"
           disabled={isSaving}
           value={form.serialNumber}
-          placeholder="Enter the serial number, if visible"
+          placeholder="Leave blank when the item is not serialized"
           onChange={e => setForm(current => ({ ...current, serialNumber: e.target.value }))}
         />
       </label>
@@ -1450,9 +1490,10 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
           className="input proof-note"
           disabled={isSaving}
           value={form.note}
-          placeholder={requestNote ? "Explain how this answers the request" : "Add any useful detail"}
+          placeholder={requestNote ? "Explain how this answers the request" : "Example: Verified with supply; signed out to SGT Smith"}
           onChange={e => setForm(current => ({ ...current, note: e.target.value }))}
         />
+        <small className="proof-field-help">No photo available? Record who confirmed the item and why it is accounted for.</small>
       </label>
       {form.photoFiles.length ? (
         <div className="proof-photo-selection" role="list" aria-label="Selected proof photos">
@@ -1473,31 +1514,31 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
           ))}
         </div>
       ) : null}
-      <label className={`photo-picker ${form.photoFiles.length >= 3 || isSaving ? "disabled" : ""}`}>
+      <label className={`photo-picker ${form.photoFiles.length >= MAX_EVIDENCE_PHOTOS || isSaving ? "disabled" : ""}`}>
         <Camera aria-hidden="true" />
         <span>{pendingAction.startsWith("remove:")
           ? "Removing photo..."
           : form.photoFiles.length
-            ? `Add another photo (${form.photoFiles.length}/3)`
-            : "Add photos (up to 3)"}</span>
+            ? `Add another item photo (${form.photoFiles.length}/${MAX_EVIDENCE_PHOTOS})`
+            : `Add item photos (up to ${MAX_EVIDENCE_PHOTOS})`}</span>
         <input
           className="photo-picker-input"
           type="file"
           accept="image/*"
           capture="environment"
           multiple
-          disabled={form.photoFiles.length >= 3 || isSaving}
-          aria-label={form.photoFiles.length ? "Add another proof photo" : "Add proof photos"}
+          disabled={form.photoFiles.length >= MAX_EVIDENCE_PHOTOS || isSaving}
+          aria-label={form.photoFiles.length ? "Add another item photo" : "Add item photos"}
           onChange={event => {
             const selectedFiles = [...(event.target.files || [])];
             event.target.value = "";
             if (!selectedFiles.length) return;
-            if (form.photoFiles.length + selectedFiles.length > 3) {
-              onStatus({ text: "You can add up to 3 photos per item.", isError: true });
+            if (form.photoFiles.length + selectedFiles.length > MAX_EVIDENCE_PHOTOS) {
+              onStatus({ text: `You can submit up to ${MAX_EVIDENCE_PHOTOS} photos for review.`, isError: true });
             }
             setForm(current => ({
               ...current,
-              photoFiles: [...current.photoFiles, ...selectedFiles].slice(0, 3)
+              photoFiles: [...current.photoFiles, ...selectedFiles].slice(0, MAX_EVIDENCE_PHOTOS)
             }));
           }}
         />
@@ -1506,7 +1547,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
       <div className="button-row">
         <button className="btn btn-primary" type="submit" disabled={isSaving}>
           <Send aria-hidden="true" />
-          <span>{pendingAction === "submit" ? "Submitting..." : requestNote ? "Send response" : "Submit proof"}</span>
+          <span>{pendingAction === "submit" ? submitProgress || "Submitting..." : requestNote ? "Send response" : "Submit proof"}</span>
         </button>
         <button className="btn btn-secondary" type="button" disabled={isSaving} onClick={cancelProof}>
           <span>{pendingAction === "cancel" ? "Canceling..." : "Cancel"}</span>
@@ -1620,7 +1661,7 @@ function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss }) {
   const identifiers = [
     candidate.lin ? `LIN ${candidate.lin}` : "",
     candidate.nsn ? `NSN ${candidate.nsn}` : "",
-    candidate.serialNumber ? `SN ${candidate.serialNumber}` : ""
+    hasMeaningfulSerial(candidate.serialNumber) ? `SN ${candidate.serialNumber}` : ""
   ].filter(Boolean);
 
   return (
@@ -1761,7 +1802,7 @@ function SessionItemDrawer({
                   <p className="eyebrow">Proof</p>
                   <h3>{needsMoreProof ? "Send the requested proof" : "Record what you found"}</h3>
                 </div>
-                <span>Up to 3 photos</span>
+                <span>Photo or verification note</span>
               </div>
               <ProofForm
                 key={item.id}
@@ -1944,7 +1985,7 @@ function SessionItemDrawer({
                     </div>
                     <div className="session-detail-proof-facts">
                       {submission.locationText ? <span>Location: {submission.locationText}</span> : null}
-                      {submission.serialNumber ? <span>Serial: {submission.serialNumber}</span> : null}
+                      {hasMeaningfulSerial(submission.serialNumber) ? <span>Serial: {submission.serialNumber}</span> : null}
                     </div>
                     {submission.note ? <p>{submission.note}</p> : null}
                     {submission.reviewNote ? (
@@ -4116,7 +4157,7 @@ function ProofPhotoStrip({ photos = [], onOpen, compact = false, label = "Submit
           <img src={photo.url} alt="" loading="lazy" />
           <span className="proof-photo-thumbnail-copy">
             <strong>{proofPhotoLabel(photo)}</strong>
-            {photo.caption ? <small>{photo.caption}</small> : null}
+            {proofPhotoCaption(photo) !== proofPhotoLabel(photo) ? <small>{proofPhotoCaption(photo)}</small> : null}
           </span>
         </button>
       ))}
@@ -4206,7 +4247,7 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
           <aside className="proof-viewer-details">
             <div className="proof-viewer-photo-heading">
               <span>{proofPhotoLabel(photo)}</span>
-              <strong>{photo.caption || proofPhotoLabel(photo)}</strong>
+              <strong>{proofPhotoCaption(photo)}</strong>
             </div>
 
             <dl className="proof-viewer-facts">
@@ -4226,7 +4267,7 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
                   <dd>{viewer.locationText}</dd>
                 </div>
               ) : null}
-              {viewer.serialNumber ? (
+              {hasMeaningfulSerial(viewer.serialNumber) ? (
                 <div>
                   <dt>Serial</dt>
                   <dd>{viewer.serialNumber}</dd>
@@ -4286,10 +4327,10 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
 function savedEvidenceChoices(submission) {
   const saved = getInventoryItemPhotos(submission?.sessionItem?.inventoryItem)
     .filter(photo => photo.mediaUploadId)
-    .map(photo => ({ ...photo, source: "saved", sourceLabel: "Saved" }));
+    .map(photo => ({ ...photo, source: "saved", sourceLabel: "Previous" }));
   const current = (submission?.photos || [])
     .filter(photo => photo.mediaUploadId)
-    .map(photo => ({ ...photo, source: "submission", sourceLabel: "New" }));
+    .map(photo => ({ ...photo, source: "submission", sourceLabel: "This submission" }));
   const choices = [];
   const seen = new Set();
   [...saved, ...current].forEach(photo => {
@@ -4303,8 +4344,7 @@ function savedEvidenceChoices(submission) {
 function defaultSavedEvidenceIds(submission) {
   const choices = savedEvidenceChoices(submission);
   const saved = choices.filter(photo => photo.source === "saved");
-  const current = choices.filter(photo => photo.source === "submission");
-  return [...saved, ...current].slice(0, 3).map(photo => photo.mediaUploadId);
+  return saved.slice(0, 3).map(photo => photo.mediaUploadId);
 }
 
 function SavedEvidencePicker({
@@ -4323,10 +4363,10 @@ function SavedEvidencePicker({
     <details className="saved-evidence-picker">
       <summary>
         <span>
-          <small>After approval</small>
-          <strong>Save for next inventory</strong>
+          <small>Reference record</small>
+          <strong>Choose photos for next time</strong>
         </span>
-        <span className="saved-evidence-count">{enabled ? `${selectedIds.length}/3 photos` : "Optional"}</span>
+        <span className="saved-evidence-count">{enabled ? `${selectedIds.length}/3 selected` : "Optional"}</span>
       </summary>
       <div className="saved-evidence-picker-body">
         <label className="saved-evidence-enable">
@@ -4337,13 +4377,16 @@ function SavedEvidencePicker({
             onChange={event => onEnabledChange(event.target.checked)}
           />
           <span>
-            <strong>Save or update this item</strong>
-            <small>Carry the approved location, serial, and selected photos into the next inventory.</small>
+            <strong>Update this item&apos;s reference record</strong>
+            <small>Save its approved location, serial when applicable, and zero to three photos teammates should recognize next time.</small>
           </span>
         </label>
         {enabled ? (
           <>
-            <p>Pick up to three photos to keep with the saved record.</p>
+            <div className="saved-evidence-instruction">
+              <strong>Select 0 to 3 reference photos</strong>
+              <span>Photo selection is optional. Choose only the clearest views you want teammates to recognize in a future inventory.</span>
+            </div>
             {choices.length ? (
               <div className="saved-evidence-options" role="group" aria-label="Photos saved for next inventory">
                 {choices.map((photo, index) => {
@@ -4358,16 +4401,16 @@ function SavedEvidencePicker({
                         onChange={() => onToggle(photo.mediaUploadId)}
                       />
                       <img src={photo.url} alt="" loading="lazy" />
-                      <span>{photo.sourceLabel}</span>
+                      <span>{selected ? `Keep - ${photo.sourceLabel}` : photo.sourceLabel}</span>
                       {selected ? <CheckCircle2 aria-hidden="true" /> : null}
                     </label>
                   );
                 })}
               </div>
             ) : (
-              <p className="saved-evidence-empty">No photos are available to save. Location and serial can still be carried forward.</p>
+              <p className="saved-evidence-empty">No item photos are available. The approved location and serial, when applicable, can still be carried forward.</p>
             )}
-            <small>{savedCount ? `${savedCount} saved` : "No old photos"}{newCount ? ` · ${newCount} new` : ""}</small>
+            <small>{savedCount ? `${savedCount} previous selected` : "No previous photos selected"}{newCount ? ` - ${newCount} from this submission` : ""}</small>
           </>
         ) : (
           <p>Leave this off to approve the proof without changing the saved item record.</p>
@@ -4580,7 +4623,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
 
   function openProofRequest(submission) {
     if (proofRequestOpenRef.current || [...reviewActionRef.current.values()].includes("request") || reviewActionRef.current.has(submission.id)) return;
-    const defaultFields = submission.serialNumber ? ["wide_photo", "location"] : ["serial_photo", "wide_photo"];
+    const defaultFields = hasMeaningfulSerial(submission.serialNumber) ? ["wide_photo", "location"] : ["serial_photo", "wide_photo"];
     proofRequestOpenRef.current = submission.id;
     setRequestingSubmissionId(submission.id);
     setProofRequestFields(defaultFields);
@@ -4681,17 +4724,24 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
 
       <div className="review-list" role="region" aria-label="Review queue results">
         {visibleSubmissions.length ? visibleSubmissions.map(submission => (
-          <article className="review-card" key={submission.id}>
+          <article className={`review-card ${isAccountabilityNoteEvidence(submission) ? "accountability-note-only" : ""}`} key={submission.id}>
             <div className="review-card-main">
               <strong>{submission.sessionItem?.packetLine || "Packet row"}</strong>
               <span>{submission.session?.name} - {submission.submittedByName || submission.submittedByEmail}</span>
               {submission.locationText ? <small>Location: {submission.locationText}</small> : null}
-              {submission.serialNumber ? <small>Serial: {submission.serialNumber}</small> : null}
+              {hasMeaningfulSerial(submission.serialNumber) ? <small>Serial: {submission.serialNumber}</small> : null}
               {submission.note ? <small>{submission.note}</small> : null}
               {submission.reviewState === "request_more_info" && submission.reviewNote ? (
                 <small className="review-request-note">Requested: {submission.reviewNote}</small>
               ) : null}
             </div>
+
+            {isAccountabilityNoteEvidence(submission) ? (
+              <div className="accountability-evidence-label" role="note">
+                <ShieldCheck aria-hidden="true" />
+                <span><strong>Accountability note</strong>No photo was available; review the verifier and status above.</span>
+              </div>
+            ) : null}
 
             <ProofPhotoStrip
               photos={submission.photos}
@@ -4717,7 +4767,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
                         <div className="proof-timeline-facts">
                           <span>{historyItem.status}</span>
                           {historyItem.locationText ? <span>{historyItem.locationText}</span> : null}
-                          {historyItem.serialNumber ? <span>SN {historyItem.serialNumber}</span> : null}
+                          {hasMeaningfulSerial(historyItem.serialNumber) ? <span>SN {historyItem.serialNumber}</span> : null}
                         </div>
                         {historyItem.note ? <small className="proof-timeline-note">{historyItem.note}</small> : null}
                         {historyItem.reviewState === "request_more_info" && historyItem.reviewNote ? (
@@ -8084,7 +8134,7 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
               </div>
               <div data-label="Outcome"><span className="mobile-field-label">Outcome</span><span className={`status-pill ${reportItemOutcome(item)}`}>{formatItemStatus(reportItemOutcome(item))}</span></div>
               <div data-label="Proof status"><span className="mobile-field-label">Proof status</span><span className={`status-pill ${latest?.reviewState || "unchecked"}`}>{latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof"}</span></div>
-              <div data-label="Location / serial"><span className="mobile-field-label">Location / serial</span><span className="reports-field-value"><span>{location}</span>{latest?.serialNumber ? <small>Serial: {latest.serialNumber}</small> : null}</span></div>
+              <div data-label="Location / serial"><span className="mobile-field-label">Location / serial</span><span className="reports-field-value"><span>{location}</span>{hasMeaningfulSerial(latest?.serialNumber) ? <small>Serial: {latest.serialNumber}</small> : null}</span></div>
             </article>
           );
         }) : (
@@ -8183,6 +8233,16 @@ function activityContextName(event) {
 
 function activityPacketRow(event) {
   return event?.context?.packetLine || event?.details?.packetLine || "a packet row";
+}
+
+function activityDetailValue(key, value) {
+  if (key === "requestedFields") {
+    const proofRequestLabelByValue = new Map(proofRequestOptions.map(option => [option.value, option.label]));
+    return (Array.isArray(value) ? value : [value])
+      .map(field => proofRequestLabelByValue.get(field) || formatItemStatus(field))
+      .join(", ");
+  }
+  return Array.isArray(value) ? value.join(", ") : String(value);
 }
 
 function activitySentence(event) {
@@ -8465,7 +8525,7 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
                       {safeDetails.map(([key, value]) => (
                         <div key={key}>
                           <dt>{ACTIVITY_DETAIL_LABELS[key]}</dt>
-                          <dd>{Array.isArray(value) ? value.join(", ") : String(value)}</dd>
+                          <dd>{activityDetailValue(key, value)}</dd>
                         </div>
                       ))}
                     </dl>

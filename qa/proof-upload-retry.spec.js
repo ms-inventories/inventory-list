@@ -138,11 +138,11 @@ test.describe("proof upload retry and cleanup", () => {
       });
 
       const { drawer, proofForm } = await openProofForm(page, scenario);
-      await proofForm.getByLabel("Add proof photos").setInputFiles(photoFile("retry-proof.jpg"));
+      await proofForm.getByLabel("Add item photos").setInputFiles(photoFile("retry-proof.jpg"));
       const submitButton = proofForm.getByRole("button", { name: "Submit proof", exact: true });
       await submitButton.click();
 
-      await expect(proofForm.getByRole("button", { name: "Submitting...", exact: true })).toBeDisabled();
+      await expect(proofForm.getByRole("button", { name: "Sending evidence...", exact: true })).toBeDisabled();
       await expect(proofForm.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
       await expect(proofForm.getByPlaceholder("Where you found or checked it")).toBeDisabled();
       await expect.poll(() => submissionAttempts).toBe(1);
@@ -203,7 +203,7 @@ test.describe("proof upload retry and cleanup", () => {
 
       const { drawer, proofForm } = await openProofForm(page, scenario);
       const firstPhoto = "remove-staged-proof.jpg";
-      await proofForm.getByLabel("Add proof photos").setInputFiles(photoFile(firstPhoto));
+      await proofForm.getByLabel("Add item photos").setInputFiles(photoFile(firstPhoto));
       await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
       await expect(page.getByRole("alert").first()).toContainText("Forced proof validation failure");
       await expect.poll(() => stagedUploadIds.length).toBe(1);
@@ -216,7 +216,7 @@ test.describe("proof upload retry and cleanup", () => {
       await expect.poll(() => discardedUploadIds).toEqual([stagedUploadIds[0]]);
 
       const secondPhoto = "cancel-staged-proof.jpg";
-      await proofForm.getByLabel("Add proof photos").setInputFiles(photoFile(secondPhoto));
+      await proofForm.getByLabel("Add item photos").setInputFiles(photoFile(secondPhoto));
       await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
       await expect(page.getByRole("alert").first()).toContainText("Forced proof validation failure");
       await expect.poll(() => stagedUploadIds.length).toBe(2);

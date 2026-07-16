@@ -503,10 +503,10 @@ async function runFieldSessionSmoke(token) {
     await itemRow.getByRole("button", { name: "Claim item", exact: true }).click();
     const proofDrawer = crewPage.getByRole("dialog", { name: packetLine, exact: true });
     await proofDrawer.waitFor({ state: "visible" });
-    await proofDrawer.getByRole("button", { name: "Found", exact: true }).click();
+    await proofDrawer.getByRole("button", { name: "Found / accounted for", exact: true }).click();
     await proofDrawer.getByPlaceholder("Where you found or checked it").fill("Production smoke cage A1");
-    await proofDrawer.getByLabel("Serial number", { exact: true }).fill(`SMOKE-${TEST_RUN.slice(-8).toUpperCase()}`);
-    await proofDrawer.getByLabel("Add proof photos").setInputFiles({
+    await proofDrawer.getByLabel("Serial number (if serialized)", { exact: true }).fill(`SMOKE-${TEST_RUN.slice(-8).toUpperCase()}`);
+    await proofDrawer.getByLabel("Add item photos").setInputFiles({
       name: `mvp-smoke-${TEST_RUN}.png`,
       mimeType: "image/png",
       buffer: VALID_ONE_PIXEL_PNG

@@ -6388,6 +6388,54 @@ button {
   text-transform: uppercase;
 }
 
+.proof-field-help {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.proof-evidence-requirement {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  border: 1px solid #e3c58e;
+  border-radius: var(--radius);
+  background: #fff8e9;
+  color: #765018;
+  padding: 10px;
+}
+
+.proof-evidence-requirement.satisfied {
+  border-color: #b8c7b2;
+  background: #eef3eb;
+  color: var(--primary-strong);
+}
+
+.proof-evidence-requirement > svg {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+}
+
+.proof-evidence-requirement > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.proof-evidence-requirement strong {
+  font-size: 0.8rem;
+  line-height: 1.25;
+}
+
+.proof-evidence-requirement span {
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .proof-request-context {
   display: grid;
   gap: 4px;
@@ -6425,6 +6473,8 @@ button {
   color: var(--muted);
   cursor: pointer;
   font-weight: 850;
+  line-height: 1.2;
+  padding: 6px;
 }
 
 .segmented-control button.active {
@@ -6608,6 +6658,10 @@ button {
   padding: 12px;
 }
 
+.review-card.accountability-note-only {
+  border-color: #b8c7b2;
+}
+
 .review-card-main {
   display: grid;
   gap: 4px;
@@ -6624,6 +6678,35 @@ button {
   font-size: 0.86rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.accountability-evidence-label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  border: 1px solid #b8c7b2;
+  border-radius: 9px;
+  background: #eef3eb;
+  color: var(--primary-strong);
+  padding: 9px 10px;
+}
+
+.accountability-evidence-label > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.accountability-evidence-label > span {
+  display: grid;
+  gap: 2px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.accountability-evidence-label strong {
+  font-size: 0.78rem;
 }
 
 .review-request-note {
@@ -6917,6 +7000,25 @@ button {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 750;
+  line-height: 1.4;
+}
+
+.saved-evidence-instruction {
+  display: grid;
+  gap: 3px;
+  border-left: 3px solid var(--primary);
+  background: #eef3eb;
+  color: var(--primary-strong);
+  padding: 9px 10px;
+}
+
+.saved-evidence-instruction strong {
+  font-size: 0.82rem;
+}
+
+.saved-evidence-instruction span {
+  font-size: 0.75rem;
+  font-weight: 700;
   line-height: 1.4;
 }
 
@@ -9648,6 +9750,23 @@ button {
 
   .proof-form textarea.input {
     min-height: 96px;
+  }
+
+  .proof-evidence-requirement,
+  .accountability-evidence-label {
+    padding: 11px;
+  }
+
+  .saved-evidence-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .saved-evidence-option {
+    min-height: 132px;
+  }
+
+  .saved-evidence-option img {
+    height: 94px;
   }
 
   .segmented-control button,

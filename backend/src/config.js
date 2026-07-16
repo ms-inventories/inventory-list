@@ -113,7 +113,7 @@ export const config = {
     secretUsesMediaFallback: !configuredCrewAccessSecret,
     grantTtlHours: boundedInteger(process.env.CREW_GRANT_TTL_HOURS, 168, 1, 168),
     maxActiveGrantsPerSession: boundedInteger(process.env.CREW_MAX_ACTIVE_GRANTS_PER_SESSION, 25, 1, 100),
-    maxStagedUploadsPerAuthSession: boundedInteger(process.env.CREW_MAX_STAGED_UPLOADS_PER_SESSION, 12, 3, 100),
+    maxStagedUploadsPerAuthSession: boundedInteger(process.env.CREW_MAX_STAGED_UPLOADS_PER_SESSION, 12, 12, 100),
     maxFailuresPerGrant: boundedInteger(process.env.CREW_MAX_FAILURES_PER_GRANT, 5, 3, 10),
     maxFailuresPerWindow: boundedInteger(process.env.CREW_MAX_FAILURES_PER_WINDOW, 5, 3, 20),
     maxTenantFailuresPerWindow: boundedInteger(process.env.CREW_MAX_TENANT_FAILURES_PER_WINDOW, 100, 20, 1000),

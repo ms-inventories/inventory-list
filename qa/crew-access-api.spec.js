@@ -84,7 +84,11 @@ test("one-time crew access is session scoped and closing revokes it immediately"
 
   const contributorUnclaimed = await request.post(`${API_URL}/session-items/${secondItem.sessionItem.id}/submissions`, {
     headers: identityHeaders(qaContributor),
-    data: { status: "found", locationText: "Should not save" }
+    data: {
+      status: "found",
+      locationText: "Should not save",
+      note: "Verified during the unclaimed-item authorization test."
+    }
   });
   expect(contributorUnclaimed.status()).toBe(409);
   expect(await contributorUnclaimed.json()).toMatchObject({
@@ -138,7 +142,11 @@ test("one-time crew access is session scoped and closing revokes it immediately"
 
     const unclaimedProof = await crew.post(`${API_URL}/session-items/${secondItem.sessionItem.id}/submissions`, {
       headers: crewHeaders({ mutate: true }),
-      data: { status: "found", locationText: "Should not save" }
+      data: {
+        status: "found",
+        locationText: "Should not save",
+        note: "Verified during the unclaimed crew authorization test."
+      }
     });
     expect(unclaimedProof.status()).toBe(409);
     expect(await unclaimedProof.json()).toMatchObject({ code: "conflict" });
@@ -518,7 +526,11 @@ test("leader revoke releases untouched claims but preserves submitted work", asy
     }
     await json(await crew.post(`${API_URL}/session-items/${submittedItem.sessionItem.id}/submissions`, {
       headers: crewHeaders({ mutate: true }),
-      data: { status: "not_found", locationText: "QA submitted location" }
+      data: {
+        status: "not_found",
+        locationText: "QA submitted location",
+        note: "Checked the assigned area; the item was not present."
+      }
     }));
 
     const revoked = await json(await request.post(
@@ -840,7 +852,7 @@ test("crew staging quota is released by discard or attachment", async ({ request
       data: { memberId: "self" }
     }));
     const uploads = [];
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 12; index += 1) {
       const upload = await json(await crew.post(`${API_URL}/uploads/photos`, {
         headers: crewHeaders({ mutate: true }),
         data: {
@@ -864,24 +876,24 @@ test("crew staging quota is released by discard or attachment", async ({ request
     expect(overQuota.status()).toBe(409);
     expect(await overQuota.json()).toMatchObject({ code: "crew_upload_quota" });
 
-    const missingOriginDiscard = await crew.delete(`${API_URL}/uploads/photos/${uploads[3].uploadId}`, {
+    const missingOriginDiscard = await crew.delete(`${API_URL}/uploads/photos/${uploads[11].uploadId}`, {
       headers: crewHeaders()
     });
     expect(missingOriginDiscard.status()).toBe(403);
-    const foreignDiscard = await request.delete(`${API_URL}/uploads/photos/${uploads[3].uploadId}`, {
+    const foreignDiscard = await request.delete(`${API_URL}/uploads/photos/${uploads[11].uploadId}`, {
       headers: identityHeaders(qaContributor)
     });
     expect(foreignDiscard.status()).toBe(403);
 
-    const discard = await json(await crew.delete(`${API_URL}/uploads/photos/${uploads[3].uploadId}`, {
+    const discard = await json(await crew.delete(`${API_URL}/uploads/photos/${uploads[11].uploadId}`, {
       headers: crewHeaders({ mutate: true })
     }));
-    expect(discard).toEqual({ discarded: true, uploadId: uploads[3].uploadId });
-    const discardedRow = await database.query("SELECT id FROM media_uploads WHERE id = $1", [uploads[3].uploadId]);
+    expect(discard).toEqual({ discarded: true, uploadId: uploads[11].uploadId });
+    const discardedRow = await database.query("SELECT id FROM media_uploads WHERE id = $1", [uploads[11].uploadId]);
     expect(discardedRow.rows).toHaveLength(0);
     const discardAudit = await database.query(
       "SELECT action FROM audit_events WHERE entity_id = $1 AND action = 'media_upload.discarded'",
-      [uploads[3].uploadId]
+      [uploads[11].uploadId]
     );
     expect(discardAudit.rows).toHaveLength(1);
     const replacement = await json(await crew.post(`${API_URL}/uploads/photos`, {
@@ -899,7 +911,7 @@ test("crew staging quota is released by discard or attachment", async ({ request
       headers: crewHeaders({ mutate: true }),
       data: {
         status: "found",
-        photos: uploads.slice(0, 3).map(photo => ({ uploadId: photo.uploadId, kind: "general" }))
+        photos: uploads.slice(0, 10).map(photo => ({ uploadId: photo.uploadId, kind: "general" }))
       }
     }));
     const attachedDiscard = await crew.delete(`${API_URL}/uploads/photos/${uploads[0].uploadId}`, {
