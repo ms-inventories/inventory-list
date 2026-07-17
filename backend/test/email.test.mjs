@@ -55,6 +55,23 @@ test("newsletter issue message includes branded HTML and a text fallback", () =>
   assert.match(message.html, />Unsubscribe</);
 });
 
+test("newsletter issue message keeps the edition label from a published database row", () => {
+  const message = buildNewsletterIssueMessage({
+    issue: {
+      title: "July family update",
+      edition_label: "Published edition",
+      summary: "A published issue summary.",
+      body: "Published issue body."
+    },
+    publicUrl: "https://876en.org/",
+    unsubscribeUrl: "https://876en.org/#/unsubscribe?email=test%40example.com"
+  });
+
+  assert.equal(message.subject, "Published edition: July family update");
+  assert.match(message.text, /^Published edition/m);
+  assert.match(message.html, />Published edition</);
+});
+
 test("newsletter issue message escapes content and ignores unsafe links", () => {
   const message = buildNewsletterIssueMessage({
     issue: {

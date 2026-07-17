@@ -160,7 +160,7 @@ export function buildNewsletterSubscriberReviewMessage({ displayName, decision, 
 
 export function buildNewsletterIssueMessage({ issue, unsubscribeUrl, publicUrl }) {
   const title = String(issue?.title || "Black Shadow Company newsletter").trim();
-  const editionLabel = String(issue?.editionLabel || "").trim();
+  const editionLabel = String(issue?.editionLabel || issue?.edition_label || "").trim();
   const summary = String(issue?.summary || "").trim();
   const body = String(issue?.body || "").trim();
   const subject = editionLabel ? `${editionLabel}: ${title}` : title;
