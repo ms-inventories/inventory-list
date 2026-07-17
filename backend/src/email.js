@@ -158,6 +158,87 @@ export function buildNewsletterSubscriberReviewMessage({ displayName, decision, 
   return { subject, text, html };
 }
 
+export function buildNewsletterIssueMessage({ issue, unsubscribeUrl, publicUrl }) {
+  const title = String(issue?.title || "Black Shadow Company newsletter").trim();
+  const editionLabel = String(issue?.editionLabel || "").trim();
+  const summary = String(issue?.summary || "").trim();
+  const body = String(issue?.body || "").trim();
+  const subject = editionLabel ? `${editionLabel}: ${title}` : title;
+  const normalizedPublicUrl = safePublicUrl(publicUrl);
+  const normalizedUnsubscribeUrl = safePublicUrl(unsubscribeUrl);
+  const text = compactLines([
+    editionLabel || null,
+    title,
+    "",
+    summary || null,
+    "",
+    body,
+    "",
+    normalizedPublicUrl ? `Visit the 876 EN site: ${normalizedPublicUrl}` : null,
+    normalizedUnsubscribeUrl ? `Unsubscribe: ${normalizedUnsubscribeUrl}` : null
+  ]);
+  const preheader = summary || body.replace(/\s+/g, " ").slice(0, 150) || title;
+  const bodyParagraphs = body
+    .split(/\n\s*\n/)
+    .map(paragraph => paragraph.trim())
+    .filter(Boolean)
+    .map(paragraph => `
+                <p style="color:#3f473d;font-family:Arial,sans-serif;font-size:16px;line-height:26px;margin:0 0 18px;">${escapeHtml(paragraph).replaceAll("\n", "<br>")}</p>`)
+    .join("");
+  const publicButton = normalizedPublicUrl
+    ? `
+            <tr>
+              <td style="padding:4px 36px 34px;">
+                <a href="${escapeHtml(normalizedPublicUrl)}" style="background:#d9b96e;border-radius:6px;color:#172015;display:inline-block;font-family:Arial,sans-serif;font-size:15px;font-weight:700;line-height:20px;padding:13px 20px;text-decoration:none;">Visit the 876 EN site</a>
+              </td>
+            </tr>`
+    : "";
+  const unsubscribeLink = normalizedUnsubscribeUrl
+    ? `<a href="${escapeHtml(normalizedUnsubscribeUrl)}" style="color:#596452;text-decoration:underline;">Unsubscribe</a>`
+    : "";
+  const footerSeparator = unsubscribeLink ? " &nbsp;&bull;&nbsp; " : "";
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(subject)}</title>
+  </head>
+  <body style="background:#ece9df;margin:0;padding:0;">
+    <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${escapeHtml(preheader)}</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#ece9df;width:100%;">
+      <tr>
+        <td align="center" style="padding:28px 12px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#ffffff;border:1px solid #d8d4c8;border-radius:10px;box-shadow:0 4px 18px rgba(23,32,21,.08);max-width:600px;overflow:hidden;width:100%;">
+            <tr>
+              <td style="background:#263322;border-bottom:4px solid #d9b96e;padding:28px 36px;">
+                <div style="color:#d9b96e;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">876 EN</div>
+                <div style="color:#ffffff;font-family:Georgia,serif;font-size:24px;font-weight:700;line-height:30px;margin-top:5px;">Black Shadow Company</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:34px 36px 10px;">
+                ${editionLabel ? `<div style="color:#4f6b25;font-family:Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">${escapeHtml(editionLabel)}</div>` : ""}
+                <h1 style="color:#1f291d;font-family:Georgia,serif;font-size:30px;line-height:37px;margin:${editionLabel ? "8px" : "0"} 0 16px;">${escapeHtml(title)}</h1>
+                ${summary ? `<p style="color:#596452;font-family:Arial,sans-serif;font-size:17px;font-weight:600;line-height:27px;margin:0 0 24px;">${escapeHtml(summary)}</p>` : ""}
+                <div style="border-top:1px solid #e2ded2;padding-top:24px;">${bodyParagraphs}</div>
+              </td>
+            </tr>${publicButton}
+            <tr>
+              <td style="background:#f6f4ed;border-top:1px solid #e2ded2;padding:22px 36px;">
+                <p style="color:#697066;font-family:Arial,sans-serif;font-size:13px;line-height:20px;margin:0;">Black Shadow Company newsletter${footerSeparator}${unsubscribeLink}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  return { subject, text, html };
+}
+
 export async function sendProofSubmittedEmail({
   to,
   tenantName,
@@ -241,22 +322,18 @@ export async function sendNewsletterIssueEmail({ to, issue, unsubscribeUrl }) {
     return { sent: false, reason: "smtp_not_configured" };
   }
 
-  const subject = issue.editionLabel
-    ? `${issue.editionLabel}: ${issue.title}`
-    : issue.title;
-  const text = compactLines([
-    issue.summary || null,
-    "",
-    issue.body,
-    "",
-    unsubscribeUrl ? `Unsubscribe: ${unsubscribeUrl}` : null
-  ]);
+  const { subject, text, html } = buildNewsletterIssueMessage({
+    issue,
+    unsubscribeUrl,
+    publicUrl: config.publicAppUrl
+  });
 
   await getTransporter().sendMail({
     from: newsletterSenderAddress(),
     to,
     subject,
-    text
+    text,
+    html
   });
 
   return { sent: true };

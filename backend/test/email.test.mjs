@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildNewsletterSubscriberReviewMessage } from "../src/email.js";
+import {
+  buildNewsletterIssueMessage,
+  buildNewsletterSubscriberReviewMessage
+} from "../src/email.js";
 
 test("approved newsletter review message includes branded HTML and a text fallback", () => {
   const message = buildNewsletterSubscriberReviewMessage({
@@ -29,4 +32,44 @@ test("newsletter review message escapes subscriber content and ignores unsafe li
   assert.doesNotMatch(message.html, /javascript:/);
   assert.doesNotMatch(message.html, /Visit the 876 EN site/);
   assert.match(message.text, /was not approved at this time/);
+});
+
+test("newsletter issue message includes branded HTML and a text fallback", () => {
+  const message = buildNewsletterIssueMessage({
+    issue: {
+      title: "July family update",
+      editionLabel: "Test edition",
+      summary: "A short summary for the inbox preview.",
+      body: "First paragraph.\n\nSecond paragraph."
+    },
+    publicUrl: "https://876en.org/",
+    unsubscribeUrl: "https://876en.org/#/unsubscribe?email=test%40example.com"
+  });
+
+  assert.equal(message.subject, "Test edition: July family update");
+  assert.match(message.text, /First paragraph/);
+  assert.match(message.text, /Unsubscribe:/);
+  assert.match(message.html, /Black Shadow Company/);
+  assert.match(message.html, /A short summary for the inbox preview/);
+  assert.match(message.html, /Visit the 876 EN site/);
+  assert.match(message.html, />Unsubscribe</);
+});
+
+test("newsletter issue message escapes content and ignores unsafe links", () => {
+  const message = buildNewsletterIssueMessage({
+    issue: {
+      title: "<script>alert('title')</script>",
+      editionLabel: "<b>Edition</b>",
+      summary: "<img src=x onerror=alert(1)>",
+      body: "Hello <script>alert('body')</script>"
+    },
+    publicUrl: "javascript:alert('x')",
+    unsubscribeUrl: "data:text/html,bad"
+  });
+
+  assert.doesNotMatch(message.html, /<script>/);
+  assert.doesNotMatch(message.html, /<img/);
+  assert.doesNotMatch(message.html, /javascript:/);
+  assert.doesNotMatch(message.html, />Unsubscribe</);
+  assert.doesNotMatch(message.html, /Visit the 876 EN site/);
 });
