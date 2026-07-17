@@ -10923,6 +10923,39 @@ button {
   }
 }
 
+/* Keep compact admin pages focused on the next action. The public-site link
+   remains available in the mobile newsletter drawer, while summary cards use
+   the horizontal room available on phones and tablets. */
+@media (max-width: 860px) {
+  .newsletter-heading-actions > a {
+    display: none;
+  }
+}
+
+@media (min-width: 600px) and (max-width: 860px) {
+  .newsletter-stat-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .reports-summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .reports-summary-grid > div {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 599px) {
+  .reports-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reports-summary-grid > div:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
 @media print {
   @page {
     margin: 0.55in;
