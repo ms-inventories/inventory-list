@@ -5348,6 +5348,39 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     }
   }
 
+  async function deleteIssue() {
+    if (!selectedIssueId) return;
+    const scope = "issue";
+    const action = "delete";
+    if (!beginNewsletterAction(scope, action)) return;
+    const issueId = selectedIssueId;
+    showActionStatus(scope, "Deleting newsletter issue...");
+    setStatus({ text: "", isError: false });
+    try {
+      const data = await apiRequest(`/newsletter/admin/issues/${issueId}`, {
+        method: "DELETE",
+        token
+      });
+      setIssues(current => current.filter(issue => issue.id !== issueId));
+      setDeliveries(current => current.filter(delivery => delivery.issueId !== issueId));
+      setSelectedIssueId("");
+      setForm(newsletterIssueForm());
+      const refreshed = await loadNewsletter({ quiet: true, preferredIssueId: "" });
+      const deliveryText = data.deletedDeliveries
+        ? ` ${data.deletedDeliveries} delivery record${data.deletedDeliveries === 1 ? "" : "s"} removed.`
+        : "";
+      if (!refreshed.ok && !refreshed.stale) {
+        showActionStatus(scope, `Newsletter issue deleted.${deliveryText} The latest list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
+      } else {
+        showActionStatus(scope, `Newsletter issue deleted.${deliveryText}`);
+      }
+    } catch (error) {
+      showActionStatus(scope, getApiErrorMessage(error), true);
+    } finally {
+      finishNewsletterAction(scope, action);
+    }
+  }
+
   async function sendTestIssue() {
     if (!selectedIssueId) {
       showActionStatus("issue", "Save the issue before sending a test.", true);
@@ -6119,6 +6152,12 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <Send aria-hidden="true" />
                       <span>{issueAction === "publish" ? "Publishing..." : selectedIssue?.status === "published" ? "Published" : "Publish"}</span>
                     </button>
+                    {selectedIssueId ? (
+                      <button className="btn btn-danger-soft" type="button" onClick={deleteIssue}>
+                        <Trash2 aria-hidden="true" />
+                        <span>{issueAction === "delete" ? "Deleting..." : "Delete issue"}</span>
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="newsletter-test-send">

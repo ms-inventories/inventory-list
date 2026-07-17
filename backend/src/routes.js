@@ -3244,6 +3244,54 @@ export function registerRoutes(app) {
     return { issue: rowToNewsletterIssue(updated, { includeBody: true }) };
   });
 
+  route(app, "delete", "/api/newsletter/admin/issues/:issueId", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+
+    const deleted = await withTransaction(async client => {
+      const deliveryResult = await client.query(
+        "SELECT count(*)::int AS count FROM newsletter_deliveries WHERE issue_id = $1",
+        [request.params.issueId]
+      );
+      const result = await client.query(
+        `
+          DELETE FROM newsletter_issues
+          WHERE id = $1
+          RETURNING *
+        `,
+        [request.params.issueId]
+      );
+
+      if (!result.rows[0]) return null;
+
+      const deletedDeliveries = Number(deliveryResult.rows[0]?.count || 0);
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "newsletter.issue.deleted",
+        entityType: "newsletter_issue",
+        entityId: result.rows[0].id,
+        metadata: {
+          title: result.rows[0].title,
+          status: result.rows[0].status,
+          deletedDeliveries
+        }
+      });
+
+      return { issue: result.rows[0], deletedDeliveries };
+    });
+
+    if (!deleted) {
+      reply.code(404);
+      throw new Error("Newsletter issue not found");
+    }
+
+    return {
+      ok: true,
+      issue: rowToNewsletterIssue(deleted.issue, { includeBody: true }),
+      deletedDeliveries: deleted.deletedDeliveries
+    };
+  });
+
   route(app, "post", "/api/newsletter/admin/issues/:issueId/publish", async (request, reply) => {
     const auth = await requireFrgAdmin(request, reply);
 
