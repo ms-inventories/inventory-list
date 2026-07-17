@@ -14,14 +14,19 @@ SMTP_USER=<brevo-smtp-login>
 SMTP_PASS=<brevo-smtp-key>
 EMAIL_FROM_NAME=876 EN Inventory
 EMAIL_FROM_ADDRESS=no-reply@876en.org
+NEWSLETTER_FROM_NAME=Black Shadow Company
+NEWSLETTER_FROM_ADDRESS=newsletter@876en.org
 PUBLIC_APP_URL=https://876en.org
 ```
+
+`NEWSLETTER_FROM_*` uses the same Brevo SMTP credentials while giving newsletter messages their own recognizable sender. Add and authenticate `876en.org` in the existing Brevo account; a separate Brevo account is not required. Make sure the selected address exists as a mailbox or forwards replies to the FRG team.
 
 Do not commit real SMTP credentials. Rotate any key that is pasted into chat, logs, screenshots, or local notes.
 
 ## Brevo Checks
 
-- Verify the sender address or sending domain in Brevo before publishing.
+- Add `876en.org` as a sending domain in Brevo and publish its DKIM and DMARC DNS records.
+- Add `newsletter@876en.org` as a sender after the domain is authenticated.
 - Send a test issue from the newsletter admin screen before publishing to subscribers.
 - Confirm Brevo accepts the message and that the sender, subject, and unsubscribe link look right.
 - Publish only after the test message looks correct.

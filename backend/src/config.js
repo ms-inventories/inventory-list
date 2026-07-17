@@ -142,7 +142,9 @@ export const config = {
     user: process.env.SMTP_USER || "",
     pass: process.env.SMTP_PASS || "",
     fromName: process.env.EMAIL_FROM_NAME || "876 EN Inventory",
-    fromAddress: process.env.EMAIL_FROM_ADDRESS || "no-reply@876en.org"
+    fromAddress: process.env.EMAIL_FROM_ADDRESS || "no-reply@876en.org",
+    newsletterFromName: process.env.NEWSLETTER_FROM_NAME || "",
+    newsletterFromAddress: process.env.NEWSLETTER_FROM_ADDRESS || ""
   }
 };
 

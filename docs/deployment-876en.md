@@ -182,7 +182,11 @@ SMTP_USER=<brevo smtp login>
 SMTP_PASS=<brevo smtp key>
 EMAIL_FROM_NAME=876 EN Inventory
 EMAIL_FROM_ADDRESS=no-reply@876en.org
+NEWSLETTER_FROM_NAME=Black Shadow Company
+NEWSLETTER_FROM_ADDRESS=newsletter@876en.org
 ```
+
+Use the existing Brevo account for both `nsvss.com` and `876en.org`. Add and authenticate `876en.org` as another sending domain, then create the newsletter sender; both domains can use the same SMTP credentials.
 
 Implemented email events:
 
