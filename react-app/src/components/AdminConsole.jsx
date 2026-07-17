@@ -4941,7 +4941,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [selectedContentBlockId, setSelectedContentBlockId] = useState("");
   const [form, setForm] = useState(() => newsletterIssueForm());
   const [contentForm, setContentForm] = useState(() => frgContentForm());
-  const [testEmail, setTestEmail] = useState(() => me?.user?.email || "");
+  const [testEmail, setTestEmail] = useState(() => {
+    const candidate = String(me?.identity?.email || me?.user?.email || "").trim();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : "";
+  });
   const [query, setQuery] = useState("");
   const [contentQuery, setContentQuery] = useState("");
   const [contentTypeFilter, setContentTypeFilter] = useState("all");
@@ -6124,7 +6127,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <input
                         id="newsletterTestEmail"
                         className="input"
-                        type="email"
+                        type="text"
+                        inputMode="email"
+                        autoComplete="email"
                         value={testEmail}
                         placeholder="name@example.com"
                         onChange={event => setTestEmail(event.target.value)}
