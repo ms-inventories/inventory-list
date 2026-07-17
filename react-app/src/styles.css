@@ -8272,6 +8272,10 @@ button {
     justify-content: center;
   }
 
+  .newsletter-subscriber-actions .btn:only-child {
+    grid-column: 1 / -1;
+  }
+
   .newsletter-test-send-row {
     grid-template-columns: 1fr;
   }
@@ -8285,6 +8289,11 @@ button {
   .newsletter-delivery-row-meta {
     justify-items: start;
     text-align: left;
+  }
+
+  .newsletter-delivery-list {
+    max-height: none;
+    overflow-y: visible;
   }
 
   .platform-table-toolbar {
@@ -9763,7 +9772,38 @@ button {
   display: none;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 860px) {
+  .leader-shell .btn {
+    min-height: 44px;
+  }
+
+  .search-clear-button,
+  .leader-search > button,
+  .platform-search > button,
+  .proof-photo-selection-item > button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .search-clear-button,
+  .leader-search > button,
+  .platform-search > button {
+    right: 1px;
+  }
+
+  .member-role-select,
+  .proof-request-chips button,
+  .session-archive summary,
+  .packet-import-history-heading,
+  .session-detail-disclosure > summary {
+    min-height: 44px;
+  }
+
+  .session-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+
   .desktop-secondary-action {
     display: none !important;
   }

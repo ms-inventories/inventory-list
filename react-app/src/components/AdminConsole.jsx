@@ -4938,6 +4938,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [subscriberStatusFilter, setSubscriberStatusFilter] = useState("pending");
   const [reviewNotes, setReviewNotes] = useState({});
   const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
+  const [newsletterLoadState, setNewsletterLoadState] = useState("loading");
   const [actionStatus, setActionStatus] = useState({ scope: "", text: "", isError: false });
   const [newsletterActions, setNewsletterActions] = useState(() => new Map());
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -5029,7 +5030,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     const requestId = newsletterLoadRequestRef.current + 1;
     newsletterLoadRequestRef.current = requestId;
     try {
-      if (!quiet) setStatus({ text: "Loading newsletter...", isError: false });
+      if (!quiet) {
+        setNewsletterLoadState(current => current === "ready" ? current : "loading");
+        setStatus({ text: "Loading newsletter...", isError: false });
+      }
       const data = await apiRequest("/newsletter/admin", { token });
       if (requestId !== newsletterLoadRequestRef.current) return { ok: false, stale: true };
       const nextIssues = data.issues || [];
@@ -5042,6 +5046,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setDeliveries(nextDeliveries);
       setSubscriberStats(data.subscriberStats || { pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
       setDeliverySettings(data.deliverySettings || { emailConfigured: false });
+      setNewsletterLoadState("ready");
 
       const hasSelectedContentBlock = preferredContentBlockId && nextContentBlocks.some(block => block.id === preferredContentBlockId);
       if (!hasSelectedContentBlock) {
@@ -5065,7 +5070,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       return { ok: true };
     } catch (error) {
       if (requestId !== newsletterLoadRequestRef.current) return { ok: false, stale: true };
-      if (!quiet) setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (!quiet) {
+        setNewsletterLoadState(current => current === "ready" ? current : "error");
+        setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
       return { ok: false, error };
     }
   }
@@ -5100,7 +5108,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setActiveSection(section);
     setActionStatus({ scope: "", text: "", isError: false });
     setStatus({ text: "", isError: false });
-    closeNewsletterNav(false);
+    closeNewsletterNav();
   }
 
   function openNewsletterNav() {
@@ -5121,6 +5129,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setContentForm(frgContentForm(block));
     setActionStatus(current => current.scope === "content" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
+    if (isMobileViewport) {
+      window.requestAnimationFrame(() => contentTitleRef.current?.focus());
+    }
   }
 
   function startNewContentBlock() {
@@ -5139,6 +5150,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setForm(newsletterIssueForm(issue));
     setActionStatus(current => current.scope === "issue" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
+    if (isMobileViewport) {
+      window.requestAnimationFrame(() => issueTitleRef.current?.focus());
+    }
   }
 
   function startNewDraft() {
@@ -5582,14 +5596,25 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <button className="icon-button platform-topbar-refresh" type="button" disabled={hasNewsletterAction} onClick={refreshNewsletter} aria-label={refreshAction ? "Refreshing newsletter" : "Refresh newsletter"}>
               <RefreshCw aria-hidden="true" />
             </button>
-            <div className="leader-user-card newsletter-user-card">
-              <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "N").slice(0, 1).toUpperCase()}</span>
-              <div>
-                <strong>{me?.user?.display_name || me?.user?.email || "Newsletter user"}</strong>
-                <span>{roleLabel}</span>
+            {isMobileViewport ? (
+              <button
+                className="leader-user-card leader-user-trigger newsletter-user-card"
+                type="button"
+                aria-label="Open newsletter account actions"
+                aria-expanded={isMobileNavOpen}
+                onClick={openNewsletterNav}
+              >
+                <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "N").slice(0, 1).toUpperCase()}</span>
+              </button>
+            ) : (
+              <div className="leader-user-card newsletter-user-card">
+                <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "N").slice(0, 1).toUpperCase()}</span>
+                <div>
+                  <strong>{me?.user?.display_name || me?.user?.email || "Newsletter user"}</strong>
+                  <span>{roleLabel}</span>
+                </div>
               </div>
-              <ChevronDown aria-hidden="true" />
-            </div>
+            )}
             <button className="btn btn-secondary btn-small platform-topbar-signout" type="button" onClick={onLogout}>
               <LogOut aria-hidden="true" />
               <span>Sign out</span>
@@ -5615,7 +5640,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                 <span>View public site</span>
               </a>
               {activeSection === "content" ? (
-                <button className="btn btn-primary" type="button" disabled={Boolean(contentAction)} onClick={startNewContentBlock}>
+                <button className="btn btn-primary" type="button" disabled={newsletterLoadState !== "ready" || Boolean(contentAction)} onClick={startNewContentBlock}>
                   <Plus aria-hidden="true" />
                   <span>Add homepage update</span>
                 </button>
@@ -5626,7 +5651,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     <Download aria-hidden="true" />
                     <span>Export deliveries</span>
                   </button>
-                  <button className="btn btn-primary" type="button" disabled={Boolean(issueAction)} onClick={startNewDraft}>
+                  <button className="btn btn-primary" type="button" disabled={newsletterLoadState !== "ready" || Boolean(issueAction)} onClick={startNewDraft}>
                     <Plus aria-hidden="true" />
                     <span>Write newsletter</span>
                   </button>
@@ -5637,13 +5662,31 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
           <StatusLine status={status} />
 
-          {activeSection === "issues" && !isEmailConfigured ? (
+          {newsletterLoadState !== "ready" ? (
+            <section className="platform-table-card newsletter-load-card" aria-live="polite">
+              <EmptyPanel
+                title={newsletterLoadState === "error" ? "Newsletter could not load" : "Loading newsletter"}
+                body={newsletterLoadState === "error"
+                  ? "Try again before editing content, issues, or subscriber requests."
+                  : "Fetching the latest content, issues, subscribers, and delivery history."}
+                action={newsletterLoadState === "error" ? (
+                  <button className="btn btn-primary" type="button" disabled={hasNewsletterAction} onClick={refreshNewsletter}>
+                    <RefreshCw aria-hidden="true" />
+                    <span>Try again</span>
+                  </button>
+                ) : null}
+              />
+            </section>
+          ) : null}
+
+          {newsletterLoadState === "ready" && activeSection === "issues" && !isEmailConfigured ? (
             <div className="newsletter-delivery-note newsletter-delivery-note-inline" role="note">
               <MailPlus aria-hidden="true" />
               <span>Email delivery is not configured in this environment. You can still write, test the layout, and save issues; live sending will be skipped.</span>
             </div>
           ) : null}
 
+          {newsletterLoadState === "ready" ? (
           <section className="platform-stat-grid newsletter-stat-grid" aria-label="Newsletter totals">
             {activeSection === "content" ? (
               <>
@@ -5725,8 +5768,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               </>
             )}
           </section>
+          ) : null}
 
-          {activeSection === "content" ? (
+          {newsletterLoadState === "ready" && activeSection === "content" ? (
             <div className="newsletter-admin-grid frg-content-admin-grid">
               <section className="platform-table-card newsletter-issue-list-card">
                 <div className="platform-table-toolbar">
@@ -5939,7 +5983,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             </div>
           ) : null}
 
-          {activeSection === "issues" ? (
+          {newsletterLoadState === "ready" && activeSection === "issues" ? (
           <div className="newsletter-admin-grid">
             <section className="platform-table-card newsletter-issue-list-card">
               <div className="platform-table-toolbar">
@@ -6139,7 +6183,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
           </div>
           ) : null}
 
-          {activeSection === "subscribers" ? (
+          {newsletterLoadState === "ready" && activeSection === "subscribers" ? (
           <section className="platform-table-card newsletter-subscriber-card">
             <div className="newsletter-subscriber-heading">
               <div>
@@ -7448,6 +7492,7 @@ function LeaderOverviewPanel({
   onInviteCrew,
   onOpenReview
 }) {
+  const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [sessions, setSessions] = useState([]);
   const [pendingItems, setPendingItems] = useState([]);
   const [assignmentList, setAssignmentList] = useState("available");
@@ -7544,6 +7589,7 @@ function LeaderOverviewPanel({
     mine: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "mine").length,
     team: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "team").length
   };
+  const dashboardPreviewLimit = isMobileViewport ? 3 : 5;
   const visiblePendingItems = pendingItems
     .filter(item => sessionItemAssignmentBucket(item, me) === assignmentList)
     .filter(item => matchesSearch([
@@ -7558,7 +7604,7 @@ function LeaderOverviewPanel({
       item.session?.name,
       assignedPerson(item)
     ], query))
-    .slice(0, 5);
+    .slice(0, dashboardPreviewLimit);
   const visibleSubmissions = submissions.filter(submission => matchesSearch([
     submission.sessionItem?.packetLine,
     submission.session?.name,
@@ -7576,7 +7622,7 @@ function LeaderOverviewPanel({
       historyItem.submittedByName,
       historyItem.submittedByEmail
     ])
-  ], query)).slice(0, 5);
+  ], query)).slice(0, dashboardPreviewLimit);
 
   return (
     <div className="leader-dashboard">

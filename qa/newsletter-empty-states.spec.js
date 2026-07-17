@@ -10,6 +10,12 @@ async function signInAsNewsletterAdmin(page) {
   await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
 }
 
+async function openNewsletterSection(page, name) {
+  const menuToggle = page.getByRole("button", { name: "Open newsletter menu" });
+  if (await menuToggle.isVisible()) await menuToggle.click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 function newsletterAdminData(overrides = {}) {
   return {
     issues: [],
@@ -44,14 +50,14 @@ test.describe("newsletter empty-state guidance", () => {
     await expect(page.getByLabel("Title")).toBeFocused();
     await expect(page.getByRole("status")).toContainText("New homepage update ready.");
 
-    await page.getByRole("button", { name: "Issues", exact: true }).click();
+    await openNewsletterSection(page, "Issues");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No newsletters yet" });
     await expect(emptyPanel).toBeVisible();
     await emptyPanel.getByRole("button", { name: "Write first newsletter" }).click();
     await expect(page.getByLabel("Title")).toBeFocused();
     await expect(page.getByRole("status")).toContainText("New newsletter draft ready.");
 
-    await page.getByRole("button", { name: "Subscribers", exact: true }).click();
+    await openNewsletterSection(page, "Subscribers");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No subscribers yet" });
     await expect(emptyPanel).toBeVisible();
     await expect(emptyPanel.getByRole("link", { name: "View signup page" })).toHaveAttribute("href", /^https:\/\//);
@@ -108,14 +114,14 @@ test.describe("newsletter empty-state guidance", () => {
     await emptyPanel.getByRole("button", { name: "Clear filters" }).click();
     await expect(page.locator(".frg-content-list").getByText(contentTitle, { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Issues", exact: true }).click();
+    await openNewsletterSection(page, "Issues");
     await page.getByLabel("Search newsletter issues").fill("not in any newsletter");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No matching newsletters" });
     await expect(emptyPanel).toBeVisible();
     await emptyPanel.getByRole("button", { name: "Clear search" }).click();
     await expect(page.locator(".newsletter-issue-list").getByText(issueTitle, { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Subscribers", exact: true }).click();
+    await openNewsletterSection(page, "Subscribers");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No pending requests" });
     await expect(emptyPanel).toBeVisible();
     await emptyPanel.getByRole("button", { name: "Show all subscribers" }).click();

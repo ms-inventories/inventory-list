@@ -77,6 +77,19 @@ async function signInAsNewsletterAdmin(page) {
   await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
 }
 
+async function openNewsletterSection(page, name) {
+  const menuToggle = page.getByRole("button", { name: "Open newsletter menu" });
+  if (await menuToggle.isVisible()) await menuToggle.click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
+async function openNewsletterRefresh(page) {
+  const desktopRefresh = page.locator(".platform-topbar-refresh");
+  if (await desktopRefresh.isVisible()) return desktopRefresh;
+  await page.getByRole("button", { name: "Open newsletter menu" }).click();
+  return page.locator(".platform-sidebar-foot > button").first();
+}
+
 test.describe("newsletter async action states", () => {
   test("publishing is single-shot in the API and rejects duplicate UI taps", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
@@ -116,7 +129,7 @@ test.describe("newsletter async action states", () => {
     });
 
     await signInAsNewsletterAdmin(page);
-    await page.getByRole("button", { name: "Issues", exact: true }).click();
+    await openNewsletterSection(page, "Issues");
     await page.getByRole("button", { name: new RegExp(`^${uiIssue.title}`) }).click();
 
     const editor = page.locator(".newsletter-editor-form");
@@ -178,7 +191,7 @@ test.describe("newsletter async action states", () => {
       await expect(contentEditor.getByText("Public content saved.")).toBeVisible();
       expect(saveAttempts).toBe(1);
 
-      await page.getByRole("button", { name: "Subscribers", exact: true }).click();
+      await openNewsletterSection(page, "Subscribers");
       await page.getByLabel("Search subscribers").fill(`QA Guard`);
       const firstRow = page.locator(".admin-list-row", { hasText: firstSubscriber.displayName });
       const secondRow = page.locator(".admin-list-row", { hasText: secondSubscriber.displayName });
@@ -203,13 +216,13 @@ test.describe("newsletter async action states", () => {
         await new Promise(resolve => setTimeout(resolve, 500));
         await route.continue();
       });
-      const refreshButton = page.getByRole("button", { name: "Refresh newsletter" });
+      const refreshButton = await openNewsletterRefresh(page);
       await refreshButton.evaluate(button => {
         button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
         button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
+      await expect(refreshButton).toBeDisabled();
       await expect.poll(() => refreshAttempts).toBe(1);
-      await expect(page.getByRole("button", { name: "Refreshing newsletter" })).toBeDisabled();
       await expect(page.getByText("Newsletter refreshed.")).toBeVisible();
       expect(refreshAttempts).toBe(1);
     } finally {
