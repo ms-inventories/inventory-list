@@ -4430,6 +4430,12 @@ button {
   margin-top: 8px;
 }
 
+.session-archive-more {
+  width: 100%;
+  min-height: 44px;
+  justify-content: center;
+}
+
 .session-row {
   display: flex;
   align-items: center;

@@ -34,6 +34,12 @@ async function signInWithQaPersona(page, personaName) {
   await page.getByRole("button", { name: personaName }).click();
 }
 
+async function openNewsletterSection(page, name) {
+  const menuToggle = page.getByRole("button", { name: "Open newsletter menu" });
+  if (await menuToggle.isVisible()) await menuToggle.click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 async function seedQaLaunchSession(page, identity) {
   await page.goto(FRONTEND_URL);
   await page.evaluate(qaIdentity => {
@@ -217,7 +223,7 @@ test.describe("QA smoke", () => {
     await expect(page.locator(".newsletter-heading-actions").getByRole("button", { name: "Add homepage update" })).toBeVisible();
     await expect(page.locator(".frg-content-list").getByText("Family readiness updates", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Issues", exact: true }).click();
+    await openNewsletterSection(page, "Issues");
     await expect(page.getByRole("heading", { name: "Newsletter issues", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Write newsletter" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Export deliveries" })).toBeVisible();
@@ -232,7 +238,7 @@ test.describe("QA smoke", () => {
     await expect(page.getByRole("button", { name: "Published", exact: true })).toBeDisabled();
     await expect(page.getByText(/recipient|No delivery records yet/)).toBeVisible();
 
-    await page.getByRole("button", { name: "Subscribers", exact: true }).click();
+    await openNewsletterSection(page, "Subscribers");
     await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByText("Approved subscribers", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Export CSV" })).toBeVisible();

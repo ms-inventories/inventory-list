@@ -2122,6 +2122,7 @@ function SessionPanel({
   const [matchActions, setMatchActions] = useState(() => new Map());
   const [sessionStatusActions, setSessionStatusActions] = useState(() => new Map());
   const [printReportId, setPrintReportId] = useState("");
+  const [closedSessionLimit, setClosedSessionLimit] = useState(20);
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
   const packetFileInputRef = useRef(null);
   const packetTextareaRef = useRef(null);
@@ -3169,6 +3170,7 @@ function SessionPanel({
     () => sessions.filter(session => session.status === "closed"),
     [sessions]
   );
+  const visibleClosedSessions = closedSessions.slice(0, closedSessionLimit);
   const openCount = openSessions.length;
   const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
   const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
@@ -3293,7 +3295,16 @@ function SessionPanel({
                   <details className="session-archive">
                     <summary>Closed <span>{closedSessions.length}</span></summary>
                     <div className="session-group">
-                      {closedSessions.map(renderSessionButton)}
+                      {visibleClosedSessions.map(renderSessionButton)}
+                      {closedSessions.length > visibleClosedSessions.length ? (
+                        <button
+                          className="btn btn-secondary btn-small session-archive-more"
+                          type="button"
+                          onClick={() => setClosedSessionLimit(current => current + 20)}
+                        >
+                          <span>Show {Math.min(20, closedSessions.length - visibleClosedSessions.length)} more closed sessions</span>
+                        </button>
+                      ) : null}
                     </div>
                   </details>
                 ) : null}
