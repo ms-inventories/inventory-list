@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const ADMIN_URL = process.env.QA_ADMIN_URL || "http://admin.localhost:5175/#/admin";
 const TENANT_URL = process.env.QA_TENANT_URL || "http://ms.localhost:5175/#/admin";
+const NEWSLETTER_URL = process.env.QA_NEWSLETTER_URL || "http://admin.localhost:5175/#/newsletter";
 
 const qaRootAdmin = {
   sub: "qa-root",
@@ -130,6 +131,11 @@ test.describe("mobile layout audit", () => {
     await expectMinTargetSize(recentRow.getByRole("link", { name: /Open .* workspace/ }), { height: 50 });
     await expectMinFontSize(recentRow.getByRole("link", { name: /Open .* workspace/ }), 15);
     await expectMinTargetSize(recentRow.getByRole("button", { name: /More actions for/ }), { height: 50 });
+    await expectContained(recentPlatoons);
+    await expectContained(recentPlatoons.getByRole("table", { name: "Platoon workspaces" }));
+    await expectContained(recentRow);
+    await expectInsideHorizontally(recentPlatoons, recentRow.locator(".platform-status-field"));
+    await expectInsideHorizontally(recentPlatoons, recentRow.locator(".platform-actions"));
     await expectContained(page.locator("main"));
 
     const navToggle = page.getByRole("button", { name: "Open platform menu" });
@@ -298,6 +304,85 @@ test.describe("mobile layout audit", () => {
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
     await expectWithinViewport(page, page.getByRole("button", { name: "Open platform menu" }));
     await expectWithinViewport(page, page.getByRole("button", { name: "Open account actions" }));
+    await expectContained(page.locator("main"));
+  });
+
+  test("newsletter navigation, header, and subscriber review stay orderly at 360px", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 740 });
+    await seedQaRootSession(page);
+    await page.route("**/api/newsletter/admin", async route => {
+      if (route.request().method() !== "GET") return route.continue();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          issues: [],
+          contentBlocks: [],
+          deliveries: [],
+          subscribers: [{
+            id: "mobile-pending-subscriber",
+            displayName: "Lewis Benson",
+            email: "mobile-review@876en.test",
+            platoon: "Soldier",
+            supervisorName: "Me",
+            status: "pending",
+            createdAt: "2026-07-17T12:00:00.000Z",
+            lastSubscribedAt: "2026-07-17T12:00:00.000Z"
+          }],
+          subscriberStats: { pending: 1, active: 0, rejected: 0, unsubscribed: 0, total: 1 },
+          deliverySettings: { emailConfigured: true }
+        })
+      });
+    });
+
+    await page.goto(NEWSLETTER_URL);
+    await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
+
+    const topbar = page.locator(".newsletter-shell .platform-topbar");
+    const menuToggle = page.getByRole("button", { name: "Open newsletter menu" });
+    await expectContained(topbar);
+    await expectWithinViewport(page, menuToggle);
+    await expectWithinViewport(page, page.locator(".newsletter-user-card"));
+    await expect(menuToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".newsletter-sidebar")).toHaveAttribute("aria-hidden", "true");
+
+    await menuToggle.click();
+    await expect(menuToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("button", { name: "Close newsletter menu" }).last()).toBeFocused();
+    const subscribersNav = page.getByRole("button", { name: "Subscribers", exact: true });
+    await expectMinTargetSize(subscribersNav, { height: 54 });
+    await subscribersNav.click();
+    await expect(menuToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".newsletter-sidebar")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
+
+    const subscriberRow = page.locator(".admin-list-row", { hasText: "Lewis Benson" });
+    const meta = subscriberRow.locator(".newsletter-subscriber-meta");
+    const state = meta.locator(".newsletter-subscriber-state");
+    const actions = meta.locator(".newsletter-subscriber-actions");
+    await expectContained(subscriberRow);
+    await expectContained(meta);
+    await expectInsideHorizontally(subscriberRow, meta);
+    await expectMinTargetSize(actions.getByRole("button", { name: "Approve", exact: true }), { height: 44 });
+    await expectMinTargetSize(actions.getByRole("button", { name: "Reject", exact: true }), { height: 44 });
+
+    const geometry = await meta.evaluate(element => {
+      const stateItems = [...element.querySelector(".newsletter-subscriber-state").children].map(item => item.getBoundingClientRect());
+      const actionItems = [...element.querySelector(".newsletter-subscriber-actions").children].map(item => item.getBoundingClientRect());
+      return {
+        stateY: stateItems.map(item => item.y),
+        actionY: actionItems.map(item => item.y)
+      };
+    });
+    expect(Math.abs(geometry.stateY[0] - geometry.stateY[1])).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.actionY[0] - geometry.actionY[1])).toBeLessThanOrEqual(1);
+    expect(geometry.actionY[0]).toBeGreaterThan(geometry.stateY[0]);
+
+    const approveColors = await actions.getByRole("button", { name: "Approve", exact: true }).evaluate(button => ({
+      button: getComputedStyle(button).color,
+      label: getComputedStyle(button.querySelector("span")).color
+    }));
+    expect(approveColors.label).toBe(approveColors.button);
     await expectContained(page.locator("main"));
   });
 

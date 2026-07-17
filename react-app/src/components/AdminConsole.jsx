@@ -4918,6 +4918,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
 }
 
 function NewsletterPanel({ token, me, onRefresh, onLogout }) {
+  const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [issues, setIssues] = useState([]);
   const [contentBlocks, setContentBlocks] = useState([]);
   const [subscribers, setSubscribers] = useState([]);
@@ -4939,10 +4940,13 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [status, setStatus] = useState({ text: "Loading newsletter...", isError: false });
   const [actionStatus, setActionStatus] = useState({ scope: "", text: "", isError: false });
   const [newsletterActions, setNewsletterActions] = useState(() => new Map());
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const newsletterActionRef = useRef(new Map());
   const newsletterLoadRequestRef = useRef(0);
   const contentTitleRef = useRef(null);
   const issueTitleRef = useRef(null);
+  const mobileNavToggleRef = useRef(null);
+  const mobileNavCloseRef = useRef(null);
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
   const selectedContentBlock = contentBlocks.find(block => block.id === selectedContentBlockId) || null;
@@ -5070,6 +5074,19 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     loadNewsletter();
   }, [token]);
 
+  useEffect(() => {
+    if (!isMobileNavOpen) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeNewsletterNav();
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileNavOpen, isMobileViewport]);
+
   function updateForm(key, value) {
     setForm(current => ({ ...current, [key]: value }));
   }
@@ -5083,6 +5100,19 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setActiveSection(section);
     setActionStatus({ scope: "", text: "", isError: false });
     setStatus({ text: "", isError: false });
+    closeNewsletterNav(false);
+  }
+
+  function openNewsletterNav() {
+    setIsMobileNavOpen(true);
+    window.requestAnimationFrame(() => mobileNavCloseRef.current?.focus());
+  }
+
+  function closeNewsletterNav(restoreFocus = true) {
+    setIsMobileNavOpen(false);
+    if (restoreFocus && isMobileViewport) {
+      window.requestAnimationFrame(() => mobileNavToggleRef.current?.focus());
+    }
   }
 
   function selectContentBlock(block) {
@@ -5485,11 +5515,15 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     : "People can request newsletter access from the public signup form.";
 
   return (
-    <div className="platform-shell newsletter-shell">
-      <aside className="platform-sidebar newsletter-sidebar">
+    <div className={`platform-shell newsletter-shell ${isMobileNavOpen ? "platform-nav-open" : ""}`}>
+      <button className="platform-sidebar-backdrop" type="button" aria-label="Close newsletter menu" onClick={() => closeNewsletterNav()} />
+      <aside className="platform-sidebar newsletter-sidebar" aria-hidden={isMobileViewport && !isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && !isMobileNavOpen ? true : undefined}>
         <div className="platform-brand">
           <MailPlus aria-hidden="true" />
           <strong>FRG Newsletter</strong>
+          <button ref={mobileNavCloseRef} className="platform-mobile-nav-close" type="button" aria-label="Close newsletter menu" onClick={() => closeNewsletterNav()}>
+            <X aria-hidden="true" />
+          </button>
         </div>
 
         <nav className="platform-nav" aria-label="Newsletter admin">
@@ -5522,17 +5556,33 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <RefreshCw aria-hidden="true" />
             <span>{refreshAction ? "Refreshing..." : "Refresh"}</span>
           </button>
+          <button type="button" onClick={onLogout}>
+            <LogOut aria-hidden="true" />
+            <span>Sign out</span>
+          </button>
         </div>
       </aside>
 
       <main className="platform-main">
         <header className="platform-topbar">
-          <div />
+          <div className="newsletter-topbar-leading">
+            <button
+              ref={mobileNavToggleRef}
+              className="platform-mobile-nav-toggle"
+              type="button"
+              aria-label="Open newsletter menu"
+              aria-expanded={isMobileNavOpen}
+              onClick={openNewsletterNav}
+            >
+              <Menu aria-hidden="true" />
+            </button>
+            <strong className="platform-mobile-title">FRG Newsletter</strong>
+          </div>
           <div className="leader-user-actions">
-            <button className="icon-button" type="button" disabled={hasNewsletterAction} onClick={refreshNewsletter} aria-label={refreshAction ? "Refreshing newsletter" : "Refresh newsletter"}>
+            <button className="icon-button platform-topbar-refresh" type="button" disabled={hasNewsletterAction} onClick={refreshNewsletter} aria-label={refreshAction ? "Refreshing newsletter" : "Refresh newsletter"}>
               <RefreshCw aria-hidden="true" />
             </button>
-            <div className="leader-user-card">
+            <div className="leader-user-card newsletter-user-card">
               <span className="leader-avatar">{String(me?.user?.display_name || me?.user?.email || "N").slice(0, 1).toUpperCase()}</span>
               <div>
                 <strong>{me?.user?.display_name || me?.user?.email || "Newsletter user"}</strong>
@@ -5540,7 +5590,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               </div>
               <ChevronDown aria-hidden="true" />
             </div>
-            <button className="btn btn-secondary btn-small" type="button" onClick={onLogout}>
+            <button className="btn btn-secondary btn-small platform-topbar-signout" type="button" onClick={onLogout}>
               <LogOut aria-hidden="true" />
               <span>Sign out</span>
             </button>
@@ -6182,30 +6232,36 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                         </label>
                       ) : null}
                     </div>
-                    <div className="admin-row-meta">
-                      <span className={`status-pill ${subscriber.status}`}>{subscriber.status}</span>
-                      <span className="badge">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
-                      {canApprove ? (
-                        <button
-                          className="btn btn-primary btn-small"
-                          type="button"
-                          disabled={isReviewing}
-                          onClick={() => reviewSubscriber(subscriber.id, "approved")}
-                        >
-                          <CheckCircle2 aria-hidden="true" />
-                          <span>{subscriberAction === "approved" ? "Approving..." : "Approve"}</span>
-                        </button>
-                      ) : null}
-                      {canReject ? (
-                        <button
-                          className="btn btn-danger-soft btn-small"
-                          type="button"
-                          disabled={isReviewing}
-                          onClick={() => reviewSubscriber(subscriber.id, "rejected")}
-                        >
-                          <XCircle aria-hidden="true" />
-                          <span>{subscriberAction === "rejected" ? "Rejecting..." : "Reject"}</span>
-                        </button>
+                    <div className="admin-row-meta newsletter-subscriber-meta">
+                      <div className="newsletter-subscriber-state">
+                        <span className={`status-pill ${subscriber.status}`}>{subscriber.status}</span>
+                        <span className="badge">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
+                      </div>
+                      {canApprove || canReject ? (
+                        <div className="newsletter-subscriber-actions">
+                          {canApprove ? (
+                            <button
+                              className="btn btn-primary btn-small"
+                              type="button"
+                              disabled={isReviewing}
+                              onClick={() => reviewSubscriber(subscriber.id, "approved")}
+                            >
+                              <CheckCircle2 aria-hidden="true" />
+                              <span>{subscriberAction === "approved" ? "Approving..." : "Approve"}</span>
+                            </button>
+                          ) : null}
+                          {canReject ? (
+                            <button
+                              className="btn btn-danger-soft btn-small"
+                              type="button"
+                              disabled={isReviewing}
+                              onClick={() => reviewSubscriber(subscriber.id, "rejected")}
+                            >
+                              <XCircle aria-hidden="true" />
+                              <span>{subscriberAction === "rejected" ? "Rejecting..." : "Reject"}</span>
+                            </button>
+                          ) : null}
+                        </div>
                       ) : null}
                     </div>
                   </article>
