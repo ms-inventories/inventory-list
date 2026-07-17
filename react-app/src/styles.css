@@ -2863,6 +2863,13 @@ button {
   text-decoration: underline;
 }
 
+.platform-health-link {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+}
+
 .platform-org-card {
   padding: 16px;
 }
@@ -10006,6 +10013,37 @@ button {
     max-width: 340px;
   }
 
+  .platform-topbar {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) 48px;
+    gap: 10px;
+  }
+
+  .platform-mobile-title {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--platform-ink);
+    font-size: 1rem;
+    font-weight: 900;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .platform-topbar .leader-user-actions {
+    grid-column: 3;
+    grid-row: 1;
+    width: auto;
+    flex-wrap: nowrap;
+    justify-self: end;
+  }
+
+  .platform-topbar-refresh,
+  .platform-topbar-signout {
+    display: none;
+  }
+
   .platform-mobile-nav-toggle,
   .platform-mobile-nav-close,
   .platform-topbar .leader-user-trigger {
@@ -10016,11 +10054,52 @@ button {
     flex: 0 0 48px;
   }
 
+  .platform-topbar .leader-user-trigger {
+    justify-content: center;
+    border: 0;
+    padding: 0;
+  }
+
+  .platform-topbar .leader-user-trigger > div,
+  .platform-topbar .leader-user-trigger > svg {
+    display: none;
+  }
+
+  .platform-user-menu .leader-popover {
+    right: 0;
+    left: auto;
+  }
+
+  .newsletter-shell .newsletter-topbar-leading {
+    display: contents;
+  }
+
+  .newsletter-shell .newsletter-user-card {
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    justify-content: center;
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  .newsletter-shell .newsletter-user-card > div,
+  .newsletter-shell .newsletter-user-card > svg {
+    display: none;
+  }
+
   .platform-nav button,
   .platform-sidebar-foot button {
     min-height: 54px;
     font-size: 1rem;
     padding-inline: 14px;
+  }
+
+  .platform-user-dropdown .leader-menu-actions button,
+  .platform-modal-actions .btn,
+  .platform-modal-heading .icon-button,
+  .platform-health-link {
+    min-height: 48px;
   }
 
   .platform-page-heading .btn,
@@ -10771,6 +10850,16 @@ button {
   .crew-join-form .btn {
     min-height: 52px;
     font-size: 1rem;
+  }
+
+  .platform-card-header p {
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+
+  .platform-role-card code,
+  .platform-diagnostic span {
+    font-size: 0.8125rem;
   }
 
   .crew-access-heading .modal-icon {

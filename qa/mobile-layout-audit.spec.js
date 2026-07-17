@@ -145,6 +145,7 @@ test.describe("mobile layout audit", () => {
     await expectMinFontSize(supportNavItem, 16);
     await supportNavItem.click();
     await expect(page.getByRole("heading", { name: "Support", exact: true })).toBeVisible();
+    await expectMinTargetSize(page.locator(".platform-health-link"), { height: 44 });
     await expectContained(page.locator("main"));
 
     await openPlatformView(page, "Platoons");
@@ -165,14 +166,27 @@ test.describe("mobile layout audit", () => {
     await expect(more).toBeFocused();
     await expectContained(page.locator("main"));
 
-    await page.getByRole("button", { name: "Create platoon" }).first().click();
+    const createPlatoonTrigger = page.getByRole("button", { name: "Create platoon" }).first();
+    await createPlatoonTrigger.click();
     const createDialog = page.getByRole("dialog", { name: "Create platoon" });
     await expectWithinViewport(page, createDialog);
     await expectContained(createDialog);
     await expect(createDialog.getByText(/add its leader after permanent account setup is connected/i)).toBeVisible();
     await expect(createDialog.getByLabel("Platoon admin email")).toBeDisabled();
     await expect(createDialog.getByLabel("Platoon admin name")).toBeDisabled();
-    await createDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(createDialog.getByLabel("Platoon name")).toBeFocused();
+    await expectMinTargetSize(createDialog.getByRole("button", { name: "Close create platoon" }), { width: 44, height: 44 });
+    await expectMinTargetSize(createDialog.getByRole("button", { name: "Create platoon", exact: true }), { height: 48 });
+    await expectMinTargetSize(createDialog.getByRole("button", { name: "Cancel" }), { height: 48 });
+    await page.keyboard.press("Shift+Tab");
+    await expect(createDialog.getByRole("button", { name: "Close create platoon" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(createDialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(createDialog.getByRole("button", { name: "Close create platoon" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(createDialog).toBeHidden();
+    await expect(createPlatoonTrigger).toBeFocused();
 
     await openPlatformView(page, "Users");
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
@@ -223,6 +237,22 @@ test.describe("mobile layout audit", () => {
     await page.setViewportSize({ width: 800, height: 900 });
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);
+
+    const topbar = page.locator(".platform-topbar");
+    const accountTrigger = page.getByRole("button", { name: "Open account actions" });
+    await expectContained(topbar);
+    await expect(page.locator(".platform-mobile-title")).toBeVisible();
+    await expect(page.locator(".platform-topbar-refresh")).toBeHidden();
+    await expect(page.locator(".platform-topbar-signout")).toBeHidden();
+    await expectContained(accountTrigger);
+    await expectWithinViewport(page, accountTrigger);
+    await accountTrigger.click();
+    const accountMenu = page.getByRole("region", { name: "Account menu" });
+    await expectWithinViewport(page, accountMenu);
+    for (const action of ["Refresh platform", "App portal", "Diagnostics", "Copy diagnostics", "Sign out"]) {
+      await expectMinTargetSize(accountMenu.getByRole("button", { name: action, exact: true }), { height: 44 });
+    }
+    await page.keyboard.press("Escape");
 
     await openPlatformView(page, "Platoons");
     const table = page.getByRole("table", { name: "Platoon workspaces" });

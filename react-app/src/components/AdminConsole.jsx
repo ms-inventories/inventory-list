@@ -6313,6 +6313,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const userMenuRef = useRef(null);
   const mobileNavToggleRef = useRef(null);
   const mobileNavCloseRef = useRef(null);
+  const createTenantTriggerRef = useRef(null);
   const platformUserName = me?.user?.display_name || me?.user?.email || "Admin user";
   const platformUserEmail = me?.user?.email || me?.identity?.email || "";
   const platformUserInitial = String(platformUserName || "A").slice(0, 1).toUpperCase();
@@ -6546,6 +6547,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
 
   function openCreateTenant() {
     if (platformActionRef.current.size) return;
+    createTenantTriggerRef.current = document.activeElement;
     setCreateStatus({ text: "", isError: false });
     setCreateIdentityCheck(null);
     setIsCreateOpen(true);
@@ -6556,6 +6558,29 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     setIsCreateOpen(false);
     setCreateStatus({ text: "", isError: false });
     setCreateIdentityCheck(null);
+    window.requestAnimationFrame(() => createTenantTriggerRef.current?.focus?.());
+  }
+
+  function handleCreateTenantKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeCreateTenant();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...event.currentTarget.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    )].filter(element => element.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function selectPlatformView(view) {
@@ -6644,6 +6669,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
       setCreateIdentityCheck(null);
       setIsCreateOpen(false);
       setCreateStatus({ text: "", isError: false });
+      window.requestAnimationFrame(() => createTenantTriggerRef.current?.focus?.());
       const refreshed = await loadTenants({ quiet: true });
       const createdText = `Created ${data.tenant.slug}.${appConfig.baseDomain}.`;
       if (!refreshed.ok && !refreshed.stale) {
@@ -7270,7 +7296,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   <div className="platform-diagnostic" key={label}>
                     <span>{label}</span>
                     {label === "API health" ? (
-                      <a href={value} target="_blank" rel="noreferrer">{value}</a>
+                      <a className="platform-health-link" href={value} target="_blank" rel="noreferrer">{value}</a>
                     ) : (
                       <strong>{value}</strong>
                     )}
@@ -7283,8 +7309,14 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
       </main>
 
       {isCreateOpen ? (
-        <div className="modal-backdrop platform-modal-backdrop" role="presentation">
-          <aside className="platform-create-modal" role="dialog" aria-modal="true" aria-labelledby="createPlatoonTitle">
+        <div
+          className="modal-backdrop platform-modal-backdrop"
+          role="presentation"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) closeCreateTenant();
+          }}
+        >
+          <aside className="platform-create-modal" role="dialog" aria-modal="true" aria-labelledby="createPlatoonTitle" onKeyDown={handleCreateTenantKeyDown}>
             <div className="platform-modal-heading">
               <div>
                 <p className="eyebrow">New workspace</p>
@@ -7303,6 +7335,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 id="tenantName"
                 className="input"
                 required
+                autoFocus
                 disabled={Boolean(createAction)}
                 value={form.name}
                 placeholder="1st Platoon"
