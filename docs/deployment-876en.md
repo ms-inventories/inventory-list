@@ -82,7 +82,7 @@ VITE_OIDC_CLIENT_ID=<authentik inventory client id>
 VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
 VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
-VITE_OIDC_SCOPE=openid profile email groups
+VITE_OIDC_SCOPE=openid profile email groups ak_user_uuid
 VITE_ENABLE_AUTH_DIAGNOSTICS=false
 ```
 

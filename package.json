@@ -22,7 +22,7 @@
     "check:frontend-assets": "node --test scripts/frontend-build-assets.test.mjs",
     "check:api": "npm --prefix backend run check",
     "check:frontend-lock": "npm --prefix react-app ci --workspaces=false --audit=false --fund=false",
-    "check:static": "node --check ocr.js && node --check script.js && node --check admin.js && node --check scripts/production-authentik-smoke.mjs && node --check scripts/production-auth-session.mjs && node --check scripts/production-tenant-reset.mjs",
+    "check:static": "node --check ocr.js && node --check script.js && node --check admin.js && node --check scripts/production-authentik-smoke.mjs && node --check scripts/production-auth-session.mjs && node --check scripts/production-legacy-baseline.mjs && node --check scripts/production-tenant-reset.mjs",
     "check": "npm run check:static && npm run check:frontend-lock && npm run check:api && npm run check:packet && npm run check:search && npm run build:frontend && npm run check:frontend-assets"
   },
   "devDependencies": {
