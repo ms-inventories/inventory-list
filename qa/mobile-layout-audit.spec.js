@@ -59,6 +59,21 @@ async function expectInsideHorizontally(container, child) {
   expect(childBox.x + childBox.width).toBeLessThanOrEqual(containerBox.x + containerBox.width + 1);
 }
 
+async function expectChipTextCentered(locator) {
+  await expect(locator).toBeVisible();
+  const alignment = await locator.evaluate(element => {
+    const style = getComputedStyle(element);
+    return {
+      alignItems: style.alignItems,
+      justifyContent: style.justifyContent,
+      textAlign: style.textAlign
+    };
+  });
+  expect(alignment.alignItems).toBe("center");
+  expect(alignment.justifyContent).toBe("center");
+  expect(alignment.textAlign).toBe("center");
+}
+
 async function openPlatformView(page, name) {
   const toggle = page.getByRole("button", { name: "Open platform menu" });
   await toggle.click();
@@ -114,6 +129,8 @@ test.describe("mobile layout audit", () => {
     await expectMinFontSize(setup.getByRole("heading", { name: "Workspace setup" }), 18);
     await expectMinTargetSize(setup.getByRole("combobox", { name: "Platoon setup" }), { height: 44 });
     await expectMinTargetSize(setup.getByRole("button", { name: "Open setup details" }), { height: 44 });
+    await expectChipTextCentered(setup.locator(".platform-setup-state").first());
+    await expectChipTextCentered(setup.locator(".platform-setup-progress"));
     expect(await setup.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
 
     const recentPlatoons = page.locator(".platform-dashboard-card").filter({ hasText: "Recent platoons" });
@@ -128,6 +145,7 @@ test.describe("mobile layout audit", () => {
     await expectMinFontSize(recentRow.locator(".platform-row-main div > span"), 15);
     await expectMinFontSize(recentRow.locator(".mobile-field-label").getByText("Status", { exact: true }), 13);
     await expectMinFontSize(recentRow.locator(".status-pill"), 13);
+    await expectChipTextCentered(recentRow.locator(".status-pill"));
     await expectMinTargetSize(recentRow.getByRole("link", { name: /Open .* workspace/ }), { height: 50 });
     await expectMinFontSize(recentRow.getByRole("link", { name: /Open .* workspace/ }), 15);
     await expectMinTargetSize(recentRow.getByRole("button", { name: /More actions for/ }), { height: 50 });
@@ -395,6 +413,8 @@ test.describe("mobile layout audit", () => {
     await expectInsideHorizontally(subscriberRow, meta);
     await expectMinTargetSize(actions.getByRole("button", { name: "Approve", exact: true }), { height: 44 });
     await expectMinTargetSize(actions.getByRole("button", { name: "Reject", exact: true }), { height: 44 });
+    await expectChipTextCentered(state.locator(".status-pill"));
+    await expectChipTextCentered(state.locator(".badge"));
 
     const geometry = await meta.evaluate(element => {
       const stateItems = [...element.querySelector(".newsletter-subscriber-state").children].map(item => item.getBoundingClientRect());

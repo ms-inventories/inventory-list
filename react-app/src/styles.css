@@ -10992,6 +10992,39 @@ button {
   }
 }
 
+/* Keep compact labels optically centered when responsive layouts stretch them. */
+.public-newsletter-meta span,
+.platform-setup-progress,
+.platform-setup-state,
+.newsletter-delivery-status,
+.frg-content-preview-link,
+.badge,
+.session-alert,
+.session-filter-strip button,
+.closeout-breakdown span,
+.closeout-issue div > span:not(.status-pill),
+.session-item-main .session-proof-state,
+.session-item-main .session-known-item,
+.session-item-main .session-assignment-summary,
+.session-item-drawer-summary > span:not(.status-pill),
+.status-pill,
+.packet-row-number,
+.packet-confidence,
+.session-proof-awaiting,
+.proof-timeline-facts span,
+.saved-evidence-count,
+.proof-request-chips button,
+.session-item-main .session-prior-chip {
+  justify-content: center;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.proof-request-chips button {
+  display: inline-flex;
+  align-items: center;
+}
+
 @media print {
   @page {
     margin: 0.55in;
