@@ -268,6 +268,7 @@ button {
 .public-info-item {
   display: grid;
   gap: 10px;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #fff;
@@ -327,6 +328,19 @@ button {
   line-height: 1.45;
 }
 
+.public-info-item strong,
+.public-info-item p,
+.public-info-item a,
+.public-info-item em,
+.public-newsletter-wrap h2,
+.public-newsletter-summary,
+.public-newsletter-body p,
+.public-newsletter-request-card h3,
+.public-newsletter-request-card p {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .public-newsletter-band {
   background: #eef3eb;
 }
@@ -360,6 +374,13 @@ button {
   gap: 8px;
 }
 
+.public-newsletter-copy,
+.public-newsletter-latest,
+.public-newsletter-body,
+.public-newsletter-form {
+  min-width: 0;
+}
+
 .public-newsletter-copy {
   display: grid;
   gap: 12px;
@@ -372,12 +393,15 @@ button {
 
 .public-newsletter-meta {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   gap: 8px;
 }
 
 .public-newsletter-meta span {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
   min-height: 26px;
   align-items: center;
   border: 1px solid #c6d7c5;
@@ -386,7 +410,9 @@ button {
   color: var(--primary-strong);
   font-size: 0.75rem;
   font-weight: 850;
+  overflow-wrap: anywhere;
   padding: 0 10px;
+  white-space: normal;
 }
 
 .public-newsletter-summary {
@@ -423,6 +449,14 @@ button {
 
 .public-newsletter-modal .modal-heading {
   align-items: flex-start;
+}
+
+.public-newsletter-modal .modal-heading > div {
+  min-width: 0;
+}
+
+.public-newsletter-modal .modal-title {
+  overflow-wrap: anywhere;
 }
 
 .public-newsletter-modal .icon-button {
@@ -684,9 +718,11 @@ button {
 }
 
 .status-text {
+  min-width: 0;
   min-height: 20px;
   color: var(--muted);
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
 }
 
 .status-text.error {
@@ -8522,7 +8558,7 @@ button {
 
   .public-info-grid,
   .public-newsletter-wrap {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .app-header {
