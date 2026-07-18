@@ -74,6 +74,29 @@ async function expectChipTextCentered(locator) {
   expect(alignment.textAlign).toBe("center");
 }
 
+async function expectTextCenteredInBox(locator) {
+  await expect(locator).toBeVisible();
+  const alignment = await locator.evaluate(element => {
+    const style = getComputedStyle(element);
+    const box = element.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const text = range.getBoundingClientRect();
+    return {
+      display: style.display,
+      alignItems: style.alignItems,
+      justifyItems: style.justifyItems,
+      textAlign: style.textAlign,
+      horizontalOffset: Math.abs((text.left + (text.width / 2)) - (box.left + (box.width / 2)))
+    };
+  });
+  expect(alignment.display).toBe("grid");
+  expect(alignment.alignItems).toBe("center");
+  expect(alignment.justifyItems).toBe("center");
+  expect(alignment.textAlign).toBe("center");
+  expect(alignment.horizontalOffset).toBeLessThanOrEqual(1);
+}
+
 async function openPlatformView(page, name) {
   const toggle = page.getByRole("button", { name: "Open platform menu" });
   await toggle.click();
@@ -143,6 +166,7 @@ test.describe("mobile layout audit", () => {
     await expect(recentRow.locator(".platform-table-date")).toBeHidden();
     await expectMinFontSize(recentRow.locator(".platform-row-main strong"), 17);
     await expectMinFontSize(recentRow.locator(".platform-row-main div > span"), 15);
+    await expectTextCenteredInBox(recentRow.locator(".tenant-avatar"));
     await expectMinFontSize(recentRow.locator(".mobile-field-label").getByText("Status", { exact: true }), 13);
     await expectMinFontSize(recentRow.locator(".status-pill"), 13);
     await expectChipTextCentered(recentRow.locator(".status-pill"));

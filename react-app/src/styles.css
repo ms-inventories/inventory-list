@@ -4158,7 +4158,7 @@ button {
 }
 
 .platform-row-main strong,
-.platform-row-main span {
+.platform-row-main div > span {
   display: block;
 }
 
@@ -4189,6 +4189,8 @@ button {
   color: #16351d;
   font-size: 0.78rem;
   font-weight: 900;
+  line-height: 1;
+  text-align: center;
   text-transform: uppercase;
 }
 
