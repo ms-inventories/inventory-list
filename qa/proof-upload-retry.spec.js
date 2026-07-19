@@ -83,16 +83,19 @@ async function openProofForm(page, scenario) {
   await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
   await page.locator(".session-row", { hasText: scenario.sessionName }).click();
 
-  const assignmentLists = page.getByRole("group", { name: "Work assignment lists" });
+  const workspace = page.getByRole("region", { name: "Inventory workspace" });
+  const assignmentLists = workspace.getByRole("group", { name: "Work assignment lists" });
   await assignmentLists.getByRole("button", { name: /^Mine\b/ }).click();
   const row = page.locator(".session-item", { hasText: scenario.packetLine });
   await expect(row).toBeVisible();
+  await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+  await expect(page.getByRole("dialog"), "viewing assigned work must not open a generic item dialog").toHaveCount(0);
   await row.getByRole("button", { name: "Add proof" }).click();
 
-  const drawer = page.getByRole("dialog", { name: scenario.packetLine });
-  const proofForm = drawer.locator(".proof-form");
+  const proofDialog = page.getByRole("dialog", { name: `Add proof for ${scenario.packetLine}` });
+  const proofForm = proofDialog.locator(".proof-form");
   await expect(proofForm).toBeVisible();
-  return { drawer, proofForm };
+  return { proofDialog, proofForm };
 }
 
 function photoFile(name) {
@@ -105,6 +108,10 @@ function photoFile(name) {
 
 async function closeSession(request, scenario, identity) {
   if (!scenario?.sessionId) return;
+  await request.patch(`${API_URL}/session-items/${scenario.sessionItemId}/direct-check`, {
+    headers: identityHeaders(identity),
+    data: { status: "found", note: "QA cleanup" }
+  });
   await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
     headers: identityHeaders(identity),
     data: { status: "closed" }
@@ -139,7 +146,7 @@ test.describe("proof upload retry and cleanup", () => {
         return route.continue();
       });
 
-      const { drawer, proofForm } = await openProofForm(page, scenario);
+      const { proofDialog, proofForm } = await openProofForm(page, scenario);
       await proofForm.getByLabel("Add item photos").setInputFiles(photoFile("retry-proof.jpg"));
       const submitButton = proofForm.getByRole("button", { name: "Submit proof", exact: true });
       await submitButton.click();
@@ -161,7 +168,7 @@ test.describe("proof upload retry and cleanup", () => {
       expect(submissionAttempts).toBe(1);
 
       await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
-      await expect(drawer).toBeHidden();
+      await expect(proofDialog).toBeHidden();
       expect(photoUploadRequests).toBe(1);
       expect(submissionAttempts).toBe(2);
     } finally {
@@ -203,7 +210,7 @@ test.describe("proof upload retry and cleanup", () => {
         }
       });
 
-      const { drawer, proofForm } = await openProofForm(page, scenario);
+      const { proofDialog, proofForm } = await openProofForm(page, scenario);
       const firstPhoto = "remove-staged-proof.jpg";
       await proofForm.getByLabel("Add item photos").setInputFiles(photoFile(firstPhoto));
       await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
@@ -226,7 +233,7 @@ test.describe("proof upload retry and cleanup", () => {
       await proofForm.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(proofForm.getByRole("button", { name: "Canceling...", exact: true })).toBeDisabled();
       await expect(proofForm.getByRole("button", { name: "Submit proof", exact: true })).toBeDisabled();
-      await expect(drawer).toBeHidden();
+      await expect(proofDialog).toBeHidden();
       await expect.poll(() => discardedUploadIds).toEqual(stagedUploadIds);
 
       const database = new Client({ connectionString: QA_DATABASE_URL });

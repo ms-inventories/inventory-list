@@ -73,8 +73,8 @@ test.describe("Tenant notifications", () => {
 
     await page.getByRole("button", { name: "Notifications" }).click();
     await page.getByRole("region", { name: "Notifications" }).getByRole("button", { name: "Open review queue" }).click();
-    await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
   });
 
   test("rejections kept with the submitter open the exact assigned session item", async ({ page, request }, testInfo) => {
@@ -121,7 +121,10 @@ test.describe("Tenant notifications", () => {
       await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
       await expect(page.locator(".session-summary").getByText(sessionName, { exact: true })).toBeVisible();
-      await expect(page.getByRole("dialog", { name: packetLine })).toBeVisible();
+      const returnedItem = page.locator(".session-item", { hasText: packetLine });
+      await expect(returnedItem).toBeVisible();
+      await expect(returnedItem.locator(".session-proof-request", { hasText: requestNote }).first()).toBeVisible();
+      await expect(returnedItem.getByRole("button", { name: "Respond", exact: true })).toBeVisible();
     } finally {
       if (sessionId) {
         await request.patch(`${API_URL}/inventory/sessions/${sessionId}`, {

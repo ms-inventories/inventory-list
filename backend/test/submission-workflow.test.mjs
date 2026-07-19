@@ -108,6 +108,22 @@ test("a direct check closes proof requests superseded by the terminal result", a
   );
 });
 
+test("rejection return routing keeps submitter and reviewer assignments typed as UUIDs", async () => {
+  const routes = await fs.readFile(
+    path.resolve(currentDirectory, "../src/routes.js"),
+    "utf8"
+  );
+
+  assert.match(
+    routes,
+    /assigned_to = CASE WHEN \$2 = 'submitter' THEN \$3::uuid ELSE NULL END/i
+  );
+  assert.match(
+    routes,
+    /assigned_by = CASE WHEN \$2 = 'submitter' THEN \$4::uuid ELSE NULL END/i
+  );
+});
+
 test("workflow migration preserves immutable history with explicit terminal states", async () => {
   const migration = await fs.readFile(
     path.resolve(currentDirectory, "../db/025_submission_withdrawal_and_session_timing.sql"),

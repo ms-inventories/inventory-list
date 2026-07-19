@@ -96,85 +96,77 @@ async function addPacketRows(page) {
   await expect(dialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
   await dialog.getByRole("button", { name: /^(Open session|Review matches)$/ }).click();
   await expect(dialog).toBeHidden();
-  const itemDrawer = page.locator(".session-item-drawer");
-  if (await itemDrawer.isVisible()) {
-    await itemDrawer.getByRole("button", { name: "Close item details" }).click();
-  }
+  await expect(page.locator(".session-item-drawer")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
 }
 
 test.describe("session assignment", () => {
   test("platoon admins can assign rows and contributors can filter their work", async ({ page, request }, testInfo) => {
     test.setTimeout(90_000);
     const sessionName = `QA assignment ${testInfo.project.name} ${Date.now()}`;
+    let cleanupSessionId = "";
 
+    try {
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
     await openSessions(page);
     await createSession(page, sessionName);
+    const createdSessions = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
+      headers: qaHeaders(qaAdminIdentity)
+    }));
+    cleanupSessionId = createdSessions.sessions.find(candidate => candidate.name === sessionName)?.id || "";
+    expect(cleanupSessionId).toBeTruthy();
     await addPacketRows(page);
 
-    const toolKitRow = page.locator(".session-item", { hasText: "Tool Kit" }).first();
-    await expect(toolKitRow.locator(".session-assignment-control")).toHaveCount(0);
+    let inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    let assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
+    const toolKitRow = inventoryWorkspace.locator(".session-item", { hasText: "Tool Kit" }).first();
     await expect(toolKitRow.getByRole("button", { name: "Found", exact: true })).toHaveCount(0);
     await expect(toolKitRow.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
     await expect(toolKitRow.getByRole("button", { name: "Claim item" })).toBeVisible();
-    await toolKitRow.getByRole("button", { name: /Open details for/ }).click();
-    const assignmentDrawer = page.getByRole("dialog");
-    const leaderTools = assignmentDrawer.locator(".session-item-manage-disclosure");
-    await expect(leaderTools.getByRole("heading", { name: "Manage item" })).toBeVisible();
+    await expect(toolKitRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+    await expect(page.getByRole("dialog"), "assignment controls should remain inline").toHaveCount(0);
+    const leaderTools = toolKitRow.getByRole("region", { name: /Manage / });
+    await expect(leaderTools.getByRole("heading", { name: "Leader controls" })).toBeVisible();
     await leaderTools.getByRole("combobox", { name: "Assign to" }).selectOption({ label: "QA NCO" });
-    await expect(assignmentDrawer.getByRole("status")).toContainText("Row assigned.");
-    await assignmentDrawer.getByRole("button", { name: "Close item details" }).click();
+    await expect(inventoryWorkspace.locator(".session-panel").getByRole("status")).toContainText("Row assigned.");
     await expect(toolKitRow.getByText("Assigned to QA NCO")).toBeVisible();
 
     await seedQaSession(page, qaNcoIdentity);
     await page.goto(TENANT_URL);
     await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
     await openSessions(page);
-    await page.locator(".session-row", { hasText: sessionName }).click();
-    await page.getByRole("button", { name: /^Mine\b/ }).click();
+    inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
+    await inventoryWorkspace.locator(".session-row", { hasText: sessionName }).click();
+    await assignmentLists.getByRole("button", { name: /^Mine\b/ }).click();
 
-    const assignedToolKitRow = page.locator(".session-item", { hasText: "TOOL KIT CARPENTERS" }).first();
+    const assignedToolKitRow = inventoryWorkspace.locator(".session-item", { hasText: "TOOL KIT CARPENTERS" }).first();
     await expect(assignedToolKitRow).toBeVisible();
     await expect(assignedToolKitRow.getByText("Assigned to QA NCO", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: /^Unclaimed\b/ }).click();
-    const generatorRow = page.locator(".session-item", { hasText: "TAMPER,VIBRATING" }).first();
-    if (testInfo.project.name === "mobile-chrome") {
-      await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeVisible();
-      await generatorRow.getByRole("button", { name: "Claim item" }).click();
-      await expect(page.getByRole("dialog").getByRole("status")).toContainText("Item claimed.");
-    } else {
-      await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeVisible();
-      await generatorRow.getByRole("button", { name: "Claim item" }).click();
-    }
-    await expect(generatorRow.getByText("Assigned to QA NCO")).toBeVisible();
-    await expect(generatorRow.locator(".proof-form")).toHaveCount(0);
-    const proofDrawer = page.getByRole("dialog");
-    await expect(proofDrawer).toBeVisible();
-    const claimedProofForm = proofDrawer.locator(".proof-form");
-    await expect(claimedProofForm).toBeVisible();
-    await claimedProofForm.getByRole("button", { name: "Cancel" }).click();
-    await expect(proofDrawer).toBeHidden();
-    await page.getByRole("button", { name: /^Unclaimed\b/ }).click();
-    await expect(page.getByText("No items available to claim", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Show mine", exact: true }).click();
-    await expect(page.getByText("No items available to claim", { exact: true })).toHaveCount(0);
-    const mineGeneratorRow = page.locator(".session-item", { hasText: "TAMPER,VIBRATING" });
+    await assignmentLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
+    const generatorRow = inventoryWorkspace.locator(".session-item", { hasText: "TAMPER,VIBRATING" }).first();
+    await expect(generatorRow.getByRole("button", { name: "Claim item" })).toBeVisible();
+    await generatorRow.getByRole("button", { name: "Claim item" }).click();
+    await expect(inventoryWorkspace.locator(".session-panel").getByRole("status")).toContainText("Item claimed. It is now in Mine.");
+    await expect(page.getByRole("dialog"), "claiming must not open the item or proof form").toHaveCount(0);
+    await expect(page.locator(".proof-form")).toHaveCount(0);
+    await assignmentLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
+    await expect(inventoryWorkspace.getByText("No items available to claim", { exact: true })).toBeVisible();
+    await inventoryWorkspace.getByRole("button", { name: "Show mine", exact: true }).click();
+    await expect(inventoryWorkspace.getByText("No items available to claim", { exact: true })).toHaveCount(0);
+    const mineGeneratorRow = inventoryWorkspace.locator(".session-item", { hasText: "TAMPER,VIBRATING" });
     await expect(mineGeneratorRow).toBeVisible();
+    await expect(mineGeneratorRow.getByText("Assigned to QA NCO")).toBeVisible();
     await expect(mineGeneratorRow.locator(".proof-form")).toHaveCount(0);
     await mineGeneratorRow.getByRole("button", { name: "Add proof" }).click();
-    const reopenedProofDrawer = page.getByRole("dialog");
-    await expect(reopenedProofDrawer.locator(".proof-form")).toBeVisible();
+    const proofDialog = page.getByRole("dialog", { name: /Add proof for .*TAMPER,VIBRATING/ });
+    await expect(proofDialog.locator(".proof-form")).toBeVisible();
     await expect(mineGeneratorRow.locator(".proof-form")).toHaveCount(0);
-    await reopenedProofDrawer.locator(".proof-form").getByRole("button", { name: "Cancel" }).click();
-    await expect(reopenedProofDrawer).toBeHidden();
+    await proofDialog.locator(".proof-form").getByRole("button", { name: "Cancel" }).click();
+    await expect(proofDialog).toBeHidden();
 
-    const sessions = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
-      headers: qaHeaders(qaAdminIdentity)
-    }));
-    const session = sessions.sessions.find(candidate => candidate.name === sessionName);
-    expect(session?.id).toBeTruthy();
-    const detail = await responseJson(await request.get(`${API_URL}/inventory/sessions/${session.id}`, {
+    const detail = await responseJson(await request.get(`${API_URL}/inventory/sessions/${cleanupSessionId}`, {
       headers: qaHeaders(qaAdminIdentity)
     }));
     const generator = detail.items.find(item => item.packetLine.includes("TAMPER,VIBRATING"));
@@ -183,41 +175,58 @@ test.describe("session assignment", () => {
     expect(toolKit?.id).toBeTruthy();
     await responseJson(await request.patch(`${API_URL}/session-items/${generator.id}/direct-check`, {
       headers: qaHeaders(qaAdminIdentity),
-      data: { status: "approved" }
+      data: { status: "found" }
     }));
 
     await page.reload();
     await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
     await openSessions(page);
-    await page.locator(".session-row", { hasText: sessionName }).click();
-    const sessionResults = page.getByRole("region", { name: "Session row results" });
+    inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
+    await inventoryWorkspace.locator(".session-row", { hasText: sessionName }).click();
+    const sessionResults = inventoryWorkspace.getByRole("region", { name: "Session row results" });
     for (const name of [/^Mine\b/, /^Unclaimed\b/, /^Others\b/]) {
-      await page.getByRole("button", { name }).click();
+      await assignmentLists.getByRole("button", { name }).click();
       await expect(sessionResults.getByText(/TAMPER,VIBRATING/)).toHaveCount(0);
     }
-    const completed = page.locator(".session-completed-items");
+    const completed = inventoryWorkspace.locator(".session-completed-items");
     await completed.locator("summary").click();
     await expect(completed.getByText(/TAMPER,VIBRATING/)).toBeVisible();
-    await expect(completed.getByRole("button", { name: /Open details for completed item/ })).toBeVisible();
-    const sessionSearch = page.getByRole("searchbox", { name: "Search current session rows" });
+    await expect(completed.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+    await expect(completed.locator(".session-completed-item", { hasText: "TAMPER,VIBRATING" })).toBeVisible();
+    await assignmentLists.getByRole("button", { name: /^Mine\b/ }).click();
+    const sessionSearch = page.getByRole("searchbox", { name: "Search dashboard" });
+    await expect(sessionSearch).toBeVisible();
     await sessionSearch.fill("TAMPER,VIBRATING");
     await expect(page.getByText("No matching items", { exact: true })).toHaveCount(0);
     await expect(completed.getByText(/TAMPER,VIBRATING/)).toBeVisible();
 
     await responseJson(await request.patch(`${API_URL}/session-items/${toolKit.id}/direct-check`, {
       headers: qaHeaders(qaAdminIdentity),
-      data: { status: "approved" }
+      data: { status: "found" }
     }));
     await page.reload();
     await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
     await openSessions(page);
-    await page.locator(".session-row", { hasText: sessionName }).click();
-    await expect(page.locator(".session-completed-items")).toHaveAttribute("open", "");
-    await expect(page.locator(".session-completed-items").getByText(/TOOL KIT CARPENTERS/)).toBeVisible();
+    inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    await inventoryWorkspace.locator(".session-row", { hasText: sessionName }).click();
+    await expect(inventoryWorkspace.locator(".session-completed-items")).toHaveAttribute("open", "");
+    await expect(inventoryWorkspace.locator(".session-completed-items").getByText(/TOOL KIT CARPENTERS/)).toBeVisible();
 
-    await request.patch(`${API_URL}/inventory/sessions/${session.id}`, {
-      headers: qaHeaders(qaAdminIdentity),
-      data: { status: "closed" }
-    });
+    } finally {
+      if (!cleanupSessionId) {
+        const sessions = await request.get(`${API_URL}/inventory/sessions`, { headers: qaHeaders(qaAdminIdentity) });
+        if (sessions.ok()) {
+          const payload = await sessions.json();
+          cleanupSessionId = payload.sessions?.find(candidate => candidate.name === sessionName)?.id || "";
+        }
+      }
+      if (cleanupSessionId) {
+        await request.patch(`${API_URL}/inventory/sessions/${cleanupSessionId}`, {
+          headers: qaHeaders(qaAdminIdentity),
+          data: { status: "closed" }
+        });
+      }
+    }
   });
 });

@@ -1964,6 +1964,7 @@ button {
 
 .leader-dashboard-grid .leader-table-row > .btn {
   justify-self: end;
+  min-height: 44px;
   white-space: nowrap;
 }
 
@@ -2798,6 +2799,7 @@ button {
 }
 
 .platform-platoon-card-heading strong {
+  font-size: 1.0625rem;
   overflow-wrap: anywhere;
 }
 
@@ -2889,8 +2891,14 @@ button {
   font-size: 0.84rem;
 }
 
+.platform-link-row .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .platform-open-workspace {
   width: 100%;
+  min-height: 48px;
   justify-content: space-between;
 }
 
@@ -5950,9 +5958,9 @@ button {
 }
 
 .session-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -6148,26 +6156,20 @@ button {
 
 .session-completed-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
   min-height: 58px;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: #fff;
   color: var(--ink);
-  cursor: pointer;
   text-align: left;
   padding: 10px 14px;
 }
 
 .session-completed-item:last-child {
   border-bottom: 0;
-}
-
-.session-completed-item:hover,
-.session-completed-item:focus-visible {
-  background: var(--surface-muted);
 }
 
 .session-completed-item > span:first-child {
@@ -6182,12 +6184,6 @@ button {
 }
 
 .session-completed-item small {
-  color: var(--muted);
-}
-
-.session-completed-item > svg {
-  width: 18px;
-  height: 18px;
   color: var(--muted);
 }
 
@@ -6207,7 +6203,7 @@ button {
 
 .session-assignment-control select {
   width: 100%;
-  min-height: 34px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #fff;
@@ -6219,29 +6215,32 @@ button {
   padding: 0 32px 0 10px;
 }
 
-.session-item-drawer-backdrop {
+.session-proof-dialog-backdrop {
   position: fixed;
   inset: 0;
   z-index: 70;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   background: rgba(12, 17, 14, 0.62);
   overscroll-behavior: contain;
+  padding: 16px;
 }
 
-.session-item-drawer {
+.session-proof-dialog {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   width: min(100%, 640px);
-  height: 100dvh;
+  max-height: calc(100dvh - 32px);
   overflow: hidden;
-  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: calc(var(--radius) + 4px);
   background: var(--surface);
-  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
 }
 
-.session-item-drawer-heading {
+.session-proof-dialog-heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -6250,59 +6249,39 @@ button {
   padding: 18px 20px 16px;
 }
 
-.session-item-drawer-heading > div {
+.session-proof-dialog-heading > div {
   display: grid;
   min-width: 0;
   gap: 4px;
 }
 
-.session-item-drawer-heading h2,
-.session-item-drawer-heading p {
+.session-proof-dialog-heading h2,
+.session-proof-dialog-heading p {
   margin: 0;
 }
 
-.session-item-drawer-heading h2 {
+.session-proof-dialog-heading h2 {
   color: var(--ink);
   font-size: 1.35rem;
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
-.session-item-drawer-heading #sessionItemDrawerPacketLine {
+.session-proof-dialog-heading #sessionProofDialogItem {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
-.session-item-drawer-body {
+.session-proof-dialog-body {
   display: grid;
   align-content: start;
   gap: 12px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px 20px 24px;
-}
-
-.session-item-drawer-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-}
-
-.session-item-drawer-summary > span:not(.status-pill) {
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 850;
-  padding: 0 9px;
+  padding: 16px 20px max(24px, env(safe-area-inset-bottom));
 }
 
 .prior-match-card {
@@ -6398,6 +6377,177 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.session-item-actions .btn {
+  min-height: 44px;
+}
+
+.session-item-context-stack {
+  display: grid;
+  grid-column: 1 / -1;
+  min-width: 0;
+  gap: 10px;
+}
+
+.session-item-context {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.session-item-saved-record {
+  border-color: #b8c7b2;
+  background: #f3f7f0;
+}
+
+.session-item-context-heading,
+.session-item-proof-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.session-item-context-heading h3,
+.session-item-context-heading span,
+.session-item-proof-heading strong,
+.session-item-proof-heading span {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-item-context-heading h3 {
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+
+.session-item-context-heading > span,
+.session-item-proof-heading > div > span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.session-item-context-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.session-item-context-facts > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  border-top: 1px solid rgba(50, 96, 65, 0.16);
+  padding-top: 8px;
+}
+
+.session-item-context-facts dt,
+.session-item-context-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-item-context-facts dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.session-item-context-facts dd {
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.session-item-proof-list,
+.session-item-proof-entry {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+}
+
+.session-item-proof-entry {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.session-item-proof-entry:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.session-item-proof-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.session-item-proof-heading > div > strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+}
+
+.session-item-proof-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.session-item-proof-facts span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.73rem;
+  line-height: 1.3;
+  padding: 4px 7px;
+}
+
+.session-item-proof-entry > p {
+  border-left: 3px solid var(--line-strong);
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin: 0;
+  padding: 8px 9px;
+  overflow-wrap: anywhere;
+}
+
+.session-item-proof-entry > p.session-proof-request {
+  border-left-color: #d4a548;
+  background: #fff8e9;
+  color: #765018;
+}
+
+.session-item-provenance {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-item-provenance strong {
+  color: var(--ink);
+}
+
+.session-item-inline-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .prior-match-actions .btn {
@@ -6712,20 +6862,6 @@ button {
   border-top: 0;
   margin-top: 0;
   padding-top: 0;
-}
-
-.session-item-drawer-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px;
-  border-top: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.96);
-  padding: 12px 20px max(12px, env(safe-area-inset-bottom));
-}
-
-.session-item-drawer-actions .session-assignment-control {
-  flex: 1 1 180px;
 }
 
 .session-assignment-control select:disabled {
@@ -8795,26 +8931,13 @@ button {
    desktop navigation but not for a two-column session workspace plus every
    row action. Stack the workspace and its row controls before they can force
    the document wider than the viewport. */
-@media (max-width: 1024px) {
-  .session-item-drawer-backdrop {
-    justify-content: stretch;
-  }
-
-  .session-item-drawer {
-    width: 100vw;
-    max-width: none;
-    border-left: 0;
-  }
-}
-
 @media (min-width: 861px) and (max-width: 1180px) {
   .session-layout {
     grid-template-columns: 1fr;
   }
 
   .session-item {
-    align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .session-item-main > div {
@@ -8822,6 +8945,7 @@ button {
   }
 
   .session-item-actions {
+    grid-column: 1;
     width: 100%;
     min-width: 0;
     flex: 1 1 auto;
@@ -8871,12 +8995,6 @@ button {
   .proof-viewer-details {
     overflow-y: visible;
     border-top: 1px solid var(--line);
-    border-left: 0;
-  }
-
-  .session-item-drawer {
-    width: 100vw;
-    max-width: none;
     border-left: 0;
   }
 
@@ -9495,10 +9613,14 @@ button {
   }
 
   .session-summary,
-  .session-item,
   .packet-import-history-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .session-item {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .session-item-actions,
@@ -9507,6 +9629,7 @@ button {
   }
 
   .session-item-actions {
+    grid-column: 1;
     width: 100%;
     align-items: center;
   }
@@ -9527,6 +9650,10 @@ button {
 
   .session-assignment-control {
     width: 100%;
+  }
+
+  .session-item-inline-controls {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -9691,21 +9818,40 @@ button {
     padding: 9px max(10px, env(safe-area-inset-right)) max(9px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
   }
 
-  .session-item-drawer {
-    width: 100vw;
-    border-left: 0;
+  .session-proof-dialog-backdrop {
+    align-items: stretch;
+    padding: 0;
   }
 
-  .session-item-drawer-heading {
+  .session-proof-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .session-proof-dialog-heading {
     padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 12px max(14px, env(safe-area-inset-left));
   }
 
-  .session-item-drawer-heading h2 {
+  .session-proof-dialog-heading h2 {
     font-size: 1.15rem;
   }
 
-  .session-item-drawer-body {
-    padding: 12px max(12px, env(safe-area-inset-right)) 20px max(12px, env(safe-area-inset-left));
+  .session-proof-dialog-body {
+    padding: 12px max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+
+  .session-item-context-facts,
+  .prior-match-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .session-item-context-heading,
+  .session-item-proof-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .session-detail-facts > div {
@@ -9719,22 +9865,6 @@ button {
 
   .session-detail-source .btn {
     width: 100%;
-    justify-content: center;
-  }
-
-  .session-item-drawer-actions {
-    flex-wrap: wrap;
-    align-items: flex-end;
-    padding-right: max(12px, env(safe-area-inset-right));
-    padding-left: max(12px, env(safe-area-inset-left));
-  }
-
-  .session-item-drawer-actions .session-assignment-control {
-    flex: 1 1 100%;
-  }
-
-  .session-item-drawer-actions > .btn {
-    flex: 1 1 145px;
     justify-content: center;
   }
 
@@ -12007,7 +12137,6 @@ button {
 .session-item-main .session-proof-state,
 .session-item-main .session-known-item,
 .session-item-main .session-assignment-summary,
-.session-item-drawer-summary > span:not(.status-pill),
 .status-pill,
 .packet-row-number,
 .packet-confidence,

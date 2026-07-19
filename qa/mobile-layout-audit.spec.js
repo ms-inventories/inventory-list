@@ -288,28 +288,32 @@ test.describe("mobile layout audit", () => {
     await expectContained(page.locator("main"));
 
     await openWorkspaceView(page, "Dashboard");
-    await page.getByRole("button", { name: "Open session", exact: true }).first().click();
+    const activeInventory = page.getByRole("region", { name: "Active inventory", exact: true });
+    const activeInventorySelect = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+    await expect(activeInventorySelect).toBeVisible();
+    await activeInventorySelect.selectOption({ label: "July sensitive items" });
+    await expect(activeInventorySelect.locator("option:checked")).toHaveText("July sensitive items");
+    await expect(page.getByRole("region", { name: "Pending inventory results", exact: true }).getByText("July sensitive items", { exact: true })).toBeVisible();
+    await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
-    const assignmentLists = page.getByRole("group", { name: "Work assignment lists" });
+    const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    const assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
     for (const name of [/^Unclaimed\b/, /^Mine\b/, /^Others\b/]) {
       await expectMinTargetSize(assignmentLists.getByRole("button", { name }), { height: 48 });
     }
-    const sessionRow = page.locator(".session-item").filter({
-      has: page.getByRole("button", { name: "Claim item" })
-    }).first();
+    await assignmentLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
+    const sessionRow = inventoryWorkspace.locator(".session-item", { hasText: "Generator" });
     await expect(sessionRow).toBeVisible();
-    await expect(sessionRow.locator(".session-assignment-control")).toBeHidden();
     await expect(sessionRow.getByRole("button", { name: "Found", exact: true })).toBeHidden();
     await expect(sessionRow.getByRole("button", { name: "Claim item" })).toBeVisible();
-    const details = sessionRow.getByRole("button", { name: /Open details for/ });
-    await expect(details).toBeVisible();
-    await details.click();
-    const drawer = page.getByRole("dialog");
-    await expectWithinViewport(page, drawer);
-    await expectContained(drawer);
-    await page.keyboard.press("Escape");
-    await expect(drawer).toBeHidden();
-    await expect(details).toBeFocused();
+    await expectMinTargetSize(sessionRow.getByRole("button", { name: "Claim item" }), { height: 44 });
+    await expect(sessionRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+    await expect(page.getByRole("dialog"), "session rows should not require a generic item dialog").toHaveCount(0);
+    const inlineControls = sessionRow.locator(".session-item-inline-manage");
+    await expect(inlineControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
+    await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Assign to" }), { height: 44 });
+    await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Set result" }), { height: 44 });
+    await expectContained(sessionRow);
     await expectContained(page.locator("main"));
   });
 
@@ -364,7 +368,7 @@ test.describe("mobile layout audit", () => {
     });
 
     await page.goto(NEWSLETTER_URL);
-    await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
 
     const topbar = page.locator(".newsletter-shell .platform-topbar");
     const menuToggle = page.getByRole("button", { name: "Open newsletter menu" });
@@ -384,35 +388,17 @@ test.describe("mobile layout audit", () => {
     await expect(page.locator(".newsletter-sidebar")).toHaveAttribute("aria-hidden", "true");
     await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
 
-    const subscriberRow = page.locator(".admin-list-row", { hasText: "Lewis Benson" });
-    const meta = subscriberRow.locator(".newsletter-subscriber-meta");
-    const state = meta.locator(".newsletter-subscriber-state");
-    const actions = meta.locator(".newsletter-subscriber-actions");
+    const subscriberRow = page.locator(".newsletter-subscriber-table-row", { hasText: "Lewis Benson" });
     await expectContained(subscriberRow);
-    await expectContained(meta);
-    await expectInsideHorizontally(subscriberRow, meta);
-    await expectMinTargetSize(actions.getByRole("button", { name: "Approve", exact: true }), { height: 44 });
-    await expectMinTargetSize(actions.getByRole("button", { name: "Reject", exact: true }), { height: 44 });
-    await expectChipTextCentered(state.locator(".status-pill"));
-    await expectChipTextCentered(state.locator(".badge"));
-
-    const geometry = await meta.evaluate(element => {
-      const stateItems = [...element.querySelector(".newsletter-subscriber-state").children].map(item => item.getBoundingClientRect());
-      const actionItems = [...element.querySelector(".newsletter-subscriber-actions").children].map(item => item.getBoundingClientRect());
-      return {
-        stateY: stateItems.map(item => item.y),
-        actionY: actionItems.map(item => item.y)
-      };
-    });
-    expect(Math.abs(geometry.stateY[0] - geometry.stateY[1])).toBeLessThanOrEqual(1);
-    expect(Math.abs(geometry.actionY[0] - geometry.actionY[1])).toBeLessThanOrEqual(1);
-    expect(geometry.actionY[0]).toBeGreaterThan(geometry.stateY[0]);
-
-    const approveColors = await actions.getByRole("button", { name: "Approve", exact: true }).evaluate(button => ({
-      button: getComputedStyle(button).color,
-      label: getComputedStyle(button.querySelector("span")).color
-    }));
-    expect(approveColors.label).toBe(approveColors.button);
+    await expectChipTextCentered(subscriberRow.locator(".status-pill"));
+    const viewDetails = subscriberRow.getByRole("button", { name: "View details", exact: true });
+    await expectMinTargetSize(viewDetails, { height: 44 });
+    await viewDetails.click();
+    const subscriberDialog = page.getByRole("dialog", { name: "Lewis Benson" });
+    await expectContained(subscriberDialog);
+    await expect(subscriberDialog.getByText("mobile-review@876en.test", { exact: true })).toBeVisible();
+    await expectMinTargetSize(subscriberDialog.getByRole("button", { name: "Approve subscriber", exact: true }), { height: 44 });
+    await expectMinTargetSize(subscriberDialog.getByRole("button", { name: "Reject request", exact: true }), { height: 44 });
     await expectContained(page.locator("main"));
   });
 
@@ -466,28 +452,26 @@ test.describe("intermediate session layout", () => {
     await expect(session).toBeVisible();
     await session.click();
     await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
-    await page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Unclaimed\b/ }).click();
+    const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Unclaimed\b/ }).click();
 
-    const row = page.locator(".session-item", { hasText: "Quiet Generator" });
+    const row = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
     const actions = row.locator(".session-item-actions");
-    const details = row.getByRole("button", { name: /Open details for/ });
+    const inlineControls = row.locator(".session-item-inline-manage");
 
     for (const width of [1024, 900]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(row).toBeVisible();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
       await expectInsideHorizontally(row, actions);
-      await expect(row.locator(".session-assignment-control")).toHaveCount(0);
       await expect(row.getByRole("button", { name: "Found", exact: true })).toHaveCount(0);
       await expect(row.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
-      await expect(details).toBeVisible();
+      await expect(row.getByRole("button", { name: "Claim item", exact: true })).toBeVisible();
+      await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await expect(inlineControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
+      await expectInsideHorizontally(row, inlineControls);
     }
 
-    await details.click();
-    const drawer = page.getByRole("dialog");
-    await expectWithinViewport(page, drawer);
-    await page.keyboard.press("Escape");
-    await expect(drawer).toBeHidden();
-    await expect(details).toBeFocused();
+    await expect(page.getByRole("dialog"), "resizing inline session work must not open a dialog").toHaveCount(0);
   });
 });

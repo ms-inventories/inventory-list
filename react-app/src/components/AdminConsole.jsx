@@ -1787,34 +1787,163 @@ function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss }) {
   );
 }
 
-function SessionItemDrawer({
+function SessionItemInlineContext({
   item,
-  session,
   importBatch,
   canManage,
-  canSubmit,
-  canClaim,
+  isClosed,
   assignmentAction,
   directCheckAction,
   matchAction,
-  isClosed,
-  status,
   assignableMembers,
   assignedMemberId,
-  proofOpen,
-  token,
-  tenantSlug,
   onAssign,
-  onClaim,
   onDirectCheck,
   onResolveMatch,
-  onOpenProof,
-  onOpenReview,
-  onOpenPhoto,
-  onProofCancel,
-  onProofSaved,
-  onStatus,
-  onClose
+  onOpenSavedPhoto,
+  onOpenProofPhoto
+}) {
+  const title = itemDisplayName(item);
+  const savedRecord = item.inventoryItem || null;
+  const savedPhotos = getInventoryItemPhotos(savedRecord);
+  const submissions = item.submissions || [];
+  const isAssignmentPending = Boolean(assignmentAction);
+  const isDirectCheckPending = Boolean(directCheckAction);
+  const hasSavedFacts = Boolean(savedRecord && (
+    savedRecord.commonName
+    || savedRecord.title
+    || savedRecord.armyName
+    || savedRecord.lin
+    || savedRecord.nsn
+    || savedRecord.currentLocation
+    || savedRecord.description
+  ));
+
+  return (
+    <div className="session-item-context-stack">
+      {canManage && !isClosed && item.suggestedInventoryItem ? (
+        <PossiblePriorMatchCard
+          item={item}
+          action={matchAction}
+          onConfirm={() => onResolveMatch("confirm")}
+          onDismiss={() => onResolveMatch("dismiss")}
+        />
+      ) : null}
+
+      {savedRecord && (hasSavedFacts || savedPhotos.length) ? (
+        <section className="session-item-context session-item-saved-record" aria-label={`Saved record for ${title}`}>
+          <div className="session-item-context-heading">
+            <h3>Saved record</h3>
+            <span>Matched from previous inventory</span>
+          </div>
+          {hasSavedFacts ? (
+            <dl className="session-item-context-facts">
+              {savedRecord.commonName || savedRecord.title ? <div><dt>Common name</dt><dd>{savedRecord.commonName || savedRecord.title}</dd></div> : null}
+              {savedRecord.armyName ? <div><dt>Army name</dt><dd>{savedRecord.armyName}</dd></div> : null}
+              {savedRecord.lin ? <div><dt>LIN</dt><dd>{savedRecord.lin}</dd></div> : null}
+              {savedRecord.nsn ? <div><dt>NSN</dt><dd>{savedRecord.nsn}</dd></div> : null}
+              {savedRecord.currentLocation ? <div><dt>Last location</dt><dd>{savedRecord.currentLocation}</dd></div> : null}
+              {savedRecord.description ? <div><dt>Description</dt><dd>{savedRecord.description}</dd></div> : null}
+            </dl>
+          ) : null}
+          <ProofPhotoStrip
+            photos={savedPhotos}
+            compact
+            label={`Saved record photos for ${title}`}
+            onOpen={onOpenSavedPhoto}
+          />
+        </section>
+      ) : null}
+
+      {submissions.length ? (
+        <section className="session-item-context session-item-proof-history" aria-label={`Proof history for ${title}`}>
+          <div className="session-item-context-heading">
+            <h3>Proof history</h3>
+            <span>{countLabel(submissions.length, "submission")}</span>
+          </div>
+          <div className="session-item-proof-list">
+            {submissions.map(submission => (
+              <article className="session-item-proof-entry" key={submission.id}>
+                <div className="session-item-proof-heading">
+                  <div>
+                    <strong>{formatReviewState(submission.reviewState)}</strong>
+                    <span>{submissionPerson(submission)} - {formatDate(submission.createdAt)}</span>
+                  </div>
+                  <span className={`status-pill ${submission.status}`}>{formatItemStatus(submission.status)}</span>
+                </div>
+                {submission.locationText || hasMeaningfulSerial(submission.serialNumber) ? (
+                  <div className="session-item-proof-facts">
+                    {submission.locationText ? <span>Location: {submission.locationText}</span> : null}
+                    {hasMeaningfulSerial(submission.serialNumber) ? <span>Serial: {submission.serialNumber}</span> : null}
+                  </div>
+                ) : null}
+                {submission.note ? <p>{submission.note}</p> : null}
+                {submission.reviewNote ? (
+                  <p className={submission.reviewState === "request_more_info" || submission.reviewState === "rejected" ? "session-proof-request" : ""}>
+                    {submission.reviewState === "request_more_info" ? "Requested" : submission.reviewState === "rejected" ? "Rejected" : "Review note"}: {submission.reviewNote}
+                  </p>
+                ) : null}
+                <ProofPhotoStrip
+                  photos={submission.photos}
+                  compact
+                  label={`Evidence from ${submissionPerson(submission)}`}
+                  onOpen={index => onOpenProofPhoto(submission, index)}
+                />
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {canManage && importBatch ? (
+        <p className="session-item-provenance">
+          Imported from <strong>{importBatch.sourceName || "an uploaded packet"}</strong>
+          {importBatch.createdAt ? ` on ${formatDate(importBatch.createdAt)}` : ""}
+          {importBatch.createdByName || importBatch.createdByEmail ? ` by ${importBatch.createdByName || importBatch.createdByEmail}` : ""}.
+        </p>
+      ) : null}
+
+      {canManage && !isClosed ? (
+        <section className="session-item-context session-item-inline-manage" aria-label={`Manage ${title}`}>
+          <div className="session-item-context-heading"><h3>Leader controls</h3></div>
+          <div className="session-item-inline-controls">
+            <label className="session-assignment-control">
+              <span>Assign to</span>
+              <select value={assignedMemberId} disabled={isAssignmentPending || isDirectCheckPending} onChange={event => onAssign(event.target.value)}>
+                <option value="">Unassigned</option>
+                {assignableMembers.map(member => (
+                  <option value={member.id} key={member.id}>
+                    {member.displayName || member.email || formatRole(member.role)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="session-assignment-control">
+              <span>Set result</span>
+              <select value="" disabled={isAssignmentPending || isDirectCheckPending} onChange={event => {
+                if (event.target.value) onDirectCheck(event.target.value);
+              }}>
+                <option value="">{isDirectCheckPending ? "Saving result..." : "Choose a result"}</option>
+                <option value="found">Found / accounted for</option>
+                <option value="not_found">Not found</option>
+              </select>
+            </label>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function SessionProofDialog({
+  item,
+  session,
+  status,
+  token,
+  tenantSlug,
+  onCancel,
+  onSaved,
+  onStatus
 }) {
   if (!item) return null;
 
@@ -1822,20 +1951,14 @@ function SessionItemDrawer({
   const latest = latestSubmission(item);
   const isRejectedProof = latest?.reviewState === "rejected";
   const needsMoreProof = latest?.reviewState === "request_more_info" || isRejectedProof;
-  const pendingProof = latest?.reviewState === "pending";
-  const isDirectCheckPending = Boolean(directCheckAction);
-  const isAssignmentPending = Boolean(assignmentAction);
-  const knownImages = getInventoryItemImages(item.inventoryItem);
-  const assignedName = assignedPerson(item);
-  const packetSubtitle = item.packetLine && item.packetLine !== title ? item.packetLine : "";
 
   function handleKeyDown(event) {
     if (event.key === "Escape") {
       event.preventDefault();
-      if (!proofOpen) onClose();
+      onCancel();
     } else if (event.key === "Tab") {
       const focusable = [...event.currentTarget.querySelectorAll(
-        'button:not([disabled]), a[href], select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        'button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
       )].filter(element => element.getClientRects().length);
       if (!focusable.length) return;
       const first = focusable[0];
@@ -1852,260 +1975,46 @@ function SessionItemDrawer({
 
   return (
     <div
-      className="session-item-drawer-backdrop"
+      className="session-proof-dialog-backdrop"
       role="presentation"
       onMouseDown={event => {
-        if (!proofOpen && event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) onCancel();
       }}
     >
       <aside
-        className="session-item-drawer"
+        className="session-proof-dialog"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="sessionItemDrawerTitle"
-        aria-describedby={packetSubtitle ? "sessionItemDrawerPacketLine" : undefined}
+        aria-labelledby="sessionProofDialogTitle"
+        aria-describedby="sessionProofDialogItem"
         onKeyDown={handleKeyDown}
       >
-        <header className="session-item-drawer-heading">
+        <header className="session-proof-dialog-heading">
           <div>
             <p className="eyebrow">{session?.name || "Inventory session"}</p>
-            <h2 id="sessionItemDrawerTitle">{title}</h2>
-            {packetSubtitle ? <p id="sessionItemDrawerPacketLine">{packetSubtitle}</p> : null}
+            <h2 id="sessionProofDialogTitle">{needsMoreProof ? `Respond with proof for ${title}` : `Add proof for ${title}`}</h2>
+            <p id="sessionProofDialogItem">Record the result, location, notes, and photos that apply.</p>
           </div>
-          {!proofOpen ? (
-            <button className="icon-button" type="button" aria-label="Close item details" onClick={onClose} autoFocus>
-              <X aria-hidden="true" />
-            </button>
-          ) : null}
+          <button className="icon-button" type="button" aria-label="Close proof form" onClick={onCancel} autoFocus>
+            <X aria-hidden="true" />
+          </button>
         </header>
 
-        <div className="session-item-drawer-body">
+        <div className="session-proof-dialog-body">
           <StatusLine status={status} />
-
-          {proofOpen ? (
-            <section className="session-detail-section session-detail-proof-form" aria-label="Submit proof">
-              <div className="session-detail-section-heading">
-                <div>
-                  <p className="eyebrow">Proof</p>
-                  <h3>{isRejectedProof ? "Fix and resubmit" : needsMoreProof ? "Send the requested proof" : "Record what you found"}</h3>
-                </div>
-                <span>Photo or verification note</span>
-              </div>
-              <ProofForm
-                key={item.id}
-                item={item}
-                token={token}
-                tenantSlug={tenantSlug}
-                requestNote={needsMoreProof ? latest.reviewNote : applicableProofRequest(item.submissions, latest)}
-                onCancel={onProofCancel}
-                onSaved={onProofSaved}
-                onStatus={onStatus}
-              />
-            </section>
-          ) : (
-            <>
-          <div className="session-item-drawer-summary">
-            <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
-            {item.expectedQty == null ? null : <span>Expected quantity {item.expectedQty}</span>}
-            {assignedName ? <span>Assigned to {assignedName}</span> : null}
-          </div>
-
-          {canManage && item.suggestedInventoryItem ? (
-            <PossiblePriorMatchCard
+          <section className="session-detail-proof-form" aria-label="Submit proof">
+            <ProofForm
+              key={item.id}
               item={item}
-              action={matchAction}
-              onConfirm={() => onResolveMatch("confirm")}
-              onDismiss={() => onResolveMatch("dismiss")}
+              token={token}
+              tenantSlug={tenantSlug}
+              requestNote={needsMoreProof ? latest.reviewNote : applicableProofRequest(item.submissions, latest)}
+              onCancel={onCancel}
+              onSaved={onSaved}
+              onStatus={onStatus}
             />
-          ) : null}
-
-          {(item.packetLine || item.locationHint || assignedName || item.assignedByName || item.assignedByEmail || item.directVerifiedByName || item.directVerifiedByEmail) ? (
-          <section className="session-detail-section session-detail-visible-section">
-            <div className="session-detail-section-heading"><div><p className="eyebrow">Packet row</p><h3>Inventory details</h3></div></div>
-            <dl className="session-detail-facts">
-              {item.packetLine ? <div>
-                <dt>Packet line</dt>
-                <dd>{item.packetLine}</dd>
-              </div> : null}
-              {item.locationHint ? <div>
-                <dt>Location hint</dt>
-                <dd>{item.locationHint}</dd>
-              </div> : null}
-              {assignedName ? <div>
-                <dt>Assignment</dt>
-                <dd>{assignedName}</dd>
-              </div> : null}
-              {item.assignedByName || item.assignedByEmail ? (
-                <div>
-                  <dt>Assigned by</dt>
-                  <dd>{item.assignedByName || item.assignedByEmail}{item.assignedAt ? ` - ${formatDate(item.assignedAt)}` : ""}</dd>
-                </div>
-              ) : null}
-              {item.directVerifiedByName || item.directVerifiedByEmail ? (
-                <div>
-                  <dt>Direct check</dt>
-                  <dd>{item.directVerifiedByName || item.directVerifiedByEmail}</dd>
-                </div>
-              ) : null}
-            </dl>
           </section>
-          ) : null}
-
-          {item.inventoryItem ? (
-            <section className="session-detail-section session-detail-visible-section">
-              <div className="session-detail-section-heading"><div><p className="eyebrow">Previous inventory</p><h3>Saved record</h3></div><span className="session-detail-match">Matched</span></div>
-                <dl className="session-detail-facts">
-                  {item.inventoryItem.commonName || item.inventoryItem.title ? <div>
-                    <dt>Common name</dt>
-                    <dd>{item.inventoryItem.commonName || item.inventoryItem.title}</dd>
-                  </div> : null}
-                  {item.inventoryItem.armyName ? <div>
-                    <dt>Army name</dt>
-                    <dd>{item.inventoryItem.armyName}</dd>
-                  </div> : null}
-                  {item.inventoryItem.lin ? <div>
-                    <dt>LIN</dt>
-                    <dd>{item.inventoryItem.lin}</dd>
-                  </div> : null}
-                  {item.inventoryItem.nsn ? <div>
-                    <dt>NSN</dt>
-                    <dd>{item.inventoryItem.nsn}</dd>
-                  </div> : null}
-                  {item.inventoryItem.currentLocation ? <div>
-                    <dt>Known location</dt>
-                    <dd>{item.inventoryItem.currentLocation}</dd>
-                  </div> : null}
-                  {item.inventoryItem.description ? <div>
-                    <dt>Description</dt>
-                    <dd>{item.inventoryItem.description}</dd>
-                  </div> : null}
-                </dl>
-                {knownImages.length ? (
-                  <div className="session-detail-known-photos" aria-label="Known item photos">
-                    {knownImages.map((url, index) => (
-                      <a href={url} target="_blank" rel="noreferrer" key={url} aria-label={`Open known item photo ${index + 1}`}>
-                        <img src={url} alt={`${title} reference ${index + 1}`} loading="lazy" />
-                      </a>
-                    ))}
-                  </div>
-                ) : null}
-            </section>
-          ) : null}
-
-          {canManage && importBatch ? (
-            <section className="session-detail-section session-detail-visible-section">
-              <div className="session-detail-section-heading"><div><p className="eyebrow">Traceability</p><h3>Packet source</h3></div></div>
-              <div className="session-detail-source">
-                <div>
-                  <strong>{importBatch.sourceName || "Packet import"}</strong>
-                  <span>
-                    Imported {formatDate(importBatch.createdAt)}
-                    {importBatch.createdByName || importBatch.createdByEmail ? ` by ${importBatch.createdByName || importBatch.createdByEmail}` : ""}
-                  </span>
-                  <small>
-                    {importBatch.sourceMimeType || "Pasted packet text"}
-                    {importBatch.sourceSizeBytes ? ` - ${formatFileSize(importBatch.sourceSizeBytes)}` : ""}
-                  </small>
-                </div>
-                {importBatch.sourceUrl ? (
-                  <a className="btn btn-secondary btn-small" href={importBatch.sourceUrl} target="_blank" rel="noreferrer">
-                    <FileText aria-hidden="true" />
-                    <span>Open source</span>
-                  </a>
-                ) : null}
-              </div>
-            </section>
-          ) : null}
-
-          {item.submissions?.length ? (
-            <section className="session-detail-section session-detail-visible-section">
-              <div className="session-detail-section-heading"><div><p className="eyebrow">Evidence</p><h3>Proof history</h3></div><span>{countLabel(item.submissions.length, "submission")}</span></div>
-              <div className="session-detail-proof-list">
-                {item.submissions.map(submission => (
-                  <article className="session-detail-proof" key={submission.id}>
-                    <div className="session-detail-proof-heading">
-                      <div>
-                        <strong>{formatReviewState(submission.reviewState)}</strong>
-                        <span>{submissionPerson(submission)} - {formatDate(submission.createdAt)}</span>
-                      </div>
-                      <span className={`status-pill ${submission.status}`}>{formatItemStatus(submission.status)}</span>
-                    </div>
-                    <div className="session-detail-proof-facts">
-                      {submission.locationText ? <span>Location: {submission.locationText}</span> : null}
-                      {hasMeaningfulSerial(submission.serialNumber) ? <span>Serial: {submission.serialNumber}</span> : null}
-                    </div>
-                    {submission.note ? <p>{submission.note}</p> : null}
-                    {submission.reviewNote ? (
-                      <p className={submission.reviewState === "request_more_info" ? "session-detail-proof-request" : ""}>
-                        {submission.reviewState === "request_more_info" ? "Requested" : "Review note"}: {submission.reviewNote}
-                      </p>
-                    ) : null}
-                    <ProofPhotoStrip
-                      photos={submission.photos}
-                      compact
-                      label={`Evidence from ${submissionPerson(submission)}`}
-                      onOpen={index => onOpenPhoto(submission, index)}
-                    />
-                  </article>
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          {canManage ? (
-            <section className="session-detail-section session-detail-visible-section session-item-manage-disclosure">
-              <div className="session-detail-section-heading"><div><p className="eyebrow">Leader tools</p><h3>Manage item</h3></div></div>
-              <label className="session-assignment-control">
-                <span>Assign to</span>
-                <select value={assignedMemberId} disabled={isAssignmentPending || isDirectCheckPending || isClosed} onChange={event => onAssign(event.target.value)}>
-                  <option value="">Unassigned</option>
-                  {assignableMembers.map(member => (
-                    <option value={member.id} key={member.id}>
-                      {member.displayName || member.email || formatRole(member.role)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {!isClosed ? (
-                <label className="session-assignment-control">
-                  <span>Set result</span>
-                  <select value="" disabled={isAssignmentPending || isDirectCheckPending} onChange={event => {
-                    if (event.target.value) onDirectCheck(event.target.value);
-                  }}>
-                    <option value="">{isDirectCheckPending ? "Saving result..." : "Choose a result"}</option>
-                    <option value="approved">Found / accounted for</option>
-                    <option value="not_found">Not found</option>
-                  </select>
-                </label>
-              ) : null}
-            </section>
-          ) : null}
-
-            </>
-          )}
         </div>
-
-        {!proofOpen ? <footer className="session-item-drawer-actions">
-          {canClaim ? (
-            <button className="btn btn-secondary btn-small" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={onClaim}>
-              <UserPlus aria-hidden="true" />
-              <span>{assignmentAction === "claim" ? "Claiming..." : "Claim item"}</span>
-            </button>
-          ) : null}
-          {canSubmit && !pendingProof && !isClosed ? (
-            <button data-proof-item-id={item.id} className="btn btn-primary btn-small" type="button" disabled={isDirectCheckPending} onClick={onOpenProof}>
-              <Camera aria-hidden="true" />
-              <span>{needsMoreProof ? "Respond with proof" : "Add proof"}</span>
-            </button>
-          ) : null}
-          {canManage && pendingProof && !isClosed && onOpenReview ? (
-            <button className="btn btn-primary btn-small" type="button" disabled={isDirectCheckPending} onClick={onOpenReview}>
-              <MessageSquare aria-hidden="true" />
-              <span>Review proof</span>
-            </button>
-          ) : null}
-          {pendingProof && !canManage ? <span className="session-proof-awaiting">Awaiting review</span> : null}
-        </footer> : null}
       </aside>
     </div>
   );
@@ -2122,9 +2031,7 @@ function SessionPanel({
   onQueryChange = () => {},
   uploadIntent,
   preferredSessionId = "",
-  preferredSessionItemId = "",
   onUploadIntentHandled,
-  onPreferredSessionItemHandled,
   onSessionChange,
   onInviteCrew,
   onOpenReview
@@ -2148,7 +2055,6 @@ function SessionPanel({
   const [packetWizardSummary, setPacketWizardSummary] = useState(null);
   const [sessionItemFilter, setSessionItemFilter] = useState("available");
   const [proofItemId, setProofItemId] = useState("");
-  const [detailItemId, setDetailItemId] = useState("");
   const [detailPhotoViewer, setDetailPhotoViewer] = useState(null);
   const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
   const [isLoadingSessions, setIsLoadingSessions] = useState(true);
@@ -2167,7 +2073,6 @@ function SessionPanel({
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
   const packetFileInputRef = useRef(null);
   const packetTextareaRef = useRef(null);
-  const detailItemTriggerRef = useRef(null);
   const detailPhotoTriggerRef = useRef(null);
   const proofTriggerRef = useRef(null);
   const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
@@ -2203,7 +2108,6 @@ function SessionPanel({
     setSelectedSessionId("");
     setDetail(null);
     setProofItemId("");
-    setDetailItemId("");
     setDetailPhotoViewer(null);
     setPacketWizardSessionId("");
     setIsPacketImportOpen(false);
@@ -2309,7 +2213,6 @@ function SessionPanel({
     sessionItemFilterSessionRef.current = "";
     setSessionItemFilter("available");
     setProofItemId("");
-    setDetailItemId("");
     setDetailPhotoViewer(null);
   }, [selectedSessionId]);
 
@@ -2333,12 +2236,6 @@ function SessionPanel({
     sessionItemFilterSessionRef.current = selectedSessionId;
     setSessionItemFilter(nextFilter);
   }, [selectedSessionId, detail?.items, me?.user?.id, me?.user?.email]);
-
-  useEffect(() => {
-    if (!preferredSessionItemId || !detail?.items?.some(item => item.id === preferredSessionItemId)) return;
-    openItemDetail(preferredSessionItemId);
-    onPreferredSessionItemHandled?.();
-  }, [preferredSessionItemId, detail?.items, onPreferredSessionItemHandled]);
 
   async function selectSession(sessionId) {
     if (!sessionId) return;
@@ -2810,7 +2707,6 @@ function SessionPanel({
   async function resolvePriorMatch(sessionItemId, action) {
     if (!sessionItemId || matchActionRef.current.has(sessionItemId)) return false;
     const remainingCandidates = (detail?.items || []).filter(item => item.suggestedInventoryItem && item.id !== sessionItemId);
-    const nextCandidateId = remainingCandidates[0]?.id || "";
 
     matchActionRef.current.set(sessionItemId, action);
     setMatchActions(current => {
@@ -2828,16 +2724,12 @@ function SessionPanel({
         body: { action }
       });
       await loadSessionDetail(selectedSessionId, false);
-      if (nextCandidateId) {
-        setProofItemId("");
-        setDetailItemId(nextCandidateId);
-        setStatus({
-          text: `${action === "confirm" ? "Saved record linked." : "Suggestion removed."} ${remainingCandidates.length} possible ${remainingCandidates.length === 1 ? "match remains" : "matches remain"}.`,
-          isError: false
-        });
-      } else {
-        setStatus({ text: action === "confirm" ? "Saved record linked." : "Suggestion removed.", isError: false });
-      }
+      setStatus({
+        text: remainingCandidates.length
+          ? `${action === "confirm" ? "Saved record linked." : "Suggestion removed."} ${remainingCandidates.length} possible ${remainingCandidates.length === 1 ? "match remains" : "matches remain"}.`
+          : action === "confirm" ? "Saved record linked." : "Suggestion removed.",
+        isError: false
+      });
       return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -2857,10 +2749,6 @@ function SessionPanel({
     if (!sessionItemId || assignmentActionRef.current.has(sessionItemId)) return false;
 
     const action = claim ? "claim" : "assign";
-    if (claim) {
-      proofTriggerRef.current = document.activeElement;
-      detailItemTriggerRef.current = document.activeElement;
-    }
     assignmentActionRef.current.set(sessionItemId, action);
     setAssignmentActions(current => {
       const next = new Map(current);
@@ -2877,14 +2765,12 @@ function SessionPanel({
         body: { memberId: memberId || null }
       });
       setStatus({
-        text: claim ? "Item claimed. Add proof now." : memberId ? "Row assigned." : "Row assignment cleared.",
+        text: claim ? "Item claimed. It is now in Mine." : memberId ? "Row assigned." : "Row assignment cleared.",
         isError: false
       });
       await loadSessionDetail(selectedSessionId, false);
       if (claim) {
         setSessionItemFilter("mine");
-        setDetailItemId(sessionItemId);
-        setProofItemId(sessionItemId);
       } else if (!memberId) {
         setSessionItemFilter("available");
       } else {
@@ -3084,85 +2970,60 @@ function SessionPanel({
     [selectedSession, detail?.items]
   );
   const importBatches = detail?.importBatches || [];
-  const detailItem = detailItems.find(item => item.id === detailItemId) || null;
-  const detailItemImportBatch = detailItem?.importBatchId
-    ? importBatches.find(batch => batch.id === detailItem.importBatchId) || null
-    : null;
-  const detailItemAssignedMemberId = detailItem?.assignedTo
-    ? assignedMemberIdByUserId.get(detailItem.assignedTo) || ""
-    : "";
+  const importBatchById = useMemo(
+    () => new Map(importBatches.map(batch => [batch.id, batch])),
+    [importBatches]
+  );
+  const proofItem = detailItems.find(item => item.id === proofItemId) || null;
 
   useEffect(() => {
-    if (detailItemId && !detailItem) {
-      setDetailItemId("");
-      setDetailPhotoViewer(null);
-    }
-  }, [detailItemId, detailItem]);
+    if (proofItemId && !proofItem) setProofItemId("");
+  }, [proofItemId, proofItem]);
 
   useEffect(() => {
-    if (!detailItem && !detailPhotoViewer) return undefined;
+    if (!proofItem && !detailPhotoViewer) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [Boolean(detailItem), Boolean(detailPhotoViewer)]);
-
-  useEffect(() => {
-    if (!detailItem || detailPhotoViewer) return undefined;
-    const handleEscape = event => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      closeItemDetail();
-    };
-    window.addEventListener("keydown", handleEscape, true);
-    return () => window.removeEventListener("keydown", handleEscape, true);
-  }, [Boolean(detailItem), Boolean(detailPhotoViewer)]);
-
-  function openItemDetail(itemId) {
-    detailItemTriggerRef.current = document.activeElement;
-    setProofItemId("");
-    setDetailItemId(itemId);
-  }
+  }, [Boolean(proofItem), Boolean(detailPhotoViewer)]);
 
   function openFirstPossibleMatch() {
     const first = possibleMatchItems[0];
     if (!first) return;
     if (packetWizardOpen) closePacketWizard();
-    openItemDetail(first.id);
+    setSessionItemFilter(sessionItemAssignmentBucket(first, me));
+    window.requestAnimationFrame(() => {
+      document.querySelector(`[data-session-item-id="${first.id}"]`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    });
   }
 
   function openProof(itemId) {
     proofTriggerRef.current = document.activeElement;
-    if (detailItemId !== itemId) {
-      detailItemTriggerRef.current = document.activeElement;
-      setDetailItemId(itemId);
-    }
     setProofItemId(itemId);
   }
 
-  function closeItemDetail() {
+  function closeProof() {
     setProofItemId("");
-    setDetailPhotoViewer(null);
-    setDetailItemId("");
-    window.requestAnimationFrame(() => detailItemTriggerRef.current?.focus?.());
+    window.requestAnimationFrame(() => proofTriggerRef.current?.focus?.());
   }
 
-  function openDetailPhotoViewer(submission, index) {
-    if (!detailItem || !submission?.photos?.length) return;
+  function openItemPhotoViewer(item, photos, index, submission = null) {
+    if (!item || !photos?.length) return;
     detailPhotoTriggerRef.current = document.activeElement;
     setDetailPhotoViewer({
-      photos: submission.photos,
+      photos,
       index,
       isZoomed: false,
-      packetLine: detailItem.packetLine || itemDisplayName(detailItem),
+      packetLine: item.packetLine || itemDisplayName(item),
       sessionName: selectedSession?.name || "Inventory session",
-      submittedBy: submissionPerson(submission),
-      createdAt: submission.createdAt,
-      locationText: submission.locationText,
-      serialNumber: submission.serialNumber,
-      note: submission.note,
-      requestedProof: applicableProofRequest(detailItem.submissions, submission)
+      submittedBy: submission ? submissionPerson(submission) : "Saved inventory record",
+      createdAt: submission?.createdAt,
+      locationText: submission?.locationText || item.inventoryItem?.currentLocation || "",
+      serialNumber: submission?.serialNumber || "",
+      note: submission?.note || "",
+      requestedProof: submission ? applicableProofRequest(item.submissions, submission) : ""
     });
   }
 
@@ -3188,25 +3049,6 @@ function SessionPanel({
   const selectedSessionIsClosed = selectedSession?.status === "closed";
   const selectedSessionStatusAction = selectedSession?.id ? sessionStatusActions.get(selectedSession.id) || "" : "";
   const closeSessionAction = closeSessionTarget?.id ? sessionStatusActions.get(closeSessionTarget.id) || "" : "";
-  const detailItemDirectCheckAction = detailItem?.id ? directCheckActions.get(detailItem.id) || "" : "";
-  const detailItemAssignmentAction = detailItem?.id ? assignmentActions.get(detailItem.id) || "" : "";
-  const detailItemMatchAction = detailItem?.id ? matchActions.get(detailItem.id) || "" : "";
-  const detailItemAssignedToCurrentUser = detailItem ? sessionItemAssignedToUser(detailItem, me) : false;
-  const detailCanClaim = Boolean(
-    detailItem
-    && canSubmit
-    && !detailItem.assignedTo
-    && !detailItem.assignedToEmail
-    && !sessionItemIsComplete(detailItem)
-    && latestSubmission(detailItem)?.reviewState !== "pending"
-    && !selectedSessionIsClosed
-  );
-  const detailCanSubmitProof = Boolean(
-    detailItem
-    && canSubmit
-    && detailItemAssignedToCurrentUser
-    && !sessionItemIsComplete(detailItem)
-  );
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -3454,18 +3296,10 @@ function SessionPanel({
                           <strong>{batch.sourceName || "Packet import"}</strong>
                           <span>
                             {batch.rowCount || 0} rows - {formatDate(batch.createdAt)}
-                            {batch.sourceMimeType ? ` - ${batch.sourceMimeType}` : ""}
-                            {batch.sourceSizeBytes ? ` - ${formatFileSize(batch.sourceSizeBytes)}` : ""}
                             {batch.createdByName || batch.createdByEmail ? ` - uploaded by ${batch.createdByName || batch.createdByEmail}` : ""}
                           </span>
                         </div>
                         <div className="packet-import-history-actions">
-                          {batch.sourceUrl ? (
-                            <a className="btn btn-secondary btn-small" href={batch.sourceUrl} target="_blank" rel="noreferrer">
-                              <FileText aria-hidden="true" />
-                              <span>Source</span>
-                            </a>
-                          ) : null}
                           {!selectedSessionIsClosed ? (
                             <button className="btn btn-secondary btn-small" type="button" onClick={() => retryImportBatch(batch)}>
                               <ClipboardPlus aria-hidden="true" />
@@ -3570,10 +3404,13 @@ function SessionPanel({
                   const canSubmitItemProof = Boolean(canSubmit && assignedToCurrentUser);
                   const directCheckAction = directCheckActions.get(item.id) || "";
                   const assignmentAction = assignmentActions.get(item.id) || "";
+                  const matchAction = matchActions.get(item.id) || "";
+                  const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
+                  const importBatch = item.importBatchId ? importBatchById.get(item.importBatchId) || null : null;
                   const isDirectCheckPending = Boolean(directCheckAction);
                   const isAssignmentPending = Boolean(assignmentAction);
                   return (
-                    <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} key={item.id}>
+                    <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} data-session-item-id={item.id} key={item.id}>
                       <div className="session-item-main">
                         <FileText aria-hidden="true" />
                         <div>
@@ -3601,16 +3438,6 @@ function SessionPanel({
                       </div>
                       <div className="session-item-actions">
                         <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
-                        <button
-                          className="btn btn-secondary btn-small session-row-details-action"
-                          type="button"
-                          aria-label={`Open details for ${itemDisplayName(item)}`}
-                          aria-haspopup="dialog"
-                          onClick={() => openItemDetail(item.id)}
-                        >
-                          <ChevronRight aria-hidden="true" />
-                          <span>Details</span>
-                        </button>
                         {canClaim ? (
                           <button
                             className="btn btn-secondary btn-small session-row-claim-action"
@@ -3641,6 +3468,22 @@ function SessionPanel({
                           </button>
                         ) : null}
                       </div>
+                      <SessionItemInlineContext
+                        item={item}
+                        importBatch={importBatch}
+                        canManage={canManage}
+                        isClosed={selectedSessionIsClosed}
+                        assignmentAction={assignmentAction}
+                        directCheckAction={directCheckAction}
+                        matchAction={matchAction}
+                        assignableMembers={assignmentOptions}
+                        assignedMemberId={assignedMemberId}
+                        onAssign={memberId => updateSessionItemAssignment(item.id, memberId)}
+                        onDirectCheck={nextStatus => updateDirectCheck(item.id, nextStatus)}
+                        onResolveMatch={action => resolvePriorMatch(item.id, action)}
+                        onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
+                        onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
+                      />
                     </article>
                   );
                 }) : query.trim() && visibleCompletedItems.length ? null : actionableDetailItems.length ? (
@@ -3688,22 +3531,34 @@ function SessionPanel({
                     <strong>{completedDetailItems.length}</strong>
                   </summary>
                   <div className="session-completed-list">
-                    {visibleCompletedItems.length ? visibleCompletedItems.map(item => (
-                      <button
-                        className="session-completed-item"
-                        type="button"
-                        key={item.id}
-                        aria-label={`Open details for completed item ${itemDisplayName(item)}`}
-                        onClick={() => openItemDetail(item.id)}
-                      >
+                    {visibleCompletedItems.length ? visibleCompletedItems.map(item => {
+                      const importBatch = item.importBatchId ? importBatchById.get(item.importBatchId) || null : null;
+                      return (
+                      <article className="session-completed-item" key={item.id}>
                         <span>
                           <strong>{itemDisplayName(item)}</strong>
                           <small>{assignedPerson(item) ? `Completed by ${assignedPerson(item)}` : "Completed"}</small>
                         </span>
                         <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
-                        <ChevronRight aria-hidden="true" />
-                      </button>
-                    )) : (
+                        <SessionItemInlineContext
+                          item={item}
+                          importBatch={importBatch}
+                          canManage={canManage}
+                          isClosed
+                          assignmentAction=""
+                          directCheckAction=""
+                          matchAction=""
+                          assignableMembers={assignmentOptions}
+                          assignedMemberId=""
+                          onAssign={() => {}}
+                          onDirectCheck={() => {}}
+                          onResolveMatch={() => {}}
+                          onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
+                          onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
+                        />
+                      </article>
+                      );
+                    }) : (
                       <p>No completed items match this search.</p>
                     )}
                   </div>
@@ -3727,42 +3582,18 @@ function SessionPanel({
         </div>
       </div>
 
-      <SessionItemDrawer
-        item={detailItem}
+      <SessionProofDialog
+        item={proofItem}
         session={selectedSession}
-        importBatch={detailItemImportBatch}
-        canManage={canManage}
-        canSubmit={detailCanSubmitProof}
-        canClaim={detailCanClaim}
-        assignmentAction={detailItemAssignmentAction}
-        directCheckAction={detailItemDirectCheckAction}
-        matchAction={detailItemMatchAction}
-        isClosed={selectedSessionIsClosed}
         status={status}
-        assignableMembers={assignmentOptions}
-        assignedMemberId={detailItemAssignedMemberId}
-        proofOpen={Boolean(detailItem && proofItemId === detailItem.id)}
         token={token}
         tenantSlug={tenantSlug}
-        onAssign={memberId => updateSessionItemAssignment(detailItem.id, memberId)}
-        onClaim={() => updateSessionItemAssignment(detailItem.id, "self", { claim: true })}
-        onDirectCheck={nextStatus => updateDirectCheck(detailItem.id, nextStatus)}
-        onResolveMatch={action => resolvePriorMatch(detailItem.id, action)}
-        onOpenProof={() => openProof(detailItem.id)}
-        onOpenReview={canManage && onOpenReview ? () => {
-          setProofItemId("");
-          setDetailPhotoViewer(null);
-          setDetailItemId("");
-          onOpenReview();
-        } : null}
-        onOpenPhoto={openDetailPhotoViewer}
-        onProofCancel={closeItemDetail}
-        onProofSaved={() => {
-          closeItemDetail();
+        onCancel={closeProof}
+        onSaved={() => {
+          closeProof();
           loadSessions(selectedSessionId);
         }}
         onStatus={setStatus}
-        onClose={closeItemDetail}
       />
 
       <ProofPhotoViewer
@@ -8013,6 +7844,7 @@ function LeaderOverviewPanel({
   query,
   onQueryChange = () => {},
   canManage,
+  canSubmit,
   preferredSessionId,
   onSessionChange,
   onCreateSession,
@@ -8027,6 +7859,7 @@ function LeaderOverviewPanel({
   const [sessions, setSessions] = useState([]);
   const [pendingItems, setPendingItems] = useState([]);
   const [assignmentList, setAssignmentList] = useState("available");
+  const [claimingItemId, setClaimingItemId] = useState("");
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading dashboard...", isError: false });
   const detailRequestRef = useRef(0);
@@ -8108,6 +7941,35 @@ function LeaderOverviewPanel({
 
   function itemLocation(item) {
     return item.locationHint || item.inventoryItem?.currentLocation || "No location yet";
+  }
+
+  async function claimDashboardItem(item) {
+    if (!item?.id || claimingItemId) return;
+    setClaimingItemId(item.id);
+    try {
+      setStatus({ text: "Claiming item...", isError: false });
+      await apiRequest(`/session-items/${item.id}/assignment`, {
+        method: "PATCH",
+        token,
+        tenantSlug,
+        body: { memberId: "self" }
+      });
+      const sessionId = item.session?.id || selectedSession?.id;
+      if (sessionId) {
+        const nextDetail = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
+        const rowSession = nextDetail.session || selectedSession;
+        setPendingItems((nextDetail.items || [])
+          .filter(row => !sessionItemIsComplete(row))
+          .sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b))
+          .map(row => ({ ...row, session: rowSession })));
+      }
+      setAssignmentList("mine");
+      setStatus({ text: "Item claimed. It is now in Mine.", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setClaimingItemId("");
+    }
   }
 
   const assignmentListOptions = [
@@ -8280,6 +8142,7 @@ function LeaderOverviewPanel({
             {visiblePendingItems.length ? visiblePendingItems.map(item => {
               const imageUrls = getInventoryItemImages(item.inventoryItem);
               const assignedName = assignedPerson(item);
+              const canClaimItem = Boolean(canSubmit && !item.assignedTo && !item.assignedToEmail && sessionItemAssignmentBucket(item, me) === "available");
               return (
                 <article className="leader-table-row" key={item.id}>
                   <div className="leader-item-cell">
@@ -8294,9 +8157,12 @@ function LeaderOverviewPanel({
                   </div>
                   <span>{itemLocation(item)}</span>
                   <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
-                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(item.session?.id, item.id)}>
-                    <span>Open item</span>
-                  </button>
+                  {canClaimItem ? (
+                    <button className="btn btn-primary btn-small" type="button" disabled={Boolean(claimingItemId)} onClick={() => claimDashboardItem(item)}>
+                      <UserPlus aria-hidden="true" />
+                      <span>{claimingItemId === item.id ? "Claiming..." : "Claim item"}</span>
+                    </button>
+                  ) : null}
                 </article>
               );
             }) : (
@@ -9795,7 +9661,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [isReviewWorkspaceOpen, setIsReviewWorkspaceOpen] = useState(() => isTenantAdmin && tenantRouteFromLocation().panel === "review");
   const [sessionIntent, setSessionIntent] = useState("");
   const [preferredSessionId, setPreferredSessionId] = useState(() => me?.crew?.sessionId || "");
-  const [preferredSessionItemId, setPreferredSessionItemId] = useState("");
   const [isStartInventoryOpen, setIsStartInventoryOpen] = useState(false);
   const [startInventoryForm, setStartInventoryForm] = useState(() => ({
     name: defaultInventorySessionName(),
@@ -10423,7 +10288,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   function openSessions(intent = "") {
-    setPreferredSessionItemId("");
     setSessionIntent(intent);
     setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
@@ -10432,9 +10296,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     closeTenantSidebar(false);
   }
 
-  function openActivitySession(sessionId, sessionItemId = "") {
+  function openActivitySession(sessionId) {
     setPreferredSessionId(sessionId || "");
-    setPreferredSessionItemId(sessionItemId || "");
     setSessionIntent("");
     setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
@@ -10482,7 +10345,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       });
       const sessionId = data.session?.id || "";
       setPreferredSessionId(sessionId);
-      setPreferredSessionItemId("");
       setSessionIntent(startInventoryForm.source === "packet" ? "packet" : "");
       setStartInventoryForm({ name: defaultInventorySessionName(), source: startInventoryForm.source });
       setIsStartInventoryOpen(false);
@@ -10511,9 +10373,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
 
     const sessionId = action.sessionId || notification?.sessionId || "";
-    const sessionItemId = action.sessionItemId || notification?.sessionItemId || "";
     if (sessionId) {
-      openActivitySession(sessionId, sessionItemId);
+      openActivitySession(sessionId);
       return;
     }
 
@@ -10837,6 +10698,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 query={leaderQuery}
                 onQueryChange={setLeaderQuery}
                 canManage={isTenantAdmin}
+                canSubmit={canSubmitProof}
                 preferredSessionId={preferredSessionId}
                 onSessionChange={setPreferredSessionId}
                 onCreateSession={() => openStartInventoryWizard("packet")}
@@ -10849,7 +10711,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                   setIsSessionWorkspaceOpen(false);
                   navigateAppHash("/admin/review");
                 }}
-                showWorkQueue={false}
+                showWorkQueue
               />
 
               {isSessionWorkspaceOpen ? (
@@ -10874,9 +10736,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     onQueryChange={setLeaderQuery}
                     uploadIntent={sessionIntent}
                     preferredSessionId={preferredSessionId}
-                    preferredSessionItemId={preferredSessionItemId}
                     onUploadIntentHandled={() => setSessionIntent("")}
-                    onPreferredSessionItemHandled={() => setPreferredSessionItemId("")}
                     onSessionChange={setPreferredSessionId}
                     onInviteCrew={session => setCrewDialogSession(session)}
                     onOpenReview={() => {

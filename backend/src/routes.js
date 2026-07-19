@@ -8105,8 +8105,8 @@ export function registerRoutes(app) {
             UPDATE inventory_session_items
             SET status = 'unchecked',
               direct_verified_by = NULL,
-              assigned_to = CASE WHEN $2 = 'submitter' THEN $3 ELSE NULL END,
-              assigned_by = CASE WHEN $2 = 'submitter' THEN $4 ELSE NULL END,
+              assigned_to = CASE WHEN $2 = 'submitter' THEN $3::uuid ELSE NULL END,
+              assigned_by = CASE WHEN $2 = 'submitter' THEN $4::uuid ELSE NULL END,
               assigned_at = CASE WHEN $2 = 'submitter' THEN now() ELSE NULL END,
               updated_at = now()
             WHERE id = $1

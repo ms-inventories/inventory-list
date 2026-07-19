@@ -100,7 +100,7 @@ async function openReviewQueue(page) {
   await page.getByRole("region", { name: "Dashboard review results" })
     .getByRole("button", { name: "Open review queue", exact: true })
     .click();
-  await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
 }
 
@@ -202,7 +202,7 @@ test.describe("session claim API", () => {
     await closeSession(request, scenario, qaAdmin);
   });
 
-  test("synthetic users can claim from the UI and continue directly into proof", async ({ page, request }, testInfo) => {
+  test("synthetic users can claim inline and explicitly continue into proof", async ({ page, request }, testInfo) => {
     const suffix = testSuffix(testInfo, "ui");
     const platformAdmin = syntheticPlatformAdmin(suffix);
     const scenario = await createSessionItem(request, platformAdmin, suffix);
@@ -217,15 +217,19 @@ test.describe("session claim API", () => {
       await selector.selectOption(scenario.sessionId);
       await activeInventory.getByRole("button", { name: "Open session" }).click();
 
-      const row = page.locator(".session-item", { hasText: `QA-CLAIM-${suffix.toUpperCase()}` });
+      let row = page.locator(".session-item", { hasText: `QA-CLAIM-${suffix.toUpperCase()}` });
       await expect(row).toBeVisible();
-      await row.getByRole("button", { name: /Open details for/ }).click();
-      const drawer = page.getByRole("dialog", { name: `QA-CLAIM-${suffix.toUpperCase()}` });
-      await drawer.getByRole("button", { name: "Claim item" }).click();
+      await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await row.getByRole("button", { name: "Claim item", exact: true }).click();
+      await expect(page.locator(".session-panel").getByRole("status")).toContainText("Item claimed. It is now in Mine.");
+      await expect(page.getByRole("dialog"), "claiming must not open an item or proof dialog").toHaveCount(0);
+      await expect(page.locator(".proof-form")).toHaveCount(0);
 
-      await expect(drawer.getByRole("status")).toContainText("Item claimed.");
-      await expect(row.locator(".proof-form")).toHaveCount(0);
-      const proofForm = drawer.locator(".proof-form");
+      row = page.locator(".session-item", { hasText: `QA-CLAIM-${suffix.toUpperCase()}` });
+      await expect(row.getByRole("button", { name: "Add proof", exact: true })).toBeVisible();
+      await row.getByRole("button", { name: "Add proof", exact: true }).click();
+      const proofDialog = page.getByRole("dialog", { name: `Add proof for QA-CLAIM-${suffix.toUpperCase()}` });
+      const proofForm = proofDialog.locator(".proof-form");
       await expect(proofForm).toBeVisible();
       const outcome = proofForm.getByRole("combobox", { name: "Inventory result" });
       await expect(outcome).toHaveValue("found");
@@ -237,9 +241,9 @@ test.describe("session claim API", () => {
       const photoInput = proofForm.getByLabel("Add item photos");
       await expect(photoInput).toBeEnabled();
       await expect(photoInput).toHaveAttribute("multiple", "");
-      const drawerBeforePhotos = await drawer.boundingBox();
+      const dialogBeforePhotos = await proofDialog.boundingBox();
       const photoNames = Array.from({ length: 11 }, (_, index) =>
-        `proof-photo-${index}-with-an-intentionally-long-filename-that-must-not-expand-the-item-drawer.jpg`
+        `proof-photo-${index}-with-an-intentionally-long-filename-that-must-not-expand-the-proof-dialog.jpg`
       );
       await photoInput.setInputFiles(photoNames.map(name => ({
         name,
@@ -253,23 +257,24 @@ test.describe("session claim API", () => {
         await expect(proofForm.getByText(name, { exact: true })).toBeVisible();
       }
       await expect(proofForm.getByText(photoNames[10], { exact: true })).toHaveCount(0);
-      await expect(drawer.getByText("You can submit up to 10 photos for review.", { exact: true })).toBeVisible();
+      await expect(proofDialog.getByText("You can submit up to 10 photos for review.", { exact: true })).toBeVisible();
       const viewport = page.viewportSize();
-      const drawerBox = await drawer.boundingBox();
-      expect(Math.abs(drawerBox.x - drawerBeforePhotos.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(drawerBox.y - drawerBeforePhotos.y)).toBeLessThanOrEqual(1);
-      expect(Math.abs(drawerBox.width - drawerBeforePhotos.width)).toBeLessThanOrEqual(1);
-      expect(Math.abs(drawerBox.height - drawerBeforePhotos.height)).toBeLessThanOrEqual(1);
-      expect(drawerBox.x).toBeGreaterThanOrEqual(0);
-      expect(drawerBox.x + drawerBox.width).toBeLessThanOrEqual(viewport.width + 1);
-      expect(drawerBox.y).toBeGreaterThanOrEqual(0);
-      expect(drawerBox.y + drawerBox.height).toBeLessThanOrEqual(viewport.height + 1);
-      expect(await drawer.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      const dialogBox = await proofDialog.boundingBox();
+      expect(Math.abs(dialogBox.x - dialogBeforePhotos.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(dialogBox.y - dialogBeforePhotos.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(dialogBox.width - dialogBeforePhotos.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(dialogBox.height - dialogBeforePhotos.height)).toBeLessThanOrEqual(1);
+      expect(dialogBox.x).toBeGreaterThanOrEqual(0);
+      expect(dialogBox.x + dialogBox.width).toBeLessThanOrEqual(viewport.width + 1);
+      expect(dialogBox.y).toBeGreaterThanOrEqual(0);
+      expect(dialogBox.y + dialogBox.height).toBeLessThanOrEqual(viewport.height + 1);
+      expect(await proofDialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
       expect(await proofForm.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
       )).toBeTruthy();
-      await expect(page.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Mine\b/ })).toHaveClass(/active/);
+      const workspace = page.getByRole("region", { name: "Inventory workspace" });
+      await expect(workspace.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Mine\b/ })).toHaveClass(/active/);
       await expect(page.getByText("Validation failed", { exact: true })).toHaveCount(0);
 
       const saved = await sessionItem(request, scenario, platformAdmin);
@@ -311,17 +316,20 @@ test.describe("session claim API", () => {
       await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
       await activeInventory.getByRole("button", { name: "Open session" }).click();
 
-      const row = page.locator(".session-item", { hasText: packetLine });
+      let row = page.locator(".session-item", { hasText: packetLine });
       await expect(row).toBeVisible();
-      await row.getByRole("button", { name: /Open details for/ }).click();
-      const drawer = page.getByRole("dialog", { name: packetLine });
-      await drawer.getByRole("button", { name: "Claim item" }).click();
-
-      const proofForm = drawer.locator(".proof-form");
+      await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await row.getByRole("button", { name: "Claim item", exact: true }).click();
+      await expect(page.locator(".session-panel").getByRole("status")).toContainText("Item claimed. It is now in Mine.");
+      await expect(page.getByRole("dialog"), "claiming must not open a proof form").toHaveCount(0);
+      row = page.locator(".session-item", { hasText: packetLine });
+      await row.getByRole("button", { name: "Add proof", exact: true }).click();
+      const proofDialog = page.getByRole("dialog", { name: `Add proof for ${packetLine}` });
+      const proofForm = proofDialog.locator(".proof-form");
       await expect(proofForm).toBeVisible();
       await test.step("reject empty evidence without any API write", async () => {
         await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
-        await expect(drawer.getByText(
+        await expect(proofDialog.getByText(
           "Add an item photo, or explain who verified the item and why it is accounted for.",
           { exact: true }
         )).toBeVisible();
@@ -355,7 +363,7 @@ test.describe("session claim API", () => {
         });
         expect(submissionRequest.postDataJSON().serialNumber).toBeUndefined();
         submitted = await (await submissionResponsePromise).json();
-        await expect(drawer).toBeHidden();
+        await expect(proofDialog).toBeHidden();
         expect(uploadRequests).toBe(0);
         expect(submissionRequests).toBe(1);
       });
@@ -425,13 +433,16 @@ test.describe("session claim API", () => {
       await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
       await activeInventory.getByRole("button", { name: "Open session" }).click();
 
-      const row = page.locator(".session-item", { hasText: packetLine });
+      let row = page.locator(".session-item", { hasText: packetLine });
       await expect(row).toBeVisible();
-      await row.getByRole("button", { name: /Open details for/ }).click();
-      const drawer = page.getByRole("dialog", { name: packetLine });
-      await drawer.getByRole("button", { name: "Claim item" }).click();
-
-      const proofForm = drawer.locator(".proof-form");
+      await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await row.getByRole("button", { name: "Claim item", exact: true }).click();
+      await expect(page.locator(".session-panel").getByRole("status")).toContainText("Item claimed. It is now in Mine.");
+      await expect(page.getByRole("dialog"), "claiming must not open a proof form").toHaveCount(0);
+      row = page.locator(".session-item", { hasText: packetLine });
+      await row.getByRole("button", { name: "Add proof", exact: true }).click();
+      const proofDialog = page.getByRole("dialog", { name: `Add proof for ${packetLine}` });
+      const proofForm = proofDialog.locator(".proof-form");
       await expect(proofForm).toBeVisible();
       await proofForm.getByLabel("Serial number (if serialized)", { exact: true }).fill("N/A");
       await proofForm.getByLabel("Add item photos").setInputFiles({
@@ -463,7 +474,7 @@ test.describe("session claim API", () => {
       expect(submissionPayload.photos).toHaveLength(1);
       expect(submissionPayload.photos[0]).toMatchObject({ kind: "general" });
       const submitted = await (await submissionResponsePromise).json();
-      await expect(drawer).toBeHidden();
+      await expect(proofDialog).toBeHidden();
 
       await openReviewQueue(page);
       const reviewCard = page.locator(".review-card", { hasText: packetLine });

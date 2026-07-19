@@ -116,17 +116,24 @@ test.describe("temporary crew access", () => {
       }
 
       await activeInventory.getByRole("button", { name: "Open session" }).click();
-      const itemRow = page.locator(".session-item", { hasText: packetLine });
+      let itemRow = page.locator(".session-item", { hasText: packetLine });
       await expect(itemRow).toBeVisible();
+      await expect(itemRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
       await itemRow.getByRole("button", { name: "Claim item" }).click();
-      const proofDrawer = page.getByRole("dialog", { name: packetLine });
-      await expect(proofDrawer.getByRole("status")).toContainText("Item claimed.");
-      const proofForm = proofDrawer.locator(".proof-form");
+      await expect(page.locator(".session-panel").getByRole("status")).toContainText("Item claimed. It is now in Mine.");
+      await expect(page.getByRole("dialog"), "claiming work must not open the item or proof form").toHaveCount(0);
+
+      itemRow = page.locator(".session-item", { hasText: packetLine });
+      await expect(itemRow.getByRole("button", { name: "Add proof", exact: true })).toBeVisible();
+      await itemRow.getByRole("button", { name: "Add proof", exact: true }).click();
+      const proofDialog = page.getByRole("dialog", { name: `Add proof for ${packetLine}` });
+      const proofForm = proofDialog.locator(".proof-form");
+      await expect(proofForm).toBeVisible();
       await proofForm.getByRole("combobox", { name: "Inventory result" }).selectOption("not_found");
       await proofForm.getByRole("textbox", { name: "Location" }).fill("Temporary crew QA location");
       await proofForm.getByRole("textbox", { name: "Note" }).fill("Checked the assigned area; the item was not present.");
       await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
-      await expect(proofDrawer).toBeHidden();
+      await expect(proofDialog).toBeHidden();
 
       await page.getByRole("button", { name: "Open user menu" }).click();
       const userMenu = page.getByRole("region", { name: "User menu" });

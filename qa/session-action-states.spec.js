@@ -88,11 +88,11 @@ async function openScenario(page, scenario) {
 
   const row = page.locator(".session-item", { hasText: scenario.packetLine });
   await expect(row).toBeVisible();
-  await row.getByRole("button", { name: `Open details for ${scenario.packetLine}` }).click();
-  const drawer = page.getByRole("dialog", { name: scenario.packetLine });
-  await expect(drawer).toBeVisible();
-  await expect(drawer.getByRole("heading", { name: "Manage item" })).toBeVisible();
-  return drawer;
+  await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+  await expect(page.getByRole("dialog"), "leader item controls should be inline").toHaveCount(0);
+  const leaderControls = row.getByRole("region", { name: `Manage ${scenario.packetLine}` });
+  await expect(leaderControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
+  return { row, leaderControls, panel: page.locator(".session-panel") };
 }
 
 test.describe("session async action states", () => {
@@ -105,11 +105,13 @@ test.describe("session async action states", () => {
     const directRequestId = `qa-direct-${testInfo.project.name}`;
     const closeRequestId = `qa-close-${testInfo.project.name}`;
     let directRequests = 0;
+    const directStatuses = [];
     let closeRequests = 0;
     let reopenRequests = 0;
 
     await page.route("**/api/session-items/*/direct-check", async route => {
       directRequests += 1;
+      directStatuses.push(route.request().postDataJSON()?.status);
       if (directRequests === 1) {
         await directFailureGate.promise;
         await route.fulfill({
@@ -158,25 +160,26 @@ test.describe("session async action states", () => {
       await route.continue();
     });
 
-    let drawer = await openScenario(page, scenario);
-    const resultSelect = drawer.getByRole("combobox", { name: "Set result" });
-    await resultSelect.selectOption("approved");
+    const { row, leaderControls, panel } = await openScenario(page, scenario);
+    const resultSelect = leaderControls.getByRole("combobox", { name: "Set result" });
+    await resultSelect.selectOption("found");
     await expect(resultSelect).toBeDisabled();
     await expect.poll(() => directRequests).toBe(1);
     expect(directRequests).toBe(1);
+    expect(directStatuses).toEqual(["found"]);
 
     directFailureGate.resolve();
-    await expect(drawer.getByRole("alert")).toContainText(
+    await expect(panel.getByRole("alert")).toContainText(
       `The server could not complete this request. Reference ID: ${directRequestId}.`
     );
     await expect(resultSelect).toBeEnabled();
 
     await resultSelect.selectOption("not_found");
     await expect.poll(() => directRequests).toBe(2);
-    await expect(drawer.getByRole("status")).toContainText("Session item updated.");
-    await expect(resultSelect).toBeEnabled();
-    await drawer.getByRole("button", { name: "Close item details" }).click();
-    await expect(drawer).toBeHidden();
+    expect(directStatuses).toEqual(["found", "not_found"]);
+    await expect(panel.getByRole("status")).toContainText("Session item updated.");
+    await expect(row).toHaveCount(0);
+    await expect(page.getByRole("dialog"), "direct checks must not open an item dialog").toHaveCount(0);
 
     await page.getByRole("button", { name: "Close out", exact: true }).click();
     let closeDialog = page.getByRole("dialog", { name: "Close this session?" });

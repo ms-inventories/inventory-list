@@ -130,7 +130,7 @@ async function openWorkspaceView(page, label, heading) {
     await page.getByRole("region", { name: "Dashboard review results" })
       .getByRole("button", { name: "Open review queue", exact: true })
       .click();
-    await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
     return;
   }
@@ -208,10 +208,11 @@ test.describe("verified item reuse UI", () => {
       await expectMinHeight(reviewMatches, touchTargetMinimum);
       await reviewMatches.click();
 
-      let drawer = page.getByRole("dialog", { name: packetLine });
-      await expect(drawer).toBeVisible();
-      await expectViewportContained(page, drawer);
-      const matchCard = drawer.locator(".prior-match-card");
+      const row = page.locator(".session-item", { hasText: packetLine });
+      await expect(row).toBeVisible();
+      await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await expect(page.getByRole("dialog"), "reviewing a relationship should remain inline").toHaveCount(0);
+      const matchCard = row.locator(".prior-match-card");
       await expect(matchCard.getByText("Cage 12, upper shelf", { exact: false })).toBeVisible();
       await expect(matchCard.getByRole("link", { name: "Open previous photo 1" })).toBeVisible();
       await expectContained(page, matchCard);
@@ -222,10 +223,14 @@ test.describe("verified item reuse UI", () => {
       await expectMinHeight(dismissRecord, touchTargetMinimum);
       await useRecord.click();
       await expect(matchCard).toBeHidden();
-      await expect(drawer.getByText("Saved record", { exact: true })).toBeVisible();
+      const savedRecord = row.getByRole("region", { name: `Saved record for ${packetLine}` });
+      await expect(savedRecord.getByRole("heading", { name: "Saved record" })).toBeVisible();
+      await expect(savedRecord).toContainText("Cage 12, upper shelf");
+      await expect(savedRecord.locator(`[aria-label="Saved record photos for ${packetLine}"]`)).toBeVisible();
 
-      await drawer.getByRole("button", { name: "Add proof" }).click();
-      const proofForm = drawer.locator(".proof-form");
+      await row.getByRole("button", { name: "Add proof" }).click();
+      const proofDialog = page.getByRole("dialog", { name: `Add proof for ${packetLine}` });
+      const proofForm = proofDialog.locator(".proof-form");
       await expect(proofForm).toBeVisible();
       await expect(proofForm.getByLabel("Location", { exact: true })).toHaveValue("Cage 12, upper shelf");
       await expect(proofForm.getByText("Last saved at Cage 12, upper shelf", { exact: true })).toBeVisible();
@@ -260,7 +265,7 @@ test.describe("verified item reuse UI", () => {
       await expect.poll(() => uploadedPhotosByName.size).toBe(3);
       page.off("response", captureUploadedPhoto);
       const uploadedPhotos = newPhotoNames.map(name => uploadedPhotosByName.get(name));
-      await expect(drawer).toBeHidden();
+      await expect(proofDialog).toBeHidden();
 
       await openWorkspaceView(page, "Review Queue", "Review Queue");
       const reviewCard = page.locator(".review-card", { hasText: packetLine });
@@ -269,7 +274,7 @@ test.describe("verified item reuse UI", () => {
 
       const evidencePicker = reviewCard.locator(".saved-evidence-picker");
       const evidenceSummary = evidencePicker.locator("summary");
-      await expect(evidenceSummary.getByText("Optional", { exact: true })).toBeVisible();
+      await expect(evidenceSummary.getByText("Choose photos for next time", { exact: true })).toBeVisible();
       await expectMinHeight(evidenceSummary, touchTargetMinimum);
       await evidenceSummary.click();
 

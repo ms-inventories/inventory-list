@@ -128,7 +128,7 @@ test.describe("dashboard action destinations", () => {
     }
   });
 
-  test("Open item opens the seeded pending row's exact item without creating a session", async ({ page }, testInfo) => {
+  test("session work can be claimed directly and only Add proof opens a form", async ({ page, request }, testInfo) => {
     const sessionCreateRequests = [];
     page.on("request", request => {
       const url = new URL(request.url());
@@ -137,31 +137,76 @@ test.describe("dashboard action destinations", () => {
       }
     });
 
-    await signInAsRoot(page, testInfo);
+    let sessionId = "";
+    let sessionItemId = "";
+    try {
+      await signInAsRoot(page, testInfo);
 
-    const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
-    await expect(pendingResults, "the work queue stays hidden until a session is opened").toBeHidden();
-    const activeInventory = page.getByRole("region", { name: "Active inventory" });
-    const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
-    if (await selector.isVisible()) {
-      await selector.selectOption({ label: "Search behavior fixture" });
+      const sessionPayload = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
+        headers: qaHeaders(testInfo)
+      }));
+      sessionId = sessionPayload.sessions.find(session => session.name === "Search behavior fixture")?.id || "";
+      expect(sessionId).toBeTruthy();
+      const detail = await responseJson(await request.get(`${API_URL}/inventory/sessions/${sessionId}`, {
+        headers: qaHeaders(testInfo)
+      }));
+      sessionItemId = detail.items.find(item => item.inventoryItem?.commonName === "Quiet Generator")?.id || "";
+      expect(sessionItemId).toBeTruthy();
+      await responseJson(await request.patch(`${API_URL}/session-items/${sessionItemId}/assignment`, {
+        headers: qaHeaders(testInfo),
+        data: { memberId: null }
+      }));
+
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+      const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
+      await expect(pendingResults, "the dashboard work queue supports one-tap claiming").toBeVisible();
+      const activeInventory = page.getByRole("region", { name: "Active inventory" });
+      const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+      if (await selector.isVisible()) await selector.selectOption(sessionId);
+
+      const dashboardLists = pendingResults.getByRole("group", { name: "Dashboard work assignment lists" });
+      await dashboardLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
+      let dashboardRow = pendingResults.locator(".leader-table-row", { hasText: "Quiet Generator" });
+      await expect(dashboardRow).toBeVisible();
+      await expect(dashboardRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await dashboardRow.getByRole("button", { name: "Claim item", exact: true }).click();
+      await expect(page.locator(".leader-dashboard").getByRole("status")).toContainText("Item claimed");
+      await expect(page.getByRole("dialog"), "dashboard claiming must not open any item UI").toHaveCount(0);
+      await expect(page.locator(".proof-form"), "dashboard claiming must not jump into proof entry").toHaveCount(0);
+      await dashboardLists.getByRole("button", { name: /^Mine\b/ }).click();
+      dashboardRow = pendingResults.locator(".leader-table-row", { hasText: "Quiet Generator" });
+      await expect(dashboardRow).toBeVisible();
+
+      await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
+      await expectSessionsPageWithoutCreateDialog(page);
+      const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+      const assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
+      await assignmentLists.getByRole("button", { name: /^Mine\b/ }).click();
+
+      const pendingRow = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
+      await expect(pendingRow).toBeVisible();
+      await expect(pendingRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await expect(page.locator(".session-item-drawer")).toHaveCount(0);
+      await expect(pendingRow.getByRole("button", { name: "Add proof", exact: true })).toBeVisible();
+
+      await pendingRow.getByRole("button", { name: "Add proof", exact: true }).click();
+      const proofDialog = page.getByRole("dialog", { name: "Add proof for Quiet Generator" });
+      await expect(proofDialog).toBeVisible();
+      await expect(proofDialog.locator(".proof-form")).toBeVisible();
+      await expect(page.locator(".session-item-drawer")).toHaveCount(0);
+      await proofDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(proofDialog).toBeHidden();
+
+      expect(sessionCreateRequests, "claiming or adding proof must not create an inventory session").toHaveLength(0);
+    } finally {
+      if (sessionItemId) {
+        await responseJson(await request.patch(`${API_URL}/session-items/${sessionItemId}/assignment`, {
+          headers: qaHeaders(testInfo),
+          data: { memberId: null }
+        }));
+      }
     }
-    await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
-    await expectSessionsPageWithoutCreateDialog(page);
-
-    const pendingRow = page.locator(".session-item", { hasText: "Field Radio" });
-    await expect(pendingRow).toBeVisible();
-    await pendingRow.getByRole("button", { name: /Open details for/ }).click();
-
-    await expect(
-      page.locator(".session-summary").getByText("Search behavior fixture", { exact: true }),
-      "the row action should preserve and select the row's session id"
-    ).toBeVisible();
-    await expect(
-      page.getByRole("dialog", { name: "Field Radio" }),
-      "the row action should open the exact pending item's detail drawer"
-    ).toBeVisible();
-    expect(sessionCreateRequests, "opening pending work must not create an inventory session").toHaveLength(0);
   });
 
   test("session work remains hidden until explicitly opened and can be collapsed again", async ({ page }, testInfo) => {
