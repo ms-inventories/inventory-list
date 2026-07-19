@@ -20,6 +20,13 @@ const qaNco = {
   groups: ["876en-ms"]
 };
 
+const qaOutsider = {
+  sub: "qa-media-outsider",
+  email: "qa-media-outsider@876en.test",
+  name: "QA Media Outsider",
+  groups: []
+};
+
 function qaHeaders(identity) {
   return {
     "X-Dev-Sub": identity.sub,
@@ -65,6 +72,14 @@ function assertProtectedMediaUrl(value) {
 }
 
 test.describe("tenant media access", () => {
+  test("media-session renewal requires current workspace access", async ({ request }) => {
+    const response = await request.post(`${API_URL}/media/session`, {
+      headers: qaHeaders(qaOutsider)
+    });
+    expect(response.status()).toBe(403);
+    expect(response.headers()["set-cookie"]).toBeUndefined();
+  });
+
   test("crew media sessions allow matching approved history and deny unrelated prior photos", async ({ playwright }, testInfo) => {
     const admin = await playwright.request.newContext();
     const contributor = await playwright.request.newContext();
@@ -175,6 +190,13 @@ test.describe("tenant media access", () => {
         headers: { "X-Tenant-Slug": "ms", Origin: TENANT_ORIGIN },
         data: { code: access.code, inviteToken: access.inviteToken }
       }));
+
+      const crewMediaRenewal = await crew.post(`${API_URL}/media/session`, {
+        headers: { "X-Tenant-Slug": "ms", Origin: TENANT_ORIGIN }
+      });
+      expect(crewMediaRenewal.status()).toBe(200);
+      expect(crewMediaRenewal.headers()["set-cookie"]).toContain("inventory_media_ms=");
+      expect((await crewMediaRenewal.json()).expiresAt).toBeTruthy();
 
       const detailResponse = await crew.get(`${API_URL}/inventory/sessions/${active.session.id}`, {
         headers: { "X-Tenant-Slug": "ms" }

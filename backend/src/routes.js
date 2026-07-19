@@ -3464,6 +3464,18 @@ export function registerRoutes(app) {
     };
   });
 
+  route(app, "post", "/api/media/session", async (request, reply) => {
+    await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor", "viewer"],
+      { allowCrew: true }
+    );
+    return {
+      expiresAt: new Date(Date.now() + config.storage.mediaSessionTtlSeconds * 1000).toISOString()
+    };
+  });
+
   route(app, "get", "/api/newsletter/public", async () => {
     const [latestResult, recentResult, contentResult] = await Promise.all([
       query(

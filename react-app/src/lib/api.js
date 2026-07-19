@@ -11,6 +11,8 @@ import {
 
 const QA_IDENTITY_KEY = "inventory.qa.identity";
 const LAST_API_REQUEST_ID_KEY = "inventory.lastApiRequestId";
+const mediaSessionRenewals = new Map();
+const MEDIA_SESSION_RENEWAL_DEDUPE_MS = 2_000;
 export const CREW_ACCESS_ENDED_EVENT = "inventory:crew-access-ended";
 
 export class ApiError extends Error {
@@ -184,6 +186,36 @@ export async function apiRequest(path, {
   }
 
   return data || {};
+}
+
+export function renewMediaSession({ token = "", tenantSlug = "" } = {}) {
+  const renewalKey = String(tenantSlug || "").trim().toLowerCase();
+  if (!renewalKey) {
+    return Promise.reject(new ApiError("A platoon is required to renew photo access.", 400, {
+      code: "media_tenant_required"
+    }));
+  }
+
+  const pending = mediaSessionRenewals.get(renewalKey);
+  if (pending && pending.reuseUntil > Date.now()) return pending.promise;
+
+  const entry = { promise: null, reuseUntil: Number.POSITIVE_INFINITY };
+  entry.promise = apiRequest("/media/session", {
+    method: "POST",
+    token,
+    tenantSlug: renewalKey,
+    retryAuth: true
+  }).then(result => {
+    entry.reuseUntil = Date.now() + MEDIA_SESSION_RENEWAL_DEDUPE_MS;
+    return result;
+  }).catch(error => {
+    if (mediaSessionRenewals.get(renewalKey) === entry) {
+      mediaSessionRenewals.delete(renewalKey);
+    }
+    throw error;
+  });
+  mediaSessionRenewals.set(renewalKey, entry);
+  return entry.promise;
 }
 
 export function getApiErrorMessage(error) {

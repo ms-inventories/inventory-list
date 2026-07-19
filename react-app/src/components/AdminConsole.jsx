@@ -47,6 +47,7 @@ import {
 import { appConfig, getTenantSlugFromHostname, isAdminHostname } from "../config.js";
 import { APP_NAME } from "../branding.js";
 import CrewAccessDialog from "./CrewAccessDialog.jsx";
+import ProtectedMediaImage, { MediaAuthProvider } from "./ProtectedMediaImage.jsx";
 import { apiRequest, clearQaIdentity, CREW_ACCESS_ENDED_EVENT, getApiErrorMessage, readLastApiRequestId, saveQaIdentity } from "../lib/api.js";
 import { matchesSearch, metadataSearchText, searchTerms } from "../lib/search.js";
 import {
@@ -848,11 +849,11 @@ function PriorInventorySnapshot({ item, onOpenPhoto }) {
                   aria-label={`View previous inventory photo ${index + 1}`}
                   onClick={() => onOpenPhoto(index, snapshot)}
                 >
-                  <img src={photo.url} alt={photo.caption || `Previous inventory photo ${index + 1}`} loading="lazy" />
+                  <ProtectedMediaImage src={photo.url} alt={photo.caption || `Previous inventory photo ${index + 1}`} loading="lazy" />
                 </button>
               ) : (
                 <span className="prior-inventory-photo" key={photo.id || photo.url}>
-                  <img src={photo.url} alt={photo.caption || `Previous inventory photo ${index + 1}`} loading="lazy" />
+                  <ProtectedMediaImage src={photo.url} alt={photo.caption || `Previous inventory photo ${index + 1}`} loading="lazy" />
                 </span>
               )
             ))}
@@ -879,11 +880,11 @@ function PriorInventorySnapshot({ item, onOpenPhoto }) {
                     }
                   })}
                 >
-                  <img src={photo.url} alt={photo.caption || `Saved reference photo ${index + 1}`} loading="lazy" />
+                  <ProtectedMediaImage src={photo.url} alt={photo.caption || `Saved reference photo ${index + 1}`} loading="lazy" />
                 </button>
               ) : (
                 <span className="prior-inventory-photo" key={photo.id || photo.url}>
-                  <img src={photo.url} alt={photo.caption || `Saved reference photo ${index + 1}`} loading="lazy" />
+                  <ProtectedMediaImage src={photo.url} alt={photo.caption || `Saved reference photo ${index + 1}`} loading="lazy" />
                 </span>
               )
             ))}
@@ -1707,7 +1708,7 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
             <div className="saved-record-photo-strip" aria-label="Previously saved item photos">
               {savedItemPhotos.map((photo, index) => (
                 <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.url} aria-label={`Open saved item photo ${index + 1}`}>
-                  <img src={photo.url} alt="" loading="lazy" />
+                  <ProtectedMediaImage src={photo.url} alt="" loading="lazy" />
                 </a>
               ))}
             </div>
@@ -1966,7 +1967,7 @@ function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss }) {
         <div className="prior-match-photos" aria-label="Previously saved photos">
           {photos.map((photo, index) => (
             <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.url} aria-label={`Open previous photo ${index + 1}`}>
-              <img src={photo.url} alt="" loading="lazy" />
+              <ProtectedMediaImage src={photo.url} alt="" loading="lazy" />
             </a>
           ))}
         </div>
@@ -3619,7 +3620,7 @@ function SessionPanel({
                     <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} data-session-item-id={item.id} key={item.id}>
                       <div className="session-item-main">
                         <span className="session-item-leading-thumb">
-                          {leadingPhoto ? <img src={leadingPhoto.url} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
+                          {leadingPhoto ? <ProtectedMediaImage src={leadingPhoto.url} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
                         </span>
                         <div>
                           <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
@@ -4290,7 +4291,7 @@ function ProofPhotoStrip({ photos = [], onOpen, compact = false, label = "Submit
           aria-haspopup="dialog"
           onClick={() => onOpen(index)}
         >
-          <img src={photo.url} alt="" loading="lazy" />
+          <ProtectedMediaImage src={photo.url} alt="" loading="lazy" />
           <span className="proof-photo-thumbnail-copy">
             <strong>{proofPhotoLabel(photo)}</strong>
             {proofPhotoCaption(photo) !== proofPhotoLabel(photo) ? <small>{proofPhotoCaption(photo)}</small> : null}
@@ -4365,7 +4366,7 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
         <div className="proof-viewer-content">
           <div className="proof-viewer-stage">
             <div className={`proof-viewer-image-scroll ${viewer.isZoomed ? "zoomed" : ""}`}>
-              <img src={photo.url} alt={`${proofPhotoAlt(photo)} for ${viewer.packetLine || "inventory proof"}`} />
+              <ProtectedMediaImage src={photo.url} alt={`${proofPhotoAlt(photo)} for ${viewer.packetLine || "inventory proof"}`} />
             </div>
             <span className="proof-viewer-count" aria-live="polite">{position} of {photoCount}</span>
             {photoCount > 1 ? (
@@ -4452,7 +4453,7 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
                 aria-current={index === viewer.index ? "true" : undefined}
                 onClick={() => onSelect(index)}
               >
-                <img src={item.url} alt="" loading="lazy" />
+                <ProtectedMediaImage src={item.url} alt="" loading="lazy" />
                 <span>{proofPhotoLabel(item)}</span>
               </button>
             ))}
@@ -4539,7 +4540,7 @@ function SavedEvidencePicker({
                         aria-label={`${selected ? "Remove" : "Save"} ${photo.sourceLabel.toLowerCase()} photo ${index + 1}`}
                         onChange={() => onToggle(photo.mediaUploadId)}
                       />
-                      <img src={photo.url} alt="" loading="lazy" />
+                      <ProtectedMediaImage src={photo.url} alt="" loading="lazy" />
                       <span>{selected ? `Keep - ${photo.sourceLabel}` : photo.sourceLabel}</span>
                       {selected ? <CheckCircle2 aria-hidden="true" /> : null}
                     </label>
@@ -8367,7 +8368,7 @@ function LeaderOverviewPanel({
                 <article className="leader-table-row" key={item.id}>
                   <div className="leader-item-cell">
                     <span className="leader-thumb">
-                      {imageUrls[0] ? <img src={imageUrls[0]} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
+                      {imageUrls[0] ? <ProtectedMediaImage src={imageUrls[0]} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
                     </span>
                     <div>
                       <strong>{itemTitle(item)}</strong>
@@ -8442,7 +8443,7 @@ function LeaderOverviewPanel({
                 <article className="leader-table-row review-row" key={submission.id}>
                   <div className="leader-item-cell">
                     <span className="leader-thumb">
-                      {photo ? <img src={photo} alt="" loading="lazy" /> : <Camera aria-hidden="true" />}
+                      {photo ? <ProtectedMediaImage src={photo} alt="" loading="lazy" /> : <Camera aria-hidden="true" />}
                     </span>
                     <div>
                       <strong>{submission.sessionItem?.packetLine || "Submitted proof"}</strong>
@@ -8963,7 +8964,7 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
                         aria-haspopup="dialog"
                         onClick={event => openEquipmentPhoto(entry, index, event.currentTarget)}
                       >
-                        <img src={photo.url} alt="" loading="lazy" />
+                        <ProtectedMediaImage src={photo.url} alt="" loading="lazy" />
                       </button>
                     ))}
                   </div>
@@ -9134,7 +9135,7 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
                       setLinkTargetKey(entry.key);
                       setLinkStatus({ text: "", isError: false });
                     }} />
-                    {entry.photos?.[0]?.url ? <img src={entry.photos[0].url} alt="" loading="lazy" /> : <span className="equipment-link-choice-icon"><Camera aria-hidden="true" /></span>}
+                    {entry.photos?.[0]?.url ? <ProtectedMediaImage src={entry.photos[0].url} alt="" loading="lazy" /> : <span className="equipment-link-choice-icon"><Camera aria-hidden="true" /></span>}
                     <span>
                       <strong>{entry.displayName || "Unnamed equipment"}</strong>
                       {identifiers.length ? <small>{identifiers.join(" - ")}</small> : null}
@@ -11958,7 +11959,8 @@ export default function AdminConsole() {
   const isBootingAccess = !hasCheckedAccess || (!me && !status.isError && /checking|restoring|opening secure sign-in/i.test(status.text || ""));
 
   return (
-    <div className={shellClassName}>
+    <MediaAuthProvider token={token} tenantSlug={tenantSlug}>
+      <div className={shellClassName}>
       {!isTenantDashboard && !isPlatformDashboard && !isNewsletterDashboard ? (
         <AdminHeader me={me} tenantSlug={tenantSlug} mode={isNewsletterPage ? "newsletter" : ""} authAction={authAction} onRefresh={refreshAccess} onLogout={logout} />
       ) : null}
@@ -12020,6 +12022,7 @@ export default function AdminConsole() {
           </button>
         </section>
       ) : null}
-    </div>
+      </div>
+    </MediaAuthProvider>
   );
 }
