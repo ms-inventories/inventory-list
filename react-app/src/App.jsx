@@ -462,10 +462,6 @@ function getTenantUrl(slug) {
   return getAppUrl(slug, "/#/admin");
 }
 
-function getTenantLaunchUrl(slug) {
-  return getAppUrl(slug, "/#/launch");
-}
-
 function normalizeGroupLabels(groups) {
   return [...new Set((groups || [])
     .map(group => String(group || "").trim().toLowerCase())
@@ -557,7 +553,7 @@ function getLaunchStatusFromError(error) {
   if (code.startsWith("oidc_discovery")) {
     return {
       code,
-      text: "Could not start sign-in. Try again shortly, then ask an admin to check Authentik routing if it keeps failing."
+      text: "Could not start sign-in. Try again shortly, then ask an admin to check the sign-in service if it keeps failing."
     };
   }
 
@@ -609,14 +605,14 @@ function getLaunchStatusFromHealth(health, fallback = {}) {
   if (code === "token_missing" || code === "token_rejected") {
     return {
       code,
-      text: "Your sign-in token was not accepted. Sign out, then sign back in through Authentik."
+      text: "Your sign-in token was not accepted. Sign out, then sign back in."
     };
   }
 
   if (code === "identity_incomplete") {
     return {
       code,
-      text: "Your Authentik account is missing an email claim. Ask an admin to update the account profile."
+      text: "Your sign-in account is missing an email address. Ask an admin to update the account profile."
     };
   }
 
@@ -763,7 +759,7 @@ function LaunchRouter() {
         }
 
         if (slugs.length === 1) {
-          window.location.replace(getTenantLaunchUrl(slugs[0]));
+          window.location.replace(getTenantUrl(slugs[0]));
           return;
         }
 
@@ -879,7 +875,7 @@ function LaunchRouter() {
               <a
                 className="btn btn-secondary btn-full launch-workspace-card"
                 key={workspace.slug}
-                href={getTenantLaunchUrl(workspace.slug)}
+                href={getTenantUrl(workspace.slug)}
                 aria-label={`Open ${workspace.name} workspace`}
               >
                 <span className="launch-workspace-copy">
@@ -2017,11 +2013,23 @@ export default function App() {
   const hash = route.hash;
   const normalizedHash = hash.toLowerCase();
   const tenantSlug = getTenantSlugFromHostname();
+  const oidcCallback = isOidcCallback(route.search);
   if (normalizedHash.startsWith("#/join")) return <CrewJoin />;
   if (normalizedHash.startsWith("#/accept-invite")) return <AcceptInvite />;
   if (normalizedHash.startsWith("#/unsubscribe")) return <NewsletterUnsubscribe />;
-  if (normalizedHash === "#/launch" || path.startsWith("/launch") || isOidcCallback(route.search)) return <LaunchRouter />;
-  if (isAdminHostname() || path.startsWith("/admin") || normalizedHash === "#/admin" || normalizedHash === "#/newsletter") return <AdminConsole />;
+  if (
+    normalizedHash === "#/launch"
+    || path.startsWith("/launch")
+    || (oidcCallback && !isAdminHostname() && !tenantSlug)
+  ) return <LaunchRouter />;
+  if (
+    isAdminHostname()
+    || path.startsWith("/admin")
+    || normalizedHash === "#/admin"
+    || normalizedHash.startsWith("#/admin/")
+    || normalizedHash === "#/newsletter"
+    || normalizedHash.startsWith("#/newsletter/")
+  ) return <AdminConsole />;
   if (isBaseHostname()) return <PublicHome />;
   if (tenantSlug && normalizedHash !== "#/lookup" && !path.startsWith("/lookup")) return <AdminConsole />;
   return <ViewerApp />;

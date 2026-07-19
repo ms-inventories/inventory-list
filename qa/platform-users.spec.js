@@ -42,6 +42,17 @@ test.describe("Platform users", () => {
     };
     let createdMemberBody = null;
 
+    await page.route("**/api/me**", route => route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        user: { id: "qa-root", email: "qa-root@876en.test", display_name: "QA Root Admin" },
+        identity: { subject: "qa-root", email: "qa-root@876en.test", displayName: "QA Root Admin" },
+        groups: ["876en-admins"],
+        isPlatformAdmin: true,
+        isFrgAdmin: true,
+        workspaces: []
+      })
+    }));
     await page.route("**/api/platform/tenants", async route => {
       await route.fulfill({
         contentType: "application/json",
@@ -52,21 +63,31 @@ test.describe("Platform users", () => {
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
-          users: [{
-            id: "11111111-1111-4111-8111-111111111111",
-            email: "qa-member@876en.test",
-            displayName: "QA Member",
-            accountType: "authentik",
-            hasSignedIn: true,
-            memberships: [{
-              id: "22222222-2222-4222-8222-222222222222",
-              tenantId: tenant.id,
-              tenantSlug: tenant.slug,
-              tenantName: tenant.name,
-              role: "contributor",
-              status: "active"
-            }]
-          }]
+          users: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              email: "qa-member@876en.test",
+              displayName: "QA Member",
+              accountType: "authentik",
+              hasSignedIn: true,
+              memberships: [{
+                id: "22222222-2222-4222-8222-222222222222",
+                tenantId: tenant.id,
+                tenantSlug: tenant.slug,
+                tenantName: tenant.name,
+                role: "contributor",
+                status: "active"
+              }]
+            },
+            {
+              id: "55555555-5555-4555-8555-555555555555",
+              email: "backend-only@876en.test",
+              displayName: "Backend Only",
+              accountType: "authentik",
+              hasSignedIn: true,
+              memberships: []
+            }
+          ]
         })
       });
     });
@@ -89,8 +110,8 @@ test.describe("Platform users", () => {
     await activatePlatformNav(page, "Users", isMobileProject);
 
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
-    await expect(page.getByText("Manage permanent accounts, platoon access, and roles.")).toBeVisible();
-    await expect(page.getByPlaceholder("Search users, platoons, or roles...")).toBeVisible();
+    await expect(page.getByText("Manage who can access each platoon and what they can do.")).toBeVisible();
+    await expect(page.getByPlaceholder("Search users...")).toBeVisible();
 
     const accessTable = page.getByRole("table", { name: "Platform users" });
     await expect(accessTable).toBeVisible();
@@ -98,16 +119,21 @@ test.describe("Platform users", () => {
     await expect(accessTable).toContainText("Platoon");
     await expect(accessTable).toContainText("Role");
     await expect(accessTable).toContainText("Status");
-    await expect(accessTable).toContainText("Actions");
+    await expect(accessTable).not.toContainText("Actions");
+    await expect(accessTable).not.toContainText("Backend Only");
+    await expect(accessTable).not.toContainText("authentik");
 
     const accessRow = accessTable.getByRole("row").filter({ hasText: "QA Member" });
     await expect(accessRow).toContainText("qa-member@876en.test");
     await expect(accessRow).toContainText("MS Platoon");
     await expect(accessRow.getByRole("combobox", { name: "Role for QA Member in MS Platoon" })).toHaveValue("contributor");
     await expect(accessRow.getByRole("combobox", { name: "Status for QA Member in MS Platoon" })).toHaveValue("active");
-    await expect(accessRow.getByRole("link", { name: "Open platoon" })).toHaveAttribute("href", "http://ms.localhost:5175/#/launch");
+    await expect(accessRow.getByRole("link", { name: "Open platoon" })).toHaveCount(0);
+    if (isMobileProject) {
+      expect(await accessRow.evaluate(row => Math.ceil(row.getBoundingClientRect().height))).toBeLessThanOrEqual(220);
+    }
 
-    await page.getByPlaceholder("Search users, platoons, or roles...").fill("no matching user");
+    await page.getByPlaceholder("Search users...").fill("no matching user");
     await expect(page.getByText("No matching users", { exact: true })).toBeVisible();
     await page.locator(".admin-empty").getByRole("button", { name: "Clear search" }).click();
     await expect(accessRow).toBeVisible();

@@ -3745,10 +3745,6 @@ export function registerRoutes(app) {
         SELECT user_account.id,
           user_account.email,
           user_account.display_name,
-          user_account.account_type,
-          user_account.authentik_subject,
-          user_account.created_at,
-          user_account.last_seen_at,
           COALESCE(
             jsonb_agg(
               jsonb_build_object(
@@ -3765,8 +3761,8 @@ export function registerRoutes(app) {
             '[]'::jsonb
           ) AS memberships
         FROM app_users user_account
-        LEFT JOIN tenant_memberships membership ON membership.user_id = user_account.id
-        LEFT JOIN tenants tenant ON tenant.id = membership.tenant_id
+        JOIN tenant_memberships membership ON membership.user_id = user_account.id
+        JOIN tenants tenant ON tenant.id = membership.tenant_id
         WHERE user_account.account_type = 'authentik'
         GROUP BY user_account.id
         ORDER BY lower(COALESCE(user_account.display_name, user_account.email, '')), user_account.id
@@ -3778,16 +3774,11 @@ export function registerRoutes(app) {
         id: row.id,
         email: row.email,
         displayName: row.display_name,
-        accountType: row.account_type,
-        hasSignedIn: Boolean(row.authentik_subject),
-        isPlatformAdmin: config.platformAdminEmails.includes(String(row.email || "").toLowerCase()),
-        memberships: Array.isArray(row.memberships) ? row.memberships : [],
-        createdAt: row.created_at,
-        lastSeenAt: row.last_seen_at
+        memberships: Array.isArray(row.memberships) ? row.memberships : []
       })),
       management: {
         mutationsAvailable: false,
-        reason: "Role and status changes must use the tenant member workflow so Authentik provisioning stays consistent."
+        reason: "Role and status changes use the platoon member workflow so account access stays in sync."
       }
     };
   });

@@ -159,7 +159,7 @@ function buildAccessDetails(tenant, identity, databaseMembership, authentikMembe
     warnings.push({
       type: "inactive_database_membership",
       severity: "info",
-      message: `Database membership is ${databaseMembership.status}; Authentik group access is blocked.`
+      message: `The saved membership is ${databaseMembership.status}; sign-in group access is blocked.`
     });
   }
 
@@ -167,7 +167,7 @@ function buildAccessDetails(tenant, identity, databaseMembership, authentikMembe
     warnings.push({
       type: "role_mismatch",
       severity: "info",
-      message: `Database role ${databaseMembership.role} is authoritative; Authentik group role ${authentikMembership.role} is ignored.`
+      message: `The saved role ${databaseMembership.role} is authoritative; the sign-in group role ${authentikMembership.role} is ignored.`
     });
   }
 
@@ -175,7 +175,7 @@ function buildAccessDetails(tenant, identity, databaseMembership, authentikMembe
     warnings.push({
       type: "authentik_group_missing",
       severity: "info",
-      message: "Database membership grants access, but no matching Authentik tenant group was found."
+      message: "The saved membership grants access, but no matching platoon access group was found."
     });
   }
 
@@ -184,10 +184,10 @@ function buildAccessDetails(tenant, identity, databaseMembership, authentikMembe
       type: "tenant_access_missing",
       severity: "warning",
       message: databaseMembership
-        ? "The database membership is not active."
+        ? "The saved membership is not active."
         : config.oidc.tenantGroupFallbackEnabled
-          ? "No active database membership or matching Authentik group grants access."
-          : "No active database membership grants access."
+          ? "No active saved membership or matching platoon access group grants access."
+          : "No active saved membership grants access."
     });
   }
 

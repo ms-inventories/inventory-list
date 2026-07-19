@@ -29,7 +29,7 @@ function expectedTenantUrls(slug) {
   const workspace = `${adminUrl.protocol}//${host}${port}/`;
   return {
     host,
-    workspace: `${workspace}#/launch`
+    workspace: `${workspace}#/admin`
   };
 }
 

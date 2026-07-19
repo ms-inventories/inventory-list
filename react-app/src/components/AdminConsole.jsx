@@ -51,6 +51,8 @@ import { apiRequest, clearQaIdentity, CREW_ACCESS_ENDED_EVENT, getApiErrorMessag
 import { matchesSearch, metadataSearchText, searchTerms } from "../lib/search.js";
 import {
   AUTH_SESSION_INVALIDATED_EVENT,
+  AUTH_SESSION_REFRESH_EVENT,
+  authSessionCanRefresh,
   beginOidcLogin,
   clearAuthSession,
   completeOidcRedirect,
@@ -410,7 +412,7 @@ function AuthPanel({ status, authAction = "", manualToken, onManualTokenChange, 
       <div className="admin-actions-row">
         <button className="btn btn-primary" type="button" disabled={isWorking} onClick={onSignIn}>
           <LogIn aria-hidden="true" />
-          <span>{authAction === "signIn" ? "Opening Authentik..." : "Continue with Authentik"}</span>
+          <span>{authAction === "signIn" ? "Opening secure sign-in..." : "Continue to secure sign-in"}</span>
         </button>
       </div>
 
@@ -480,6 +482,69 @@ function getProtectedAuthErrorMessage(error) {
   return getApiErrorMessage(error);
 }
 
+const platformViewHashes = {
+  dashboard: "/admin",
+  users: "/admin/users",
+  settings: "/admin/settings",
+  support: "/admin/support"
+};
+
+const newsletterSectionHashes = {
+  overview: "/newsletter",
+  issues: "/newsletter/issues",
+  subscribers: "/newsletter/subscribers",
+  analytics: "/newsletter/analytics"
+};
+
+const tenantTabHashes = {
+  dashboard: "/admin",
+  reports: "/admin/reports",
+  people: "/admin/team",
+  activity: "/admin/activity",
+  settings: "/admin/settings"
+};
+
+function currentHashParts() {
+  return String(window.location.hash || "")
+    .replace(/^#\/?/, "")
+    .split("?")[0]
+    .split("/")
+    .map(part => part.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function platformViewFromLocation() {
+  const [root, section] = currentHashParts();
+  if (root !== "admin") return "dashboard";
+  return ({ users: "users", settings: "settings", support: "support" })[section] || "dashboard";
+}
+
+function newsletterSectionFromLocation() {
+  const [root, section] = currentHashParts();
+  if (root !== "newsletter") return "overview";
+  return ({ issues: "issues", subscribers: "subscribers", analytics: "analytics" })[section] || "overview";
+}
+
+function tenantRouteFromLocation() {
+  const [root, section] = currentHashParts();
+  if (root !== "admin") return { tab: "dashboard", panel: "" };
+  if (section === "sessions") return { tab: "dashboard", panel: "sessions" };
+  if (section === "review") return { tab: "dashboard", panel: "review" };
+  return {
+    tab: ({ reports: "reports", team: "people", activity: "activity", settings: "settings" })[section] || "dashboard",
+    panel: ""
+  };
+}
+
+function navigateAppHash(hashPath, { replace = false } = {}) {
+  const normalizedHash = `#${String(hashPath || "/admin").startsWith("/") ? hashPath : `/${hashPath}`}`;
+  if (window.location.hash === normalizedHash) return;
+  const nextUrl = new URL(window.location.href);
+  nextUrl.hash = normalizedHash.slice(1);
+  window.history[replace ? "replaceState" : "pushState"]({}, "", nextUrl.href);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 function getMissingTenantRedirectUrl(profile) {
   const hostname = String(window.location.hostname || "").toLowerCase();
   const isLocal = appConfig.baseDomain === "localhost"
@@ -490,14 +555,14 @@ function getMissingTenantRedirectUrl(profile) {
   if (isLocal) {
     const port = window.location.port ? `:${window.location.port}` : "";
     const targetHost = destination ? `${destination}.localhost` : "localhost";
-    const hash = "/#/launch";
+    const hash = destination ? "/#/admin" : "/#/launch";
     return `${window.location.protocol}//${targetHost}${port}${hash}`;
   }
 
   const targetHost = destination
     ? `${destination}.${appConfig.baseDomain}`
     : appConfig.baseDomain;
-  const hash = "/#/launch";
+  const hash = destination ? "/#/admin" : "/#/launch";
   return `https://${targetHost}${hash}`;
 }
 
@@ -1658,6 +1723,18 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
         )}
       </div>
     </details>
+  );
+}
+
+function AuthBootPanel({ status }) {
+  return (
+    <section className="admin-card admin-auth-card auth-boot-panel" aria-label="Opening Shadow Tracer">
+      <RefreshCw className="auth-boot-spinner" aria-hidden="true" />
+      <div>
+        <h2>Opening Shadow Tracer</h2>
+        <p>{status?.text || "Checking secure access..."}</p>
+      </div>
+    </section>
   );
 }
 
@@ -4908,7 +4985,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [deliveries, setDeliveries] = useState([]);
   const [subscriberStats, setSubscriberStats] = useState({ pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
   const [deliverySettings, setDeliverySettings] = useState({ emailConfigured: false });
-  const [activeSection, setActiveSection] = useState("overview");
+  const [activeSection, setActiveSection] = useState(() => newsletterSectionFromLocation());
   const [selectedIssueId, setSelectedIssueId] = useState("");
   const [selectedContentBlockId, setSelectedContentBlockId] = useState("");
   const [isContentEditorOpen, setIsContentEditorOpen] = useState(false);
@@ -5069,8 +5146,18 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   }
 
   useEffect(() => {
-    loadNewsletter();
+    loadNewsletter({ quiet: newsletterLoadState === "ready" });
   }, [token]);
+
+  useEffect(() => {
+    const syncSectionFromLocation = () => setActiveSection(newsletterSectionFromLocation());
+    window.addEventListener("hashchange", syncSectionFromLocation);
+    window.addEventListener("popstate", syncSectionFromLocation);
+    return () => {
+      window.removeEventListener("hashchange", syncSectionFromLocation);
+      window.removeEventListener("popstate", syncSectionFromLocation);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isMobileNavOpen) return undefined;
@@ -5111,6 +5198,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   function selectNewsletterSection(section) {
     if (newsletterActionRef.current.size) return;
     setActiveSection(section);
+    navigateAppHash(newsletterSectionHashes[section] || newsletterSectionHashes.overview);
     setActionStatus({ scope: "", text: "", isError: false });
     setStatus({ text: "", isError: false });
     closeNewsletterNav();
@@ -5191,6 +5279,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     setSubscriberStatusFilter(statusFilter);
     setSubscriberQuery("");
     setActiveSection("subscribers");
+    navigateAppHash(newsletterSectionHashes.subscribers);
     closeNewsletterNav();
   }
 
@@ -5657,7 +5746,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <span>Analytics</span>
           </button>
           {me?.isPlatformAdmin ? (
-            <button type="button" onClick={() => window.location.assign("/#/admin")}>
+            <button type="button" onClick={() => navigateAppHash(platformViewHashes.dashboard)}>
               <ShieldCheck aria-hidden="true" />
               <span>Platform</span>
             </button>
@@ -6545,7 +6634,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const [createIdentityCheck, setCreateIdentityCheck] = useState(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [activeView, setActiveView] = useState("dashboard");
+  const [activeView, setActiveView] = useState(() => platformViewFromLocation());
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -6593,11 +6682,20 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     const matchesStatus = statusFilter === "all" || tenant.status === statusFilter;
     return matchesStatus;
   });
-  const visiblePlatformUsers = platformUsers.filter(user => matchesSearch([
+  const manageablePlatformUsers = platformUsers
+    .map(user => ({
+      ...user,
+      memberships: (user.memberships || []).filter(membership => (
+        membership?.id
+        && membership?.tenantSlug
+        && ["tenant_admin", "contributor", "viewer"].includes(membership.role)
+      ))
+    }))
+    .filter(user => user.memberships.length);
+  const visiblePlatformUsers = manageablePlatformUsers.filter(user => matchesSearch([
     user.displayName,
     user.email,
-    user.accountType,
-    ...(user.memberships || []).flatMap(membership => [membership.tenantName, membership.tenantSlug, membership.role])
+    ...user.memberships.flatMap(membership => [membership.tenantName, membership.tenantSlug, membership.role])
   ], query));
   const createAction = platformActions.get("create") || "";
   const refreshAction = platformActions.get("refresh") || "";
@@ -6631,7 +6729,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     },
     users: {
       title: "Users",
-      copy: "Manage permanent accounts, platoon access, and roles."
+      copy: "Manage who can access each platoon and what they can do."
     },
     settings: {
       title: "Platform settings",
@@ -6683,9 +6781,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     const isLocal = appConfig.baseDomain === "localhost" || window.location.hostname.endsWith(".localhost") || window.location.hostname === "localhost";
     if (isLocal) {
       const port = window.location.port ? `:${window.location.port}` : "";
-      return `${window.location.protocol}//${host}${port}/#/launch`;
+      return `${window.location.protocol}//${host}${port}/#/admin`;
     }
-    return `https://${host}/#/launch`;
+    return `https://${host}/#/admin`;
   }
 
   async function copyTenantLink(tenant) {
@@ -6732,8 +6830,18 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   }
 
   useEffect(() => {
-    loadTenants();
+    loadTenants({ quiet: hasLoadedTenants });
   }, [token]);
+
+  useEffect(() => {
+    const syncViewFromLocation = () => setActiveView(platformViewFromLocation());
+    window.addEventListener("hashchange", syncViewFromLocation);
+    window.addEventListener("popstate", syncViewFromLocation);
+    return () => {
+      window.removeEventListener("hashchange", syncViewFromLocation);
+      window.removeEventListener("popstate", syncViewFromLocation);
+    };
+  }, []);
 
   useEffect(() => {
     function handlePointerDown(event) {
@@ -6813,6 +6921,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
 
   function selectPlatformView(view) {
     setActiveView(view);
+    navigateAppHash(platformViewHashes[view] || platformViewHashes.dashboard);
     closePlatformNav(false);
   }
 
@@ -6927,7 +7036,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   }
 
   function openSupportDetails() {
-    setActiveView("support");
+    selectPlatformView("support");
     setIsUserMenuOpen(false);
   }
 
@@ -6937,7 +7046,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   }
 
   function openNewsletter() {
-    window.location.assign("/#/newsletter");
+    navigateAppHash(newsletterSectionHashes.overview);
   }
 
   function renderStats() {
@@ -7167,7 +7276,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           : tenantSetup.authentikGroup?.state === "missing"
             ? `${tenantSetup.authentikGroup.name} still needs to be created.`
             : tenantSetup.authentikGroup?.state === "unavailable"
-              ? "Authentik could not be checked."
+              ? "The account service could not be checked."
               : "Permanent account setup is not connected.",
         action: tenantSetup.authentikGroup?.state === "ready" ? null : (
           <button className="btn btn-secondary btn-small" type="button" onClick={openSupportDetails}>Open setup details</button>
@@ -7485,7 +7594,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                     type="search"
                     aria-label="Search users"
                     value={query}
-                    placeholder="Search users, platoons, or roles..."
+                    placeholder="Search users..."
                     onChange={event => setQuery(event.target.value)}
                   />
                   {query ? (
@@ -7499,65 +7608,50 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   <span>Platoon</span>
                   <span>Role</span>
                   <span>Status</span>
-                  <span>Actions</span>
                 </div>
-                {visiblePlatformUsers.flatMap(user => {
-                  const memberships = user.memberships?.length ? user.memberships : [null];
-                  return memberships.map((membership, index) => (
-                    <article className="platform-table-row" role="row" key={`${user.id}-${membership?.id || index}`}>
+                {visiblePlatformUsers.flatMap(user => (
+                  user.memberships.map(membership => (
+                    <article className="platform-table-row" role="row" key={`${user.id}-${membership.id}`}>
                       <div className="platform-row-main">
                         <span className="tenant-avatar" aria-hidden="true">{String(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span>
                         <div>
                           <strong>{user.displayName || "Unnamed user"}</strong>
                           <span>{user.email}</span>
+                          <span className="platform-user-mobile-platoon"><Building2 aria-hidden="true" />{membership.tenantName}</span>
                         </div>
                       </div>
-                      <span data-label="Platoon"><span className="mobile-field-label">Platoon</span><span>{membership?.tenantName || (user.isPlatformAdmin ? "All platoons" : "—")}</span></span>
-                      <span data-label="Role">
+                      <span className="platform-user-platoon" data-label="Platoon"><span className="mobile-field-label">Platoon</span><span>{membership.tenantName}</span></span>
+                      <span className="platform-user-role-field" data-label="Role">
                         <span className="mobile-field-label">Role</span>
-                        {membership ? (
-                          <select
-                            className="select platform-role-select"
-                            aria-label={`Role for ${user.displayName || user.email} in ${membership.tenantName}`}
-                            value={membership.role}
-                            disabled={hasPlatformAction}
-                            onChange={event => setPendingRoleChange({ user, membership, nextRole: event.target.value })}
-                          >
-                            <option value="tenant_admin">Platoon admin</option>
-                            <option value="contributor">Member</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
-                        ) : (
-                          <span>{user.isPlatformAdmin ? "Super admin" : formatTeamRole(user.accountType)}</span>
-                        )}
+                        <select
+                          className="select platform-role-select"
+                          aria-label={`Role for ${user.displayName || user.email} in ${membership.tenantName}`}
+                          value={membership.role}
+                          disabled={hasPlatformAction}
+                          onChange={event => setPendingRoleChange({ user, membership, nextRole: event.target.value })}
+                        >
+                          <option value="tenant_admin">Platoon admin</option>
+                          <option value="contributor">Member</option>
+                          <option value="viewer">Viewer</option>
+                        </select>
                       </span>
                       <span className="platform-status-field" data-label="Status">
                         <span className="mobile-field-label">Status</span>
-                        {membership ? (
-                          <select
-                            className="select platform-status-select"
-                            aria-label={`Status for ${user.displayName || user.email} in ${membership.tenantName}`}
-                            value={membership.status}
-                            disabled={hasPlatformAction}
-                            onChange={event => setPendingStatusChange({ user, membership, nextStatus: event.target.value })}
-                          >
-                            {membership.status === "invited" ? <option value="invited">Invited</option> : null}
-                            <option value="active">Active</option>
-                            <option value="disabled">Disabled</option>
-                          </select>
-                        ) : (
-                          <span className={`status-pill ${user.hasSignedIn ? "active" : "pending"}`}>{user.hasSignedIn ? "active" : "invited"}</span>
-                        )}
+                        <select
+                          className="select platform-status-select"
+                          aria-label={`Status for ${user.displayName || user.email} in ${membership.tenantName}`}
+                          value={membership.status}
+                          disabled={hasPlatformAction}
+                          onChange={event => setPendingStatusChange({ user, membership, nextStatus: event.target.value })}
+                        >
+                          {membership.status === "invited" ? <option value="invited">Invited</option> : null}
+                          <option value="active">Active</option>
+                          <option value="disabled">Disabled</option>
+                        </select>
                       </span>
-                      <div className="platform-actions" data-label="Actions">
-                        <span className="mobile-field-label">Actions</span>
-                        {membership ? (
-                          <a className="btn btn-secondary btn-small" href={tenantWorkspaceHref({ slug: membership.tenantSlug })}>Open platoon</a>
-                        ) : <span>—</span>}
-                      </div>
                     </article>
-                  ));
-                })}
+                  ))
+                ))}
               </div>
               {!visiblePlatformUsers.length ? (
                 <EmptyPanel
@@ -7674,7 +7768,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               <button className="icon-button" type="button" disabled={hasPlatformAction} onClick={() => setPendingStatusChange(null)} aria-label="Cancel status change"><X aria-hidden="true" /></button>
             </div>
             <p>
-              <strong>{pendingStatusChange.user.displayName || pendingStatusChange.user.email}</strong> will be {pendingStatusChange.nextStatus === "active" ? "enabled" : "disabled"} in {pendingStatusChange.membership.tenantName}. Authentik access will be reconciled automatically.
+              <strong>{pendingStatusChange.user.displayName || pendingStatusChange.user.email}</strong> will be {pendingStatusChange.nextStatus === "active" ? "enabled" : "disabled"} in {pendingStatusChange.membership.tenantName}. Account access will be updated automatically.
             </p>
             <div className="modal-actions">
               <button className="btn btn-secondary" type="button" disabled={hasPlatformAction} onClick={() => setPendingStatusChange(null)}>Cancel</button>
@@ -9696,9 +9790,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     ...(isTenantAdmin ? [{ id: "activity", label: "Activity Log", icon: History }] : []),
     ...(isTenantAdmin ? [{ id: "settings", label: "Workspace Settings", icon: Settings }] : [])
   ];
-  const [activeTab, setActiveTab] = useState("dashboard");
-  const [isSessionWorkspaceOpen, setIsSessionWorkspaceOpen] = useState(() => isCrew);
-  const [isReviewWorkspaceOpen, setIsReviewWorkspaceOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState(() => tenantRouteFromLocation().tab);
+  const [isSessionWorkspaceOpen, setIsSessionWorkspaceOpen] = useState(() => isCrew || tenantRouteFromLocation().panel === "sessions");
+  const [isReviewWorkspaceOpen, setIsReviewWorkspaceOpen] = useState(() => isTenantAdmin && tenantRouteFromLocation().panel === "review");
   const [sessionIntent, setSessionIntent] = useState("");
   const [preferredSessionId, setPreferredSessionId] = useState(() => me?.crew?.sessionId || "");
   const [preferredSessionItemId, setPreferredSessionItemId] = useState("");
@@ -9793,8 +9887,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     const port = window.location.port ? `:${window.location.port}` : "";
     const isLocalhost = window.location.hostname.endsWith("localhost");
     window.location.assign(isLocalhost
-      ? `${window.location.protocol}//admin.localhost${port}/#/launch`
-      : `https://admin.${appConfig.baseDomain}/#/launch`);
+      ? `${window.location.protocol}//admin.localhost${port}/#/admin`
+      : `https://admin.${appConfig.baseDomain}/#/admin`);
   }
 
   async function handleLogout() {
@@ -9818,6 +9912,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   function selectTenantTab(tabId) {
     if (tabId !== activeTab) setLeaderQuery("");
     setActiveTab(tabId);
+    setIsSessionWorkspaceOpen(isCrew);
+    setIsReviewWorkspaceOpen(false);
+    navigateAppHash(tenantTabHashes[tabId] || tenantTabHashes.dashboard);
     closeTenantSidebar(false);
     setIsNotificationsOpen(false);
     setIsUserMenuOpen(false);
@@ -9901,8 +9998,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setNotificationStatus("");
       return true;
     } catch (error) {
-      setNotifications([]);
-      setNotificationUnreadCount(0);
       setNotificationStatus(getApiErrorMessage(error));
       return false;
     } finally {
@@ -9913,10 +10008,29 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
 
   useEffect(() => {
     if (tenantSlug) {
-      loadTenant();
+      loadTenant({ silent: Boolean(tenant) });
       loadNotifications();
     }
   }, [tenantSlug, token, isTenantAdmin, isCrew, me?.tenant?.id]);
+
+  useEffect(() => {
+    const syncTenantRoute = () => {
+      const route = tenantRouteFromLocation();
+      const nextTab = navItems.some(item => item.id === route.tab) ? route.tab : "dashboard";
+      setActiveTab(nextTab);
+      setIsSessionWorkspaceOpen(isCrew || route.panel === "sessions");
+      setIsReviewWorkspaceOpen(isTenantAdmin && route.panel === "review");
+      setIsSidebarOpen(false);
+      setIsNotificationsOpen(false);
+      setIsUserMenuOpen(false);
+    };
+    window.addEventListener("hashchange", syncTenantRoute);
+    window.addEventListener("popstate", syncTenantRoute);
+    return () => {
+      window.removeEventListener("hashchange", syncTenantRoute);
+      window.removeEventListener("popstate", syncTenantRoute);
+    };
+  }, [isCrew, isTenantAdmin]);
 
   useEffect(() => {
     if (!tenantSlug || !token) return undefined;
@@ -10314,6 +10428,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
     setIsReviewWorkspaceOpen(false);
+    navigateAppHash("/admin/sessions");
     closeTenantSidebar(false);
   }
 
@@ -10324,6 +10439,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
     setIsReviewWorkspaceOpen(false);
+    navigateAppHash("/admin/sessions");
     closeTenantSidebar(false);
   }
 
@@ -10373,6 +10489,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setIsSessionWorkspaceOpen(true);
       setIsReviewWorkspaceOpen(false);
       setActiveTab("dashboard");
+      navigateAppHash("/admin/sessions");
       setStatus({ text: `Started ${data.session?.name || name}`, isError: false });
     } catch (error) {
       setStartInventoryStatus({ text: getApiErrorMessage(error), isError: true });
@@ -10389,6 +10506,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setActiveTab("dashboard");
       setIsReviewWorkspaceOpen(true);
       setIsSessionWorkspaceOpen(false);
+      navigateAppHash("/admin/review");
       return;
     }
 
@@ -10402,6 +10520,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     setActiveTab("dashboard");
     setIsSessionWorkspaceOpen(true);
     setIsReviewWorkspaceOpen(false);
+    navigateAppHash("/admin/sessions");
   }
 
   async function refreshTenantWorkspace() {
@@ -10617,6 +10736,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                         setIsReviewWorkspaceOpen(true);
                         setIsSessionWorkspaceOpen(false);
                         setIsNotificationsOpen(false);
+                        navigateAppHash("/admin/review");
                       }}>
                         <ClipboardList aria-hidden="true" />
                         <span>Open review queue</span>
@@ -10727,6 +10847,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 onOpenReview={() => {
                   setIsReviewWorkspaceOpen(true);
                   setIsSessionWorkspaceOpen(false);
+                  navigateAppHash("/admin/review");
                 }}
                 showWorkQueue={false}
               />
@@ -10736,7 +10857,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                   {!isCrew ? (
                     <div className="embedded-workspace-heading">
                       <div><p className="eyebrow">Current inventory</p><h2>Work queue</h2></div>
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => setIsSessionWorkspaceOpen(false)}>Close work queue</button>
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => {
+                        setIsSessionWorkspaceOpen(false);
+                        navigateAppHash(tenantTabHashes.dashboard);
+                      }}>Close work queue</button>
                     </div>
                   ) : null}
                   <SessionPanel
@@ -10758,6 +10882,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     onOpenReview={() => {
                       setIsReviewWorkspaceOpen(true);
                       setIsSessionWorkspaceOpen(false);
+                      navigateAppHash("/admin/review");
                     }}
                   />
                 </section>
@@ -10767,7 +10892,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 <section className="embedded-workspace-panel" aria-label="Review queue">
                   <div className="embedded-workspace-heading">
                     <div><p className="eyebrow">Leader review</p><h2>Review queue</h2></div>
-                    <button className="btn btn-secondary btn-small" type="button" onClick={() => setIsReviewWorkspaceOpen(false)}>Close review queue</button>
+                    <button className="btn btn-secondary btn-small" type="button" onClick={() => {
+                      setIsReviewWorkspaceOpen(false);
+                      navigateAppHash(tenantTabHashes.dashboard);
+                    }}>Close review queue</button>
                   </div>
                   <ReviewPanel
                     token={token}
@@ -10949,6 +11077,9 @@ export default function AdminConsole() {
   const [manualToken, setManualToken] = useState("");
   const [status, setStatus] = useState({ text: "Checking access...", isError: false });
   const [authAction, setAuthAction] = useState("");
+  const [hasCheckedAccess, setHasCheckedAccess] = useState(false);
+  const [isRefreshingSession, setIsRefreshingSession] = useState(false);
+  const [reconnectRequired, setReconnectRequired] = useState(false);
   const authActionRef = useRef("");
   const token = getSessionAccessToken(session);
 
@@ -10995,33 +11126,59 @@ export default function AdminConsole() {
         endCrewAccess();
         return null;
       }
-      setMe(null);
+      if (!me) setMe(null);
       if (!silent) setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
       return null;
     }
   }
 
   useEffect(() => {
-    async function handleInvalidatedSession() {
-      setSession(null);
-      setMe(null);
-
-      if (appConfig.enableQaAuth) {
-        setStatus({ text: "Your sign-in expired. Try again.", isError: true });
-        return;
-      }
-
-      try {
-        setStatus({ text: "Your sign-in expired. Redirecting to Authentik...", isError: false });
-        await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
-      } catch (error) {
-        setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
+    function handleSessionRefresh(event) {
+      const refreshState = event?.detail?.state || "";
+      setIsRefreshingSession(refreshState === "start");
+      if (refreshState === "success" && event?.detail?.session) {
+        setSession(event.detail.session);
+        setReconnectRequired(false);
       }
     }
 
+    function handleInvalidatedSession() {
+      setIsRefreshingSession(false);
+      setReconnectRequired(true);
+      setStatus({ text: "", isError: false });
+    }
+
+    window.addEventListener(AUTH_SESSION_REFRESH_EVENT, handleSessionRefresh);
     window.addEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidatedSession);
-    return () => window.removeEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidatedSession);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_REFRESH_EVENT, handleSessionRefresh);
+      window.removeEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidatedSession);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!session?.accessToken || !authSessionCanRefresh(session) || reconnectRequired) return undefined;
+
+    let timeoutId = null;
+    let cancelled = false;
+    const schedule = delay => {
+      timeoutId = window.setTimeout(renewSession, Math.min(Math.max(0, delay), 2_147_000_000));
+    };
+    const renewSession = async () => {
+      try {
+        await refreshAuthSession(readAuthSession() || session, { force: true });
+      } catch {
+        if (!cancelled) schedule(60_000);
+      }
+    };
+    const expiresAt = Number(session.expiresAt || 0);
+    schedule(expiresAt ? expiresAt - Date.now() - 90_000 : 0);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, [session?.accessToken, session?.expiresAt, session?.refreshAvailable, session?.refreshToken, reconnectRequired]);
 
   useEffect(() => {
     const handleCrewAccessEnded = () => endCrewAccess();
@@ -11091,7 +11248,7 @@ export default function AdminConsole() {
 
       if (!callbackFailed && !appConfig.enableQaAuth) {
         try {
-          setStatus({ text: "Redirecting to Authentik...", isError: false });
+          setStatus({ text: "Opening secure sign-in...", isError: false });
           await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
           return;
         } catch (error) {
@@ -11103,7 +11260,9 @@ export default function AdminConsole() {
       if (!ignore && !callbackFailed) setStatus({ text: "", isError: false });
     }
 
-    handleRedirect();
+    handleRedirect().finally(() => {
+      if (!ignore) setHasCheckedAccess(true);
+    });
     return () => {
       ignore = true;
     };
@@ -11121,6 +11280,8 @@ export default function AdminConsole() {
       clearQaIdentity();
       setSession(null);
       setMe(null);
+      setReconnectRequired(false);
+      setHasCheckedAccess(true);
       setStatus({ text: "", isError: false });
       if (wasCrew) endCrewAccess("You left the inventory. Open a new private invite to join again.", "left");
       return true;
@@ -11190,10 +11351,21 @@ export default function AdminConsole() {
   async function signIn() {
     await runAuthAction("signIn", async () => {
       try {
-        setStatus({ text: "Redirecting to Authentik...", isError: false });
+        setStatus({ text: "Opening secure sign-in...", isError: false });
         await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
       } catch (error) {
         setStatus({ text: error.message || "Could not start login", isError: true });
+      }
+    });
+  }
+
+  async function reconnectSession() {
+    await runAuthAction("reconnect", async () => {
+      try {
+        setStatus({ text: "Opening secure sign-in...", isError: false });
+        await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
+      } catch (error) {
+        setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
       }
     });
   }
@@ -11203,7 +11375,9 @@ export default function AdminConsole() {
   }
 
   const normalizedHash = typeof window === "undefined" ? "" : window.location.hash.toLowerCase();
-  const isNewsletterPage = normalizedHash === "#/newsletter" || normalizedHash.startsWith("#/newsletter?");
+  const isNewsletterPage = normalizedHash === "#/newsletter"
+    || normalizedHash.startsWith("#/newsletter/")
+    || normalizedHash.startsWith("#/newsletter?");
   const isPlatformPage = !isNewsletterPage && (isAdminHostname() || !tenantSlug);
   const canUsePlatform = Boolean(me?.isPlatformAdmin);
   const canUseNewsletter = Boolean(me?.isPlatformAdmin || me?.isFrgAdmin);
@@ -11216,6 +11390,7 @@ export default function AdminConsole() {
   );
   const isPlatformDashboard = Boolean(token && me && isPlatformPage && canUsePlatform);
   const shellClassName = isTenantDashboard ? "leader-app" : isPlatformDashboard || isNewsletterDashboard ? "platform-app" : "app-frame admin-frame";
+  const isBootingAccess = !hasCheckedAccess || (!me && !status.isError && /checking|restoring|opening secure sign-in/i.test(status.text || ""));
 
   return (
     <div className={shellClassName}>
@@ -11224,7 +11399,7 @@ export default function AdminConsole() {
       ) : null}
 
       {!me ? (
-        <AuthPanel
+        isBootingAccess ? <AuthBootPanel status={status} /> : <AuthPanel
           status={status}
           authAction={authAction}
           manualToken={manualToken}
@@ -11259,6 +11434,27 @@ export default function AdminConsole() {
           )}
         </>
       )}
+
+      {me && isRefreshingSession ? (
+        <div className="session-refresh-indicator" role="status" aria-live="polite">
+          <RefreshCw aria-hidden="true" />
+          <span>Refreshing secure access</span>
+        </div>
+      ) : null}
+
+      {me && reconnectRequired ? (
+        <section className="session-reconnect-card" role="alert" aria-live="assertive">
+          <ShieldCheck aria-hidden="true" />
+          <div>
+            <strong>Reconnect to continue</strong>
+            <span>Your current page is still here. Reconnect your secure sign-in to keep working.</span>
+          </div>
+          <button className="btn btn-primary btn-small" type="button" disabled={Boolean(authAction)} onClick={reconnectSession}>
+            <LogIn aria-hidden="true" />
+            <span>{authAction === "reconnect" ? "Opening sign-in..." : "Reconnect"}</span>
+          </button>
+        </section>
+      ) : null}
     </div>
   );
 }

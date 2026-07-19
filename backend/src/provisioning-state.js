@@ -13,11 +13,11 @@ const safeFailures = Object.freeze({
     retryable: false
   }),
   identity_conflict: Object.freeze({
-    message: "This Authentik identity is already linked to another app user.",
+    message: "This sign-in identity is already linked to another app user.",
     retryable: false
   }),
   identity_inactive: Object.freeze({
-    message: "The linked Authentik account is inactive. An administrator must reactivate it before setup can continue.",
+    message: "The linked sign-in account is inactive. An administrator must reactivate it before setup can continue.",
     retryable: false
   }),
   immutable_identity_missing: Object.freeze({
@@ -25,15 +25,15 @@ const safeFailures = Object.freeze({
     retryable: false
   }),
   identity_not_found: Object.freeze({
-    message: "The linked Authentik account could not be found. An administrator must restore or relink it.",
+    message: "The linked sign-in account could not be found. An administrator must restore or relink it.",
     retryable: false
   }),
   group_conflict: Object.freeze({
-    message: "The matching Authentik group is not tagged for this workspace. An administrator must verify it.",
+    message: "The matching access group is not assigned to this workspace. An administrator must verify it.",
     retryable: false
   }),
   unsafe_group: Object.freeze({
-    message: "An Authentik access group has a parent, assigned role, or superuser privilege. An administrator must remove that privilege before setup can continue.",
+    message: "An access group has a parent, assigned role, or superuser privilege. An administrator must remove that privilege before setup can continue.",
     retryable: false
   }),
   enrollment_pending: Object.freeze({
@@ -53,7 +53,7 @@ const safeFailures = Object.freeze({
     retryable: false
   }),
   provider_not_found: Object.freeze({
-    message: "The required Authentik tenant group was not found.",
+    message: "The required platoon access group was not found.",
     retryable: false
   }),
   provider_rate_limited: Object.freeze({

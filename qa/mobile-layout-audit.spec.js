@@ -192,12 +192,13 @@ test.describe("mobile layout audit", () => {
     const addUser = page.getByRole("button", { name: "Add user", exact: true });
     await expect(addUser).toBeVisible();
     const accessRow = page.getByRole("table", { name: "Platform users" }).getByRole("row").filter({ hasText: "MS Platoon" }).first();
-    for (const label of ["Platoon", "Role", "Status", "Actions"]) {
+    for (const label of ["Role", "Status"]) {
       await expect(accessRow.locator(".mobile-field-label").getByText(label, { exact: true })).toBeVisible();
     }
     await expectMinTargetSize(accessRow.getByRole("combobox", { name: /Role for/ }), { height: 44 });
     await expectMinTargetSize(accessRow.getByRole("combobox", { name: /Status for/ }), { height: 44 });
-    await expect(accessRow.getByRole("link", { name: "Open platoon" })).toBeVisible();
+    await expect(accessRow.getByRole("link", { name: "Open platoon" })).toHaveCount(0);
+    expect(await accessRow.evaluate(row => Math.ceil(row.getBoundingClientRect().height))).toBeLessThanOrEqual(220);
     await expectContained(page.locator("main"));
   });
 

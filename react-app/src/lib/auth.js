@@ -5,10 +5,20 @@ const OIDC_STATE_KEY = "inventory.oidc.state";
 const OIDC_VERIFIER_KEY = "inventory.oidc.verifier";
 
 export const AUTH_SESSION_INVALIDATED_EVENT = "inventory:auth-session-invalidated";
+export const AUTH_SESSION_REFRESH_EVENT = "inventory:auth-session-refresh";
 
 let currentRedirectCompletion = null;
 let currentSessionRefresh = null;
 let authSessionGeneration = 0;
+let reconnectRequired = false;
+let authSessionEnding = false;
+
+function notifyAuthSessionRefresh(state, session = null) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_REFRESH_EVENT, {
+    detail: { state, session }
+  }));
+}
 
 export class AuthFlowError extends Error {
   constructor(code, message, details = {}) {
@@ -123,14 +133,22 @@ export function readAuthSession() {
 }
 
 export function saveAuthSession(session) {
+  authSessionEnding = false;
+  reconnectRequired = false;
   localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
 }
 
 export function clearAuthSession() {
+  reconnectRequired = false;
   localStorage.removeItem(AUTH_SESSION_KEY);
 }
 
+export function authSessionRequiresReconnect() {
+  return reconnectRequired;
+}
+
 export async function endOidcSession() {
+  authSessionEnding = true;
   authSessionGeneration += 1;
   const pendingRefresh = currentSessionRefresh?.promise || null;
   clearAuthSession();
@@ -157,6 +175,7 @@ export function invalidateAuthSession(accessToken, reason = "unauthorized") {
   if (!session?.accessToken || (accessToken && session.accessToken !== accessToken)) return false;
 
   clearAuthSession();
+  reconnectRequired = true;
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(AUTH_SESSION_INVALIDATED_EVENT, {
       detail: { reason }
@@ -232,6 +251,9 @@ async function refreshAuthSessionOnce(session) {
 }
 
 export async function refreshAuthSession(session = readAuthSession(), { force = false } = {}) {
+  if (authSessionEnding) {
+    throw new AuthFlowError("token_refresh_cancelled", "Sign-in renewal was cancelled because you signed out.");
+  }
   if (!force && (!session?.accessToken || !authSessionCanRefresh(session))) return session;
   if (!force && !authSessionNeedsRefresh(session)) return session;
 
@@ -240,9 +262,19 @@ export async function refreshAuthSession(session = readAuthSession(), { force = 
     return currentSessionRefresh.promise;
   }
 
-  const promise = refreshAuthSessionOnce(session).finally(() => {
-    if (currentSessionRefresh?.promise === promise) currentSessionRefresh = null;
-  });
+  notifyAuthSessionRefresh("start");
+  const promise = refreshAuthSessionOnce(session)
+    .then(refreshedSession => {
+      notifyAuthSessionRefresh("success", refreshedSession);
+      return refreshedSession;
+    })
+    .catch(error => {
+      notifyAuthSessionRefresh("error");
+      throw error;
+    })
+    .finally(() => {
+      if (currentSessionRefresh?.promise === promise) currentSessionRefresh = null;
+    });
   currentSessionRefresh = { refreshKey, promise };
   return promise;
 }

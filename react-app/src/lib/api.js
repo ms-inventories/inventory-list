@@ -1,6 +1,8 @@
 import { appConfig } from "../config.js";
 import {
+  authSessionCanRefresh,
   authSessionNeedsRefresh,
+  authSessionRequiresReconnect,
   getSessionAccessToken,
   invalidateAuthSession,
   readAuthSession,
@@ -71,7 +73,17 @@ function getResponsePreview(text) {
   return String(text || "").replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
-export async function apiRequest(path, { method = "GET", token = "", tenantSlug = "", body } = {}) {
+export async function apiRequest(path, {
+  method = "GET",
+  token = "",
+  tenantSlug = "",
+  body,
+  retryAuth = true
+} = {}) {
+  if (token && authSessionRequiresReconnect()) {
+    throw new ApiError("Reconnect your sign-in to continue.", 401, { code: "auth_reconnect_required" });
+  }
+
   const headers = {
     Accept: "application/json"
   };
@@ -138,6 +150,32 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
     const details = data && typeof data === "object" ? { ...data } : { url };
     if (!details.requestId && responseRequestId) details.requestId = responseRequestId;
     rememberApiRequestId(details.requestId);
+
+    if (response.status === 401 && requestToken && details.code !== "crew_access_ended" && retryAuth) {
+      const currentSession = readAuthSession();
+      const currentToken = getSessionAccessToken(currentSession);
+
+      if (currentToken && currentToken !== requestToken) {
+        return apiRequest(path, { method, token: currentToken, tenantSlug, body, retryAuth: false });
+      }
+
+      if (currentSession?.accessToken === requestToken && authSessionCanRefresh(currentSession)) {
+        try {
+          const refreshedSession = await refreshAuthSession(currentSession, { force: true });
+          const refreshedToken = getSessionAccessToken(refreshedSession);
+          if (refreshedToken) {
+            return apiRequest(path, { method, token: refreshedToken, tenantSlug, body, retryAuth: false });
+          }
+        } catch (refreshError) {
+          throw new ApiError(
+            refreshError?.message || "The sign-in session could not be renewed.",
+            Number(refreshError?.details?.status || 0),
+            { code: refreshError?.code || "token_refresh_failed" }
+          );
+        }
+      }
+    }
+
     if (response.status === 401 && requestToken) invalidateAuthSession(requestToken, "unauthorized");
     if (response.status === 401 && details.code === "crew_access_ended" && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(CREW_ACCESS_ENDED_EVENT));

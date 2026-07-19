@@ -2750,13 +2750,17 @@ button {
 
 .platform-user-table .platform-table-head,
 .platform-user-table .platform-table-row {
-  grid-template-columns: minmax(250px, 1.4fr) minmax(150px, 0.85fr) minmax(150px, 0.7fr) 108px minmax(130px, 0.5fr);
+  grid-template-columns: minmax(250px, 1.4fr) minmax(160px, 0.85fr) minmax(160px, 0.75fr) minmax(130px, 0.55fr);
 }
 
 .platform-role-select,
 .platform-status-select {
   width: 100%;
   min-width: 0;
+}
+
+.platform-user-mobile-platoon {
+  display: none;
 }
 
 .platform-platoon-grid {
@@ -4086,6 +4090,115 @@ button {
 
 .admin-auth-card {
   max-width: 640px;
+}
+
+.auth-boot-panel {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.auth-boot-panel h2,
+.auth-boot-panel p {
+  margin: 0;
+}
+
+.auth-boot-panel p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.auth-boot-spinner,
+.session-refresh-indicator svg {
+  animation: session-refresh-spin 0.9s linear infinite;
+}
+
+.auth-boot-spinner {
+  width: 30px;
+  height: 30px;
+  color: var(--primary);
+}
+
+.session-refresh-indicator,
+.session-reconnect-card {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 69;
+  border: 1px solid rgba(35, 70, 45, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 16px 42px rgba(15, 30, 20, 0.2);
+}
+
+.session-refresh-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.session-refresh-indicator svg {
+  width: 18px;
+  height: 18px;
+}
+
+.session-reconnect-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: min(560px, calc(100% - 32px));
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+}
+
+.session-reconnect-card > svg {
+  width: 24px;
+  height: 24px;
+  color: var(--warning-strong, #8a5a12);
+}
+
+.session-reconnect-card > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.session-reconnect-card strong,
+.session-reconnect-card span {
+  overflow-wrap: anywhere;
+}
+
+.session-reconnect-card > div > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 560px) {
+  .session-reconnect-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .session-reconnect-card .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 46px;
+    justify-content: center;
+  }
+}
+
+@keyframes session-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-boot-spinner,
+  .session-refresh-indicator svg {
+    animation-duration: 1.8s;
+  }
 }
 
 .admin-actions-row {
@@ -11044,6 +11157,50 @@ button {
 
   .platform-table-row .platform-actions > .mobile-field-label {
     grid-column: 1 / -1;
+  }
+
+  .platform-user-table .platform-table-row {
+    gap: 10px 12px;
+    padding: 14px;
+  }
+
+  .platform-user-table .platform-table-row > .platform-row-main {
+    align-items: center;
+    padding-bottom: 10px;
+  }
+
+  .platform-user-table .platform-row-main > div {
+    min-width: 0;
+  }
+
+  .platform-user-table .platform-user-mobile-platoon {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+    color: var(--platform-muted);
+    font-size: 0.8rem;
+    font-weight: 800;
+  }
+
+  .platform-user-mobile-platoon svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+  }
+
+  .platform-user-table .platform-table-row > .platform-user-platoon {
+    display: none;
+  }
+
+  .platform-user-table .platform-user-role-field,
+  .platform-user-table .platform-status-field {
+    grid-column: auto;
+  }
+
+  .platform-user-table .platform-role-select,
+  .platform-user-table .platform-status-select {
+    min-height: 48px;
   }
 
   .platform-open-link,

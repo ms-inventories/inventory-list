@@ -103,7 +103,7 @@ test("safe failures never persist arbitrary provider messages or secrets", () =>
   );
   assert.match(
     safeProvisioningFailure({ code: "identity_not_found", message: secret }).message,
-    /linked Authentik account/i
+    /linked sign-in account/i
   );
   assert.match(
     safeProvisioningFailure({ code: "identity_inactive", message: secret }).message,

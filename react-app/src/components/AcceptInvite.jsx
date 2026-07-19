@@ -101,7 +101,7 @@ export default function AcceptInvite() {
 
   async function signIn() {
     try {
-      setStatus({ text: "Redirecting to Authentik...", isError: false });
+      setStatus({ text: "Opening secure sign-in...", isError: false });
       await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
     } catch (error) {
       setStatus({ text: error.message || "Could not start login", isError: true });
@@ -173,7 +173,7 @@ export default function AcceptInvite() {
               {!accessToken ? (
                 <button className="btn btn-primary btn-full" type="button" onClick={signIn}>
                   <LogIn aria-hidden="true" />
-                  <span>Continue with Authentik</span>
+                  <span>Continue to secure sign-in</span>
                 </button>
               ) : (
                 <button className="btn btn-primary btn-full" type="button" disabled={isAccepting || !invite} onClick={() => acceptInvite()}>
