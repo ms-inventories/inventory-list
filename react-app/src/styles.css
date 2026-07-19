@@ -2019,6 +2019,14 @@ button {
   color: var(--muted);
 }
 
+/* The generic text rule for spans inside an item cell is more specific than
+   .leader-thumb. Restore the thumbnail's grid layout so fallback icons stay
+   optically centered instead of sitting in the upper-left corner. */
+.leader-item-cell .leader-thumb {
+  display: grid;
+  margin-top: 0;
+}
+
 .leader-thumb img {
   width: 100%;
   height: 100%;

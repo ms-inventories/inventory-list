@@ -264,6 +264,25 @@ test.describe("tenant mobile and tablet polish", () => {
       await expect(workCard).toBeVisible();
       await expect(workCard.locator(".leader-table-row")).toHaveCount(3);
       await expect(workCard.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      const fallbackThumb = workCard.locator(".leader-thumb").first();
+      await expect(fallbackThumb).toBeVisible();
+      const fallbackThumbAlignment = await fallbackThumb.evaluate(element => {
+        const icon = element.querySelector("svg");
+        const thumbBounds = element.getBoundingClientRect();
+        const iconBounds = icon?.getBoundingClientRect();
+        return {
+          display: getComputedStyle(element).display,
+          horizontalOffset: iconBounds
+            ? Math.abs((thumbBounds.left + thumbBounds.width / 2) - (iconBounds.left + iconBounds.width / 2))
+            : Number.POSITIVE_INFINITY,
+          verticalOffset: iconBounds
+            ? Math.abs((thumbBounds.top + thumbBounds.height / 2) - (iconBounds.top + iconBounds.height / 2))
+            : Number.POSITIVE_INFINITY
+        };
+      });
+      expect(fallbackThumbAlignment.display).toBe("grid");
+      expect(fallbackThumbAlignment.horizontalOffset).toBeLessThanOrEqual(1);
+      expect(fallbackThumbAlignment.verticalOffset).toBeLessThanOrEqual(1);
 
       const reviewCard = page.getByRole("region", { name: "Dashboard review results" });
       await expect(reviewCard.locator(".leader-table-row")).toHaveCount(3);
