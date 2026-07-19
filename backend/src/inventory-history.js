@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 function normalizeIdentifier(value) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -36,7 +38,7 @@ export function extractPrimaryInventoryLinValues(text) {
 
 function extractNsnValues(text) {
   const values = new Set();
-  const matches = String(text || "").match(/\b\d[\d\s-]{10,}\d\b/g) || [];
+  const matches = String(text || "").match(/\b\d{4}[\s-]*\d{2}[\s-]*\d{3}[\s-]*\d{4}\b/g) || [];
   matches.forEach(value => {
     const digits = normalizeDigits(value);
     if (digits.length === 13) values.add(digits);
@@ -94,6 +96,8 @@ export function inventoryHistoryRowsMatch(firstRow, secondRow) {
 }
 
 function historyTimestamp(row) {
+  const preciseOrder = Number(row?.inventoried_order ?? row?.inventoriedOrder);
+  if (Number.isFinite(preciseOrder)) return preciseOrder;
   const value = row?.inventoried_at ?? row?.inventoriedAt ?? row?.created_at ?? row?.createdAt;
   const timestamp = Date.parse(value || "");
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -163,12 +167,174 @@ export function findPriorInventoryHistoryMatches(currentRows, priorApprovedRows)
       }))
       .filter(candidate => candidate.matchBasis);
     if (!matches.length) return;
+    const foundMatches = matches.filter(candidate => (
+      String(candidate.row.submission_status ?? candidate.row.submissionStatus ?? "").toLowerCase() === "found"
+    ));
     result.set(currentRow.id, {
       latest: matches[0].row,
-      latestWithPhotos: matches.find(candidate => Boolean(candidate.row.has_photos ?? candidate.row.hasPhotos))?.row || null,
+      lastFound: foundMatches[0]?.row || null,
+      latestWithPhotos: foundMatches.find(candidate => Boolean(
+        candidate.row.has_photos ?? candidate.row.hasPhotos
+      ))?.row || null,
       historyCount: matches.length,
       matchBasis: matches[0].matchBasis
     });
   });
   return result;
+}
+
+function equipmentLibraryRowId(row) {
+  return String(row?.submission_id ?? row?.id ?? "").trim();
+}
+
+function equipmentLibraryIdentity(kind, value) {
+  return { kind, value: String(value || "") };
+}
+
+export function equipmentLibraryEntryKey(tenantNamespace, identity) {
+  const namespace = String(tenantNamespace || "").trim();
+  const kind = String(identity?.kind || "").trim();
+  const value = String(identity?.value || "").trim();
+  if (!namespace || !kind || !value) {
+    throw new Error("Equipment library keys require a tenant namespace and canonical identity.");
+  }
+  const digest = crypto
+    .createHash("sha256")
+    .update(`equipment-library:v1\0${namespace}\0${kind}\0${value}`, "utf8")
+    .digest("base64url")
+    .slice(0, 22);
+  return `eql_${digest}`;
+}
+
+function sortedValues(values) {
+  return [...values].sort((first, second) => first.localeCompare(second));
+}
+
+function equipmentLibraryCanonicalIdentity(candidate, linToNsns) {
+  const { rowId, profile } = candidate;
+  const nsns = sortedValues(profile.nsns);
+  const lins = sortedValues(profile.lins);
+
+  if (nsns.length === 1) {
+    return {
+      identity: equipmentLibraryIdentity("nsn", nsns[0]),
+      basis: "nsn",
+      issues: []
+    };
+  }
+  if (nsns.length > 1) {
+    return {
+      identity: equipmentLibraryIdentity("isolated", rowId),
+      basis: "isolated",
+      issues: ["conflicting_nsns"]
+    };
+  }
+
+  if (lins.length === 1) {
+    const mappedNsns = sortedValues(linToNsns.get(lins[0]) || new Set());
+    if (mappedNsns.length === 1) {
+      return {
+        identity: equipmentLibraryIdentity("nsn", mappedNsns[0]),
+        basis: "lin_to_unique_nsn",
+        issues: []
+      };
+    }
+    return {
+      identity: equipmentLibraryIdentity("lin", lins[0]),
+      basis: "lin",
+      issues: mappedNsns.length > 1 ? ["ambiguous_lin"] : []
+    };
+  }
+  if (lins.length > 1) {
+    return {
+      identity: equipmentLibraryIdentity("isolated", rowId),
+      basis: "isolated",
+      issues: ["conflicting_lins"]
+    };
+  }
+
+  if (profile.packetLine) {
+    return {
+      identity: equipmentLibraryIdentity("packet_line", profile.packetLine),
+      basis: "packet_line",
+      issues: []
+    };
+  }
+  return {
+    identity: equipmentLibraryIdentity("isolated", rowId),
+    basis: "isolated",
+    issues: ["missing_identity"]
+  };
+}
+
+/**
+ * Build tenant-scoped equipment-type groups from approved observations.
+ *
+ * This deliberately does not use pairwise history matching or union-find. A
+ * LIN-only row can match either of two rows carrying different NSNs, even
+ * though those two NSN rows must never be merged. The global LIN-to-NSN map
+ * below only promotes a LIN when the evidence maps it to one unique NSN.
+ */
+export function buildEquipmentLibraryGroups(rows, { tenantNamespace } = {}) {
+  const seenRowIds = new Set();
+  const candidates = (rows || []).map(row => {
+    const rowId = equipmentLibraryRowId(row);
+    if (!rowId) throw new Error("Equipment library observations require a stable ID.");
+    if (seenRowIds.has(rowId)) throw new Error(`Duplicate equipment library observation ID: ${rowId}`);
+    seenRowIds.add(rowId);
+    return { row, rowId, profile: inventoryHistoryMatchProfile(row) };
+  });
+
+  const linToNsns = new Map();
+  candidates.forEach(candidate => {
+    const nsns = sortedValues(candidate.profile.nsns);
+    const lins = sortedValues(candidate.profile.lins);
+    if (nsns.length !== 1 || lins.length !== 1) return;
+    const mapped = linToNsns.get(lins[0]) || new Set();
+    mapped.add(nsns[0]);
+    linToNsns.set(lins[0], mapped);
+  });
+
+  const groupsByIdentity = new Map();
+  const assignments = new Map();
+  candidates.forEach(candidate => {
+    const assignment = equipmentLibraryCanonicalIdentity(candidate, linToNsns);
+    const canonicalIdentity = `${assignment.identity.kind}:${assignment.identity.value}`;
+    const key = equipmentLibraryEntryKey(tenantNamespace, assignment.identity);
+    const publicAssignment = {
+      key,
+      identity: assignment.identity,
+      basis: assignment.basis,
+      issues: assignment.issues
+    };
+    assignments.set(candidate.rowId, publicAssignment);
+
+    const group = groupsByIdentity.get(canonicalIdentity) || {
+      key,
+      identity: assignment.identity,
+      rows: [],
+      rowIds: [],
+      bases: new Set(),
+      issues: new Set()
+    };
+    group.rows.push(candidate.row);
+    group.rowIds.push(candidate.rowId);
+    group.bases.add(assignment.basis);
+    assignment.issues.forEach(issue => group.issues.add(issue));
+    groupsByIdentity.set(canonicalIdentity, group);
+  });
+
+  const groups = [...groupsByIdentity.values()]
+    .map(group => ({
+      ...group,
+      rows: [...group.rows].sort((first, second) => (
+        historyTimestamp(second) - historyTimestamp(first)
+      )),
+      rowIds: [...group.rowIds].sort(),
+      bases: [...group.bases].sort(),
+      issues: [...group.issues].sort()
+    }))
+    .sort((first, second) => first.key.localeCompare(second.key));
+
+  return { groups, assignments };
 }

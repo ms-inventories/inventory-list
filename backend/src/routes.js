@@ -30,9 +30,11 @@ import {
 } from "./crew-auth.js";
 import { query, withTransaction } from "./db.js";
 import {
+  buildEquipmentLibraryGroups,
   extractPrimaryInventoryLinValues,
   findPriorInventoryHistoryMatches,
-  inventoryHistoryCandidateKeys
+  inventoryHistoryCandidateKeys,
+  normalizeInventoryHistoryText
 } from "./inventory-history.js";
 import {
   buildMediaUrl,
@@ -195,6 +197,7 @@ const tenantAuditCategoryPrefixes = Object.freeze({
   workflow: [
     "inventory_item.",
     "inventory_session.",
+    "equipment_library_link.",
     "session_item.",
     "session_items.",
     "submission.",
@@ -1260,10 +1263,24 @@ async function loadInventoryItemsById(tenantId, inventoryItemIds, execute = quer
   ]));
 }
 
+function priorInventoryFoundContext(row) {
+  if (!row) return null;
+  return {
+    locationText: String(row.location_text || "").trim() || null,
+    sessionName: row.prior_session_name || null,
+    sessionStatus: row.prior_session_status || null,
+    inventoriedAt: row.inventoried_at || null,
+    expectedQty: row.expected_qty ?? null
+  };
+}
+
 async function loadPriorInventoryHistory(tenantId, sessionId, currentRows, execute = query) {
   const historyBySessionItemId = new Map();
   if (!currentRows.length) return historyBySessionItemId;
   const candidateKeys = inventoryHistoryCandidateKeys(currentRows);
+  const sourcePacketLines = [...new Set(
+    currentRows.map(row => normalizeInventoryHistoryText(row.packet_line)).filter(Boolean)
+  )];
 
   const historyResult = await execute(
     `
@@ -1272,6 +1289,7 @@ async function loadPriorInventoryHistory(tenantId, sessionId, currentRows, execu
         submission.status AS submission_status,
         submission.location_text,
         submission.created_at AS inventoried_at,
+        (extract(epoch FROM submission.created_at) * 1000000)::bigint AS inventoried_order,
         prior_item.inventory_item_id,
         prior_item.packet_line,
         prior_item.expected_qty,
@@ -1325,6 +1343,50 @@ async function loadPriorInventoryHistory(tenantId, sessionId, currentRows, execu
   );
 
   const matches = findPriorInventoryHistoryMatches(currentRows, historyResult.rows);
+  if (sourcePacketLines.length) {
+    const rememberedLinkResult = await execute(
+      `
+        SELECT link.source_packet_line_normalized,
+          link.target_session_item_id
+        FROM equipment_library_links link
+        JOIN inventory_session_items target_item ON target_item.id = link.target_session_item_id
+        JOIN inventory_sessions target_session ON target_session.id = target_item.session_id
+        WHERE link.tenant_id = $1
+          AND link.source_packet_line_normalized = ANY($2::text[])
+          AND target_session.tenant_id = $1
+          AND target_session.id <> $3
+      `,
+      [tenantId, sourcePacketLines, sessionId]
+    );
+    if (rememberedLinkResult.rows.length) {
+      const targetGroupBySessionItemId = await loadRememberedEquipmentTargetGroups(
+        tenantId,
+        rememberedLinkResult.rows,
+        execute
+      );
+      const rememberedBySourceLine = new Map();
+      rememberedLinkResult.rows.forEach(link => {
+        const targetGroup = targetGroupBySessionItemId.get(link.target_session_item_id);
+        const rows = (targetGroup?.rows || []).filter(row => row.prior_session_id !== sessionId);
+        if (rows.length) rememberedBySourceLine.set(link.source_packet_line_normalized, rows);
+      });
+      currentRows.forEach(currentRow => {
+        const rememberedRows = rememberedBySourceLine.get(
+          normalizeInventoryHistoryText(currentRow.packet_line)
+        ) || [];
+        if (!rememberedRows.length) return;
+        matches.set(currentRow.id, {
+          latest: rememberedRows[0],
+          lastFound: rememberedRows.find(row => row.submission_status === "found") || null,
+          latestWithPhotos: rememberedRows.find(row => (
+            row.submission_status === "found" && Boolean(row.has_photos)
+          )) || null,
+          historyCount: rememberedRows.length,
+          matchBasis: "remembered_link"
+        });
+      });
+    }
+  }
   const photoSubmissionIds = [...new Set(
     [...matches.values()].map(match => match.latestWithPhotos?.submission_id).filter(Boolean)
   )];
@@ -1348,6 +1410,7 @@ async function loadPriorInventoryHistory(tenantId, sessionId, currentRows, execu
 
   matches.forEach((match, currentSessionItemId) => {
     const latest = match.latest;
+    const lastFound = match.lastFound;
     const photoRecord = match.latestWithPhotos;
     const photos = (photosBySubmissionId.get(photoRecord?.submission_id) || []).map(photo => ({
       url: photo.url,
@@ -1362,6 +1425,7 @@ async function loadPriorInventoryHistory(tenantId, sessionId, currentRows, execu
       locationText: latest.location_text || null,
       inventoriedAt: latest.inventoried_at,
       expectedQty: latest.expected_qty,
+      lastFound: priorInventoryFoundContext(lastFound),
       photos,
       photoContext: photoRecord ? {
         sessionName: photoRecord.prior_session_name,
@@ -1376,6 +1440,397 @@ async function loadPriorInventoryHistory(tenantId, sessionId, currentRows, execu
   });
 
   return historyBySessionItemId;
+}
+
+async function loadApprovedEquipmentObservations(tenantId, execute = query) {
+  const result = await execute(
+    `
+      SELECT submission.id AS submission_id,
+        submission.session_item_id,
+        submission.status AS submission_status,
+        submission.location_text,
+        submission.created_at AS inventoried_at,
+        (extract(epoch FROM submission.created_at) * 1000000)::bigint AS inventoried_order,
+        item.inventory_item_id,
+        item.packet_line,
+        item.expected_qty,
+        inventory.title AS inventory_title,
+        inventory.common_name AS inventory_common_name,
+        inventory.army_name AS inventory_army_name,
+        inventory.lin AS inventory_lin,
+        inventory.nsn AS inventory_nsn,
+        inventory_session.id AS prior_session_id,
+        inventory_session.name AS prior_session_name,
+        inventory_session.status AS prior_session_status,
+        EXISTS (
+          SELECT 1
+          FROM submission_photos photo
+          WHERE photo.submission_id = submission.id
+        ) AS has_photos
+      FROM item_submissions submission
+      JOIN inventory_session_items item ON item.id = submission.session_item_id
+      JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+      LEFT JOIN inventory_items inventory
+        ON inventory.id = item.inventory_item_id
+       AND inventory.tenant_id = inventory_session.tenant_id
+      WHERE inventory_session.tenant_id = $1
+        AND submission.review_state = 'approved'
+      ORDER BY submission.created_at DESC, submission.id DESC
+    `,
+    [tenantId]
+  );
+  return result.rows;
+}
+
+function equipmentObservationTimestamp(row) {
+  const preciseOrder = Number(row?.inventoried_order ?? row?.inventoriedOrder);
+  if (Number.isFinite(preciseOrder)) return preciseOrder;
+  const value = row?.inventoried_at;
+  if (value instanceof Date) return value.getTime();
+  const timestamp = Date.parse(value || "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function mergeEquipmentObservations(...collections) {
+  const bySubmissionId = new Map();
+  collections.flat().forEach(row => {
+    if (row?.submission_id && !bySubmissionId.has(row.submission_id)) {
+      bySubmissionId.set(row.submission_id, row);
+    }
+  });
+  return [...bySubmissionId.values()].sort((first, second) => (
+    equipmentObservationTimestamp(second) - equipmentObservationTimestamp(first)
+    || String(second.submission_id).localeCompare(String(first.submission_id))
+  ));
+}
+
+async function loadApprovedEquipmentObservationNeighborhood(tenantId, {
+  sessionItemIds = [],
+  inventoryItemIds = [],
+  packetLines = [],
+  lins = [],
+  nsns = []
+}, execute = query) {
+  if (![sessionItemIds, inventoryItemIds, packetLines, lins, nsns].some(values => values.length)) {
+    return [];
+  }
+  const result = await execute(
+    `
+      SELECT submission.id AS submission_id,
+        submission.session_item_id,
+        submission.status AS submission_status,
+        submission.location_text,
+        submission.created_at AS inventoried_at,
+        (extract(epoch FROM submission.created_at) * 1000000)::bigint AS inventoried_order,
+        item.inventory_item_id,
+        item.packet_line,
+        item.expected_qty,
+        inventory.title AS inventory_title,
+        inventory.common_name AS inventory_common_name,
+        inventory.army_name AS inventory_army_name,
+        inventory.lin AS inventory_lin,
+        inventory.nsn AS inventory_nsn,
+        inventory_session.id AS prior_session_id,
+        inventory_session.name AS prior_session_name,
+        inventory_session.status AS prior_session_status,
+        EXISTS (
+          SELECT 1
+          FROM submission_photos photo
+          WHERE photo.submission_id = submission.id
+        ) AS has_photos
+      FROM item_submissions submission
+      JOIN inventory_session_items item ON item.id = submission.session_item_id
+      JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+      LEFT JOIN inventory_items inventory
+        ON inventory.id = item.inventory_item_id
+       AND inventory.tenant_id = inventory_session.tenant_id
+      WHERE inventory_session.tenant_id = $1
+        AND submission.review_state = 'approved'
+        AND (
+          item.id = ANY($2::uuid[])
+          OR item.inventory_item_id = ANY($3::uuid[])
+          OR btrim(regexp_replace(upper(COALESCE(item.packet_line, '')), '[^A-Z0-9]+', ' ', 'g')) = ANY($4::text[])
+          OR upper(regexp_replace(COALESCE(inventory.lin, ''), '[^A-Z0-9]', '', 'g')) = ANY($5::text[])
+          OR regexp_replace(COALESCE(inventory.nsn, ''), '[^0-9]', '', 'g') = ANY($6::text[])
+          OR EXISTS (
+            SELECT 1
+            FROM unnest($5::text[]) target_lin
+            WHERE (' ' || btrim(regexp_replace(upper(COALESCE(item.packet_line, '')), '[^A-Z0-9]+', ' ', 'g')) || ' ')
+              LIKE ('% ' || target_lin || ' %')
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM unnest($6::text[]) target_nsn
+            WHERE regexp_replace(COALESCE(item.packet_line, ''), '[^0-9]', '', 'g')
+              LIKE ('%' || target_nsn || '%')
+          )
+        )
+      ORDER BY submission.created_at DESC, submission.id DESC
+    `,
+    [tenantId, sessionItemIds, inventoryItemIds, packetLines, lins, nsns]
+  );
+  return result.rows;
+}
+
+async function loadRememberedEquipmentTargetGroups(tenantId, rememberedLinks, execute = query) {
+  const targetSessionItemIds = [...new Set(
+    rememberedLinks.map(link => link.target_session_item_id).filter(Boolean)
+  )];
+  if (!targetSessionItemIds.length) return new Map();
+
+  const targetObservations = await loadApprovedEquipmentObservationNeighborhood(
+    tenantId,
+    { sessionItemIds: targetSessionItemIds },
+    execute
+  );
+  if (!targetObservations.length) return new Map();
+
+  const targetKeys = inventoryHistoryCandidateKeys(targetObservations);
+  const directNeighborhood = await loadApprovedEquipmentObservationNeighborhood(
+    tenantId,
+    targetKeys,
+    execute
+  );
+  const directObservations = mergeEquipmentObservations(targetObservations, directNeighborhood);
+  const directGroups = buildEquipmentLibraryGroups(directObservations, {
+    tenantNamespace: tenantId
+  }).groups;
+  const directGroupBySessionItemId = new Map();
+  directGroups.forEach(group => group.rows.forEach(row => {
+    if (targetSessionItemIds.includes(row.session_item_id)) {
+      directGroupBySessionItemId.set(row.session_item_id, group);
+    }
+  }));
+
+  const targetNsns = [...new Set(targetSessionItemIds.flatMap(targetSessionItemId => {
+    const group = directGroupBySessionItemId.get(targetSessionItemId);
+    return group?.identity.kind === "nsn" ? [group.identity.value] : [];
+  }))];
+  const nsnNeighborhood = targetNsns.length
+    ? await loadApprovedEquipmentObservationNeighborhood(tenantId, { nsns: targetNsns }, execute)
+    : [];
+  const targetNsnLins = inventoryHistoryCandidateKeys(nsnNeighborhood).lins;
+  const linNeighborhood = targetNsnLins.length
+    ? await loadApprovedEquipmentObservationNeighborhood(tenantId, { lins: targetNsnLins }, execute)
+    : [];
+
+  const finalObservations = mergeEquipmentObservations(
+    directObservations,
+    nsnNeighborhood,
+    linNeighborhood
+  );
+  const finalGroups = buildEquipmentLibraryGroups(finalObservations, {
+    tenantNamespace: tenantId
+  }).groups;
+  const finalGroupBySessionItemId = new Map();
+  finalGroups.forEach(group => group.rows.forEach(row => {
+    if (targetSessionItemIds.includes(row.session_item_id)) {
+      finalGroupBySessionItemId.set(row.session_item_id, group);
+    }
+  }));
+  return finalGroupBySessionItemId;
+}
+
+function equipmentLibraryDisplayName(rows) {
+  const orderedFields = [
+    "inventory_common_name",
+    "inventory_army_name",
+    "inventory_title",
+    "packet_line"
+  ];
+  for (const field of orderedFields) {
+    const row = rows.find(candidate => String(candidate?.[field] || "").trim());
+    if (row) return String(row[field]).trim();
+  }
+  return "Inventory item";
+}
+
+function equipmentObservationContext(row, { includeQuantity = false } = {}) {
+  if (!row) return null;
+  const context = {
+    locationText: String(row.location_text || "").trim() || null,
+    sessionName: row.prior_session_name || null,
+    sessionStatus: row.prior_session_status || null,
+    observedAt: row.inventoried_at || null
+  };
+  if (includeQuantity) context.expectedQty = row.expected_qty ?? null;
+  return context;
+}
+
+function sanitizedEquipmentPhoto(row) {
+  const photo = rowToPhoto(row);
+  return {
+    url: photo.url,
+    caption: photo.caption,
+    kind: photo.kind,
+    createdAt: photo.createdAt
+  };
+}
+
+async function loadEquipmentLibraryProjection(tenantId, execute = query) {
+  const observations = await loadApprovedEquipmentObservations(tenantId, execute);
+  const { groups } = buildEquipmentLibraryGroups(observations, { tenantNamespace: tenantId });
+  const photoSourceByGroupKey = new Map();
+  const internalByKey = new Map();
+  const entryBySessionItemId = new Map();
+
+  const entries = groups.map(group => {
+    const rows = group.rows;
+    const latest = rows[0];
+    const foundRows = rows.filter(row => row.submission_status === "found");
+    const lastFound = foundRows[0] || null;
+    const photoSource = foundRows.find(row => Boolean(row.has_photos)) || null;
+    if (photoSource) photoSourceByGroupKey.set(group.key, photoSource);
+
+    const locations = [];
+    const seenLocations = new Set();
+    foundRows.forEach(row => {
+      const locationText = String(row.location_text || "").trim();
+      const normalizedLocation = locationText.toLowerCase();
+      if (!locationText || seenLocations.has(normalizedLocation) || locations.length >= 5) return;
+      seenLocations.add(normalizedLocation);
+      locations.push(equipmentObservationContext(row, { includeQuantity: true }));
+    });
+
+    const keys = inventoryHistoryCandidateKeys(rows);
+    const savedAssetIds = new Set(rows.map(row => row.inventory_item_id).filter(Boolean));
+    const sessionIds = new Set(rows.map(row => row.prior_session_id).filter(Boolean));
+    const representativeTargetSessionItemId = (
+      photoSource?.session_item_id
+      || lastFound?.session_item_id
+      || latest?.session_item_id
+      || null
+    );
+    const entry = {
+      key: group.key,
+      displayName: equipmentLibraryDisplayName(rows),
+      lins: [...keys.lins].sort(),
+      nsns: [...keys.nsns].sort(),
+      latestOutcome: latest?.submission_status || null,
+      latestSessionName: latest?.prior_session_name || null,
+      latestSessionStatus: latest?.prior_session_status || null,
+      latestObservedAt: latest?.inventoried_at || null,
+      lastFound: equipmentObservationContext(lastFound, { includeQuantity: true }),
+      locations,
+      photos: [],
+      photoContext: equipmentObservationContext(photoSource),
+      observationCount: rows.length,
+      sessionCount: sessionIds.size,
+      savedAssetCount: savedAssetIds.size
+    };
+    const internal = { entry, group, representativeTargetSessionItemId };
+    internalByKey.set(group.key, internal);
+    rows.forEach(row => {
+      if (row.session_item_id) entryBySessionItemId.set(row.session_item_id, internal);
+    });
+    return entry;
+  });
+
+  const photoSubmissionIds = [...new Set(
+    [...photoSourceByGroupKey.values()].map(row => row.submission_id).filter(Boolean)
+  )];
+  if (photoSubmissionIds.length) {
+    const photosResult = await execute(
+      `
+        SELECT *
+        FROM submission_photos
+        WHERE submission_id = ANY($1::uuid[])
+        ORDER BY created_at, id
+      `,
+      [photoSubmissionIds]
+    );
+    const photosBySubmissionId = new Map(photoSubmissionIds.map(id => [id, []]));
+    photosResult.rows.forEach(row => {
+      const photos = photosBySubmissionId.get(row.submission_id) || [];
+      photos.push(sanitizedEquipmentPhoto(row));
+      photosBySubmissionId.set(row.submission_id, photos);
+    });
+    photoSourceByGroupKey.forEach((photoSource, groupKey) => {
+      const internal = internalByKey.get(groupKey);
+      if (internal) {
+        internal.entry.photos = (photosBySubmissionId.get(photoSource.submission_id) || []).slice(0, 3);
+      }
+    });
+  }
+
+  entries.sort((first, second) => (
+    first.displayName.localeCompare(second.displayName)
+    || first.key.localeCompare(second.key)
+  ));
+  return { observations, entries, internalByKey, entryBySessionItemId };
+}
+
+async function loadRememberedEquipmentLinks(tenantId, projection, execute = query) {
+  const result = await execute(
+    `
+      SELECT link.*
+      FROM equipment_library_links link
+      WHERE link.tenant_id = $1
+      ORDER BY link.created_at DESC, link.id DESC
+    `,
+    [tenantId]
+  );
+  return result.rows.flatMap(row => {
+    const target = projection.entryBySessionItemId.get(row.target_session_item_id);
+    if (!target) return [];
+    return [rememberedEquipmentLinkResponse(row, target)];
+  });
+}
+
+function rememberedEquipmentLinkResponse(row, target) {
+  return {
+    id: row.id,
+    sourcePacketLine: row.source_packet_line,
+    targetEntryKey: target.entry.key,
+    targetDisplayName: target.entry.displayName,
+    createdAt: row.created_at
+  };
+}
+
+async function loadUnlinkedActiveEquipmentRows(tenantId, projection, rememberedLinks, execute = query) {
+  const result = await execute(
+    `
+      SELECT item.id,
+        item.session_id,
+        item.inventory_item_id,
+        item.packet_line,
+        item.expected_qty,
+        item.status,
+        inventory.lin AS inventory_lin,
+        inventory.nsn AS inventory_nsn,
+        inventory_session.name AS session_name
+      FROM inventory_session_items item
+      JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+      LEFT JOIN inventory_items inventory
+        ON inventory.id = item.inventory_item_id
+       AND inventory.tenant_id = inventory_session.tenant_id
+      WHERE inventory_session.tenant_id = $1
+        AND inventory_session.status = 'active'
+        AND item.status NOT IN ('found', 'not_found', 'mismatch', 'approved')
+      ORDER BY inventory_session.started_at DESC NULLS LAST,
+        inventory_session.created_at DESC,
+        item.created_at,
+        item.id
+    `,
+    [tenantId]
+  );
+  const rememberedSourceLines = new Set(rememberedLinks.map(link => (
+    normalizeInventoryHistoryText(link.sourcePacketLine)
+  )));
+  const automaticMatches = findPriorInventoryHistoryMatches(result.rows, projection.observations);
+
+  return result.rows.flatMap(row => {
+    const normalizedLine = normalizeInventoryHistoryText(row.packet_line);
+    if (normalizedLine && rememberedSourceLines.has(normalizedLine)) return [];
+    if (automaticMatches.has(row.id)) return [];
+    return [{
+      id: row.id,
+      sessionId: row.session_id,
+      sessionName: row.session_name,
+      packetLine: row.packet_line || "",
+      expectedQty: row.expected_qty ?? null
+    }];
+  });
 }
 
 function rowToImportBatch(row, { includeText = false } = {}) {
@@ -1591,6 +2046,11 @@ function auditBoolean(value) {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function auditUuid(value) {
+  const parsed = z.string().uuid().safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 function compactAuditDetails(details) {
   return Object.fromEntries(Object.entries(details).filter(([, value]) => value !== undefined && value !== null));
 }
@@ -1650,6 +2110,12 @@ function safeTenantAuditDetails(action, value) {
   }
   if (action === "inventory_session.deleted") {
     return compactAuditDetails({ name: auditText(metadata.name, 240) });
+  }
+  if (action.startsWith("equipment_library_link.")) {
+    return compactAuditDetails({
+      sourcePacketLine: auditText(metadata.sourcePacketLine, 1000),
+      targetDisplayName: auditText(metadata.targetDisplayName, 1000)
+    });
   }
   if (action === "session_items.bulk_created") {
     return compactAuditDetails({
@@ -1724,13 +2190,31 @@ function safeTenantAuditDetails(action, value) {
   return {};
 }
 
+function safeTenantAuditContext(action, value) {
+  if (!String(action || "").startsWith("equipment_library_link.")) return null;
+  const metadata = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const sessionId = auditUuid(metadata.sourceSessionId);
+  if (!sessionId) return null;
+  return {
+    sessionId,
+    sessionName: auditText(metadata.sourceSessionName, 240) || null,
+    sessionItemId: auditUuid(metadata.sourceSessionItemId) || null,
+    packetLine: auditText(metadata.sourcePacketLine, 1000) || null
+  };
+}
+
 function rowToTenantAuditEvent(row) {
   const details = safeTenantAuditDetails(row.action, row.metadata);
-  const context = row.context_session_id ? {
-    sessionId: row.context_session_id,
-    sessionName: auditText(details.sessionName, 240) || auditText(row.context_session_name, 240) || null,
-    sessionItemId: row.context_session_item_id || null,
-    packetLine: auditText(row.context_packet_line, 1000) || null
+  const metadataContext = safeTenantAuditContext(row.action, row.metadata);
+  const contextSessionId = row.context_session_id || metadataContext?.sessionId;
+  const context = contextSessionId ? {
+    sessionId: contextSessionId,
+    sessionName: auditText(details.sessionName, 240)
+      || auditText(row.context_session_name, 240)
+      || metadataContext?.sessionName
+      || null,
+    sessionItemId: row.context_session_item_id || metadataContext?.sessionItemId || null,
+    packetLine: auditText(row.context_packet_line, 1000) || metadataContext?.packetLine || null
   } : null;
 
   return {
@@ -2295,7 +2779,7 @@ function extractLinValues(text) {
 
 function extractNsnValues(text) {
   const values = new Set();
-  const matches = String(text || "").match(/\b\d[\d\s-]{10,}\d\b/g) || [];
+  const matches = String(text || "").match(/\b\d{4}[\s-]*\d{2}[\s-]*\d{3}[\s-]*\d{4}\b/g) || [];
   matches.forEach(value => {
     const digits = normalizeDigits(value);
     if (digits.length === 13) values.add(digits);
@@ -5879,6 +6363,208 @@ export function registerRoutes(app) {
     return {
       invitation: rowToInvitation(accepted.invitation),
       membership: rowToMember(accepted.membership)
+    };
+  });
+
+  route(app, "get", "/api/inventory/equipment-library", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const projection = await loadEquipmentLibraryProjection(context.tenant.id);
+    const rememberedLinks = await loadRememberedEquipmentLinks(context.tenant.id, projection);
+    const unlinkedActiveRows = await loadUnlinkedActiveEquipmentRows(
+      context.tenant.id,
+      projection,
+      rememberedLinks
+    );
+    return {
+      entries: projection.entries,
+      rememberedLinks,
+      unlinkedActiveRows,
+      generatedAt: new Date().toISOString()
+    };
+  });
+
+  route(app, "post", "/api/inventory/equipment-library/links", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const body = parseBody(
+      z.object({
+        sourceSessionItemId: z.string().uuid(),
+        targetEntryKey: z.string().min(1).max(100)
+      }),
+      request.body
+    );
+    const projection = await loadEquipmentLibraryProjection(context.tenant.id);
+    const target = projection.internalByKey.get(body.targetEntryKey);
+    if (!target?.representativeTargetSessionItemId) {
+      throw requestError("Choose an equipment library entry from this workspace.");
+    }
+
+    const created = await withTransaction(async client => {
+      const sourceResult = await client.query(
+        `
+          SELECT item.id,
+            item.packet_line,
+            item.status,
+            inventory_session.id AS session_id,
+            inventory_session.name AS session_name,
+            inventory_session.status AS session_status
+          FROM inventory_session_items item
+          JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+          WHERE item.id = $1
+            AND inventory_session.tenant_id = $2
+          FOR UPDATE OF item, inventory_session
+        `,
+        [body.sourceSessionItemId, context.tenant.id]
+      );
+      const source = sourceResult.rows[0];
+      if (!source) throw requestError("Inventory row not found.", 404);
+      if (source.session_status !== "active") {
+        throw requestError("Remember a match from an active inventory.", 409);
+      }
+      if (["found", "not_found", "mismatch", "approved"].includes(source.status)) {
+        throw requestError("This inventory row is already complete.", 409);
+      }
+      const normalizedSourceLine = normalizeInventoryHistoryText(source.packet_line);
+      if (!normalizedSourceLine) {
+        throw requestError("This inventory row does not have packet wording to remember.");
+      }
+
+      const targetResult = await client.query(
+        `
+          SELECT target.id,
+            target_session.id AS session_id,
+            EXISTS (
+              SELECT 1
+              FROM item_submissions submission
+              WHERE submission.session_item_id = target.id
+                AND submission.review_state = 'approved'
+            ) AS has_approved_evidence
+          FROM inventory_session_items target
+          JOIN inventory_sessions target_session ON target_session.id = target.session_id
+          WHERE target.id = $1
+            AND target_session.tenant_id = $2
+          FOR UPDATE OF target, target_session
+        `,
+        [target.representativeTargetSessionItemId, context.tenant.id]
+      );
+      const targetRow = targetResult.rows[0];
+      if (!targetRow?.has_approved_evidence) {
+        throw requestError("The selected equipment history is no longer available.", 409);
+      }
+      if (targetRow.id === source.id || targetRow.session_id === source.session_id) {
+        throw requestError("Choose equipment history from a prior inventory.", 409);
+      }
+
+      const insertResult = await client.query(
+        `
+          INSERT INTO equipment_library_links (
+            tenant_id,
+            source_session_item_id,
+            source_packet_line,
+            source_packet_line_normalized,
+            target_session_item_id,
+            created_by
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (tenant_id, source_packet_line_normalized) DO NOTHING
+          RETURNING *
+        `,
+        [
+          context.tenant.id,
+          source.id,
+          String(source.packet_line || "").trim(),
+          normalizedSourceLine,
+          targetRow.id,
+          context.user.id
+        ]
+      );
+      const link = insertResult.rows[0];
+      if (!link) {
+        throw requestError("A remembered match already exists for this packet wording.", 409);
+      }
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "equipment_library_link.created",
+        entityType: "equipment_library_link",
+        entityId: link.id,
+        metadata: {
+          sourceSessionId: source.session_id,
+          sourceSessionName: source.session_name,
+          sourceSessionItemId: source.id,
+          sourcePacketLine: String(source.packet_line || "").trim(),
+          targetSessionItemId: targetRow.id,
+          targetEntryKey: target.entry.key,
+          targetDisplayName: target.entry.displayName
+        }
+      });
+      return link;
+    });
+
+    reply.code(201);
+    return { rememberedLink: rememberedEquipmentLinkResponse(created, target) };
+  });
+
+  route(app, "delete", "/api/inventory/equipment-library/links/:linkId", async (request, reply) => {
+    const context = await requireTenantContext(request, reply, ["tenant_admin"]);
+    const linkId = z.string().uuid().safeParse(request.params.linkId);
+    if (!linkId.success) throw requestError("Remembered match not found.", 404);
+    const projection = await loadEquipmentLibraryProjection(context.tenant.id);
+
+    const deleted = await withTransaction(async client => {
+      const currentResult = await client.query(
+        `
+          SELECT link.*,
+            source_item.packet_line AS current_source_packet_line,
+            source_session.id AS source_session_id,
+            source_session.name AS source_session_name
+          FROM equipment_library_links link
+          LEFT JOIN inventory_session_items source_item
+            ON source_item.id = link.source_session_item_id
+          LEFT JOIN inventory_sessions source_session
+            ON source_session.id = source_item.session_id
+           AND source_session.tenant_id = link.tenant_id
+          WHERE link.id = $1
+            AND link.tenant_id = $2
+          FOR UPDATE OF link
+        `,
+        [linkId.data, context.tenant.id]
+      );
+      const current = currentResult.rows[0];
+      if (!current) return null;
+      const currentTarget = projection.entryBySessionItemId.get(current.target_session_item_id);
+      await client.query(
+        "DELETE FROM equipment_library_links WHERE id = $1 AND tenant_id = $2",
+        [current.id, context.tenant.id]
+      );
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "equipment_library_link.deleted",
+        entityType: "equipment_library_link",
+        entityId: current.id,
+        metadata: {
+          sourceSessionId: current.source_session_id,
+          sourceSessionName: current.source_session_name,
+          sourceSessionItemId: current.source_session_item_id,
+          sourcePacketLine: String(current.source_packet_line || current.current_source_packet_line || "").trim(),
+          targetSessionItemId: current.target_session_item_id,
+          targetDisplayName: currentTarget?.entry.displayName || "Previous equipment record"
+        }
+      });
+      return current;
+    });
+    if (!deleted) throw requestError("Remembered match not found.", 404);
+
+    const target = projection.entryBySessionItemId.get(deleted.target_session_item_id);
+    return {
+      deleted: true,
+      rememberedLink: target ? rememberedEquipmentLinkResponse(deleted, target) : {
+        id: deleted.id,
+        sourcePacketLine: deleted.source_packet_line,
+        targetEntryKey: null,
+        targetDisplayName: "Previous equipment record",
+        createdAt: deleted.created_at
+      }
     };
   });
 

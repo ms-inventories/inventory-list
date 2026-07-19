@@ -9,6 +9,8 @@ import {
   sessionTimingFromRow
 } from "../src/routes.js";
 import {
+  buildEquipmentLibraryGroups,
+  equipmentLibraryEntryKey,
   findPriorInventoryHistoryMatches,
   inventoryHistoryRowsMatch
 } from "../src/inventory-history.js";
@@ -129,18 +131,21 @@ test("prior inventory history selects the latest approved row by mixed LIN and e
         submission_id: "older-lin",
         packet_line: "63053N CUTTING MACHINE OXYGEN",
         inventoried_at: "2026-05-01T12:00:00.000Z",
+        submission_status: "found",
         has_photos: true
       },
       {
         submission_id: "newer-lin",
         packet_line: "000000009 63053N CUTTING MACHINE OXYGEN",
         inventoried_at: "2026-06-01T12:00:00.000Z",
-        has_photos: false
+        submission_status: "not_found",
+        has_photos: true
       },
       {
         submission_id: "exact-fallback",
         packet_line: "CABLE ASSEMBLY - NO STOCK NUMBER",
-        inventoried_at: "2026-04-01T12:00:00.000Z"
+        inventoried_at: "2026-04-01T12:00:00.000Z",
+        submission_status: "found"
       },
       {
         submission_id: "similar-is-not-exact",
@@ -158,6 +163,7 @@ test("prior inventory history selects the latest approved row by mixed LIN and e
   assert.equal(matches.get("current-lin")?.latest.submission_id, "newer-lin");
   assert.equal(matches.get("current-lin")?.historyCount, 2);
   assert.equal(matches.get("current-lin")?.matchBasis, "lin");
+  assert.equal(matches.get("current-lin")?.lastFound?.submission_id, "older-lin");
   assert.equal(matches.get("current-lin")?.latestWithPhotos?.submission_id, "older-lin");
   assert.equal(matches.get("current-exact")?.latest.submission_id, "exact-fallback");
   assert.equal(matches.get("current-exact")?.historyCount, 1);
@@ -175,6 +181,115 @@ test("prior inventory history selects the latest approved row by mixed LIN and e
     { packet_line: "000000002", inventory_nsn: "1234-56-789-0123" },
     { packet_line: "1234567890123 MEDICAL SET" }
   ), true);
+});
+
+test("prior inventory history preserves database microsecond order", () => {
+  const matches = findPriorInventoryHistoryMatches(
+    [{ id: "current", packet_line: "63053N CUTTING MACHINE OXYGEN" }],
+    [
+      {
+        submission_id: "uuid-sorts-later-but-is-older",
+        packet_line: "63053N CUTTING MACHINE OXYGEN",
+        submission_status: "found",
+        inventoried_at: "2026-07-19T08:19:56.295Z",
+        inventoried_order: "1784463596295001"
+      },
+      {
+        submission_id: "uuid-sorts-earlier-but-is-newer",
+        packet_line: "63053N CUTTING MACHINE OXYGEN",
+        submission_status: "not_found",
+        inventoried_at: "2026-07-19T08:19:56.295Z",
+        inventoried_order: "1784463596295002"
+      }
+    ]
+  );
+
+  assert.equal(matches.get("current")?.latest.submission_id, "uuid-sorts-earlier-but-is-newer");
+  assert.equal(matches.get("current")?.lastFound?.submission_id, "uuid-sorts-later-but-is-older");
+});
+
+test("equipment library groups by NSN and promotes LIN-only history only when its NSN is unique", () => {
+  const rows = [
+    {
+      submission_id: "nsn-record",
+      packet_line: "000000001 A12345 RADIO SET 1234-56-789-0123",
+      inventoried_at: "2026-07-03T12:00:00.000Z"
+    },
+    {
+      submission_id: "lin-only-record",
+      packet_line: "000000002 A12345 RADIO SET",
+      inventoried_at: "2026-07-02T12:00:00.000Z"
+    },
+    {
+      submission_id: "same-nsn-new-wording",
+      packet_line: "ALTERNATE RADIO WORDING NSN 1234567890123",
+      inventoried_at: "2026-07-01T12:00:00.000Z"
+    },
+    {
+      submission_id: "packet-one",
+      packet_line: "Cable assembly / no stock number",
+      inventoried_at: "2026-06-01T12:00:00.000Z"
+    },
+    {
+      submission_id: "packet-two",
+      packet_line: "CABLE ASSEMBLY - NO STOCK NUMBER",
+      inventoried_at: "2026-05-01T12:00:00.000Z"
+    }
+  ];
+  const result = buildEquipmentLibraryGroups(rows, { tenantNamespace: "tenant-one" });
+  const nsnAssignment = result.assignments.get("nsn-record");
+  const linAssignment = result.assignments.get("lin-only-record");
+  const secondNsnAssignment = result.assignments.get("same-nsn-new-wording");
+  assert.equal(nsnAssignment.key, linAssignment.key);
+  assert.equal(nsnAssignment.key, secondNsnAssignment.key);
+  assert.equal(linAssignment.basis, "lin_to_unique_nsn");
+  assert.equal(result.assignments.get("packet-one").key, result.assignments.get("packet-two").key);
+  assert.equal(result.groups.length, 2);
+  assert.doesNotMatch(nsnAssignment.key, /A12345|1234567890123/);
+  assert.notEqual(
+    nsnAssignment.key,
+    equipmentLibraryEntryKey("tenant-two", { kind: "nsn", value: "1234567890123" })
+  );
+
+  const shuffled = buildEquipmentLibraryGroups([...rows].reverse(), { tenantNamespace: "tenant-one" });
+  assert.deepEqual(
+    [...result.assignments].map(([id, assignment]) => [id, assignment.key]).sort(),
+    [...shuffled.assignments].map(([id, assignment]) => [id, assignment.key]).sort()
+  );
+});
+
+test("equipment library keeps conflicting NSNs and their ambiguous LIN-only history separate", () => {
+  const result = buildEquipmentLibraryGroups(
+    [
+      {
+        submission_id: "first-nsn",
+        packet_line: "000000001 A12345 RADIO SET 1234-56-789-0123"
+      },
+      {
+        submission_id: "second-nsn",
+        packet_line: "000000002 A12345 RADIO SET 9999-88-777-6666"
+      },
+      {
+        submission_id: "lin-only",
+        packet_line: "000000003 A12345 RADIO SET"
+      },
+      {
+        submission_id: "conflicting-record",
+        packet_line: "A12345 RADIO 1234-56-789-0123 9999-88-777-6666"
+      }
+    ],
+    { tenantNamespace: "tenant-one" }
+  );
+  const first = result.assignments.get("first-nsn");
+  const second = result.assignments.get("second-nsn");
+  const linOnly = result.assignments.get("lin-only");
+  assert.notEqual(first.key, second.key);
+  assert.notEqual(first.key, linOnly.key);
+  assert.notEqual(second.key, linOnly.key);
+  assert.equal(linOnly.basis, "lin");
+  assert.deepEqual(linOnly.issues, ["ambiguous_lin"]);
+  assert.equal(result.assignments.get("conflicting-record").basis, "isolated");
+  assert.deepEqual(result.assignments.get("conflicting-record").issues, ["conflicting_nsns"]);
 });
 
 test("a new proof submission clears stale direct-check attribution", async () => {
@@ -232,4 +347,17 @@ test("workflow migration preserves immutable history with explicit terminal stat
   assert.match(migration, /'found', 'not_found', 'mismatch', 'approved'/);
   assert.match(migration, /ELSE NULL\s+END\s+WHERE session\.id = target_session_id/i);
   assert.doesNotMatch(migration, /DELETE\s+FROM\s+(?:item_submissions|submission_photos)/i);
+});
+
+test("equipment library migration keeps aliases separate from physical saved items and indexes approved evidence", async () => {
+  const migration = await fs.readFile(
+    path.resolve(currentDirectory, "../db/026_equipment_library_links.sql"),
+    "utf8"
+  );
+  assert.match(migration, /CREATE TABLE equipment_library_links/i);
+  assert.match(migration, /UNIQUE \(tenant_id, source_packet_line_normalized\)/i);
+  assert.match(migration, /target_session_item_id uuid NOT NULL REFERENCES inventory_session_items/i);
+  assert.match(migration, /WHERE review_state = 'approved'/i);
+  assert.match(migration, /submission_photos\(submission_id, created_at, id\)/i);
+  assert.doesNotMatch(migration, /(?:INSERT INTO|UPDATE)\s+inventory_items/i);
 });

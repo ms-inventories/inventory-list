@@ -4,7 +4,11 @@ import path from "node:path";
 import { config } from "./config.js";
 import { crewMediaAccessIsActive } from "./crew-auth.js";
 import { query } from "./db.js";
-import { inventoryHistoryRowsMatch } from "./inventory-history.js";
+import {
+  buildEquipmentLibraryGroups,
+  inventoryHistoryMatchProfile,
+  inventoryHistoryRowsMatch
+} from "./inventory-history.js";
 
 const mediaCookiePrefix = "inventory_media_";
 
@@ -177,6 +181,132 @@ export function buildMediaUrl(value) {
   return `${base}/${encodedStoragePath(storageKey)}`;
 }
 
+async function rememberedEquipmentAliasAuthorizesSubmissionPhoto(session, storageKey, crewSessionId) {
+  const linkResult = await query(
+    `
+      SELECT DISTINCT link.target_session_item_id
+      FROM equipment_library_links link
+      JOIN inventory_session_items target_item ON target_item.id = link.target_session_item_id
+      JOIN inventory_sessions target_session ON target_session.id = target_item.session_id
+      JOIN inventory_session_items active_item
+        ON btrim(regexp_replace(upper(COALESCE(active_item.packet_line, '')), '[^A-Z0-9]+', ' ', 'g'))
+          = link.source_packet_line_normalized
+      JOIN inventory_sessions active_session ON active_session.id = active_item.session_id
+      WHERE link.tenant_id = $1
+        AND target_session.tenant_id = $1
+        AND active_session.tenant_id = $1
+        AND active_session.status = 'active'
+        AND ($2::uuid IS NULL OR active_session.id = $2)
+    `,
+    [session.tenantId, crewSessionId]
+  );
+  const targetSessionItemIds = linkResult.rows.map(row => row.target_session_item_id).filter(Boolean);
+  if (!targetSessionItemIds.length) return false;
+
+  const candidateResult = await query(
+    `
+      WITH requested_submissions AS (
+        SELECT DISTINCT photo.submission_id
+        FROM submission_photos photo
+        WHERE photo.storage_key = $2
+      )
+      SELECT submission.id AS submission_id,
+        submission.session_item_id,
+        item.inventory_item_id,
+        item.packet_line,
+        inventory.lin AS inventory_lin,
+        inventory.nsn AS inventory_nsn,
+        requested.submission_id IS NOT NULL AS is_requested_photo
+      FROM item_submissions submission
+      JOIN inventory_session_items item ON item.id = submission.session_item_id
+      JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+      LEFT JOIN requested_submissions requested ON requested.submission_id = submission.id
+      LEFT JOIN inventory_items inventory
+        ON inventory.id = item.inventory_item_id
+       AND inventory.tenant_id = inventory_session.tenant_id
+      WHERE inventory_session.tenant_id = $1
+        AND submission.review_state = 'approved'
+        AND (
+          requested.submission_id IS NULL
+          OR submission.status = 'found'
+        )
+        AND (
+          submission.session_item_id = ANY($3::uuid[])
+          OR requested.submission_id IS NOT NULL
+        )
+    `,
+    [session.tenantId, storageKey, targetSessionItemIds]
+  );
+  if (!candidateResult.rows.some(row => row.is_requested_photo)) return false;
+
+  // A remembered link targets a conservative equipment-library group rather
+  // than one evidence row. Only LIN-only candidates need tenant-level evidence
+  // to decide whether that LIN maps to one NSN or is ambiguous. Fetch those
+  // mappings, not the tenant's full approved history, before rebuilding the
+  // exact small set of relevant group assignments.
+  const relevantLins = new Set();
+  candidateResult.rows.forEach(row => {
+    const profile = inventoryHistoryMatchProfile(row);
+    if (!profile.nsns.size && profile.lins.size === 1) {
+      relevantLins.add([...profile.lins][0]);
+    }
+  });
+
+  let mappingRows = [];
+  if (relevantLins.size) {
+    const mappingResult = await query(
+      `
+        SELECT submission.id AS submission_id,
+          submission.session_item_id,
+          item.inventory_item_id,
+          item.packet_line,
+          inventory.lin AS inventory_lin,
+          inventory.nsn AS inventory_nsn,
+          false AS is_requested_photo
+        FROM item_submissions submission
+        JOIN inventory_session_items item ON item.id = submission.session_item_id
+        JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+        LEFT JOIN inventory_items inventory
+          ON inventory.id = item.inventory_item_id
+         AND inventory.tenant_id = inventory_session.tenant_id
+        WHERE inventory_session.tenant_id = $1
+          AND submission.review_state = 'approved'
+          AND (
+            upper(regexp_replace(COALESCE(inventory.lin, ''), '[^A-Z0-9]', '', 'g')) = ANY($2::text[])
+            OR EXISTS (
+              SELECT 1
+              FROM unnest($2::text[]) relevant_lin
+              WHERE (' ' || btrim(regexp_replace(upper(COALESCE(item.packet_line, '')), '[^A-Z0-9]+', ' ', 'g')) || ' ')
+                LIKE ('% ' || relevant_lin || ' %')
+            )
+          )
+      `,
+      [session.tenantId, [...relevantLins]]
+    );
+    mappingRows = mappingResult.rows.filter(row => {
+      const profile = inventoryHistoryMatchProfile(row);
+      return profile.lins.size === 1
+        && profile.nsns.size === 1
+        && relevantLins.has([...profile.lins][0]);
+    });
+  }
+
+  const observationsById = new Map();
+  [...candidateResult.rows, ...mappingRows].forEach(row => {
+    const existing = observationsById.get(row.submission_id);
+    observationsById.set(row.submission_id, existing?.is_requested_photo ? existing : row);
+  });
+
+  const targets = new Set(targetSessionItemIds);
+  const { groups } = buildEquipmentLibraryGroups([...observationsById.values()], {
+    tenantNamespace: session.tenantId
+  });
+  return groups.some(group => (
+    group.rows.some(row => targets.has(row.session_item_id))
+    && group.rows.some(row => Boolean(row.is_requested_photo))
+  ));
+}
+
 async function authorizedMediaRecord(session, storageKey) {
   const parts = storageKey.split("/");
   const category = parts[2] || "";
@@ -254,6 +384,7 @@ async function authorizedMediaRecord(session, storageKey) {
               AND inventory_session.tenant_id = $2
               AND inventory_session.id <> $3
               AND submission.review_state = 'approved'
+              AND submission.status = 'found'
             LIMIT 1
           `,
           [storageKey, session.tenantId, crewSessionId]
@@ -281,6 +412,10 @@ async function authorizedMediaRecord(session, storageKey) {
         priorPhoto
         && activeItemsResult.rows.some(activeItem => inventoryHistoryRowsMatch(priorPhoto, activeItem))
       ) return { kind: "evidence" };
+    }
+
+    if (await rememberedEquipmentAliasAuthorizesSubmissionPhoto(session, storageKey, crewSessionId)) {
+      return { kind: "evidence" };
     }
 
     const inventoryReferenceResult = await query(

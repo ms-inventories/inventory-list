@@ -498,6 +498,7 @@ const newsletterSectionHashes = {
 
 const tenantTabHashes = {
   dashboard: "/admin",
+  equipment: "/admin/equipment",
   reports: "/admin/reports",
   people: "/admin/team",
   activity: "/admin/activity",
@@ -531,7 +532,7 @@ function tenantRouteFromLocation() {
   if (section === "sessions") return { tab: "dashboard", panel: "sessions" };
   if (section === "review") return { tab: "dashboard", panel: "review" };
   return {
-    tab: ({ reports: "reports", team: "people", activity: "activity", settings: "settings" })[section] || "dashboard",
+    tab: ({ equipment: "equipment", reports: "reports", team: "people", activity: "activity", settings: "settings" })[section] || "dashboard",
     panel: ""
   };
 }
@@ -701,6 +702,17 @@ function getInventoryItemImages(item) {
 function getPriorInventorySnapshot(item) {
   const history = item?.priorInventoryHistory || null;
   const savedItem = item?.inventoryItem || null;
+  const lastFound = history?.lastFound || (
+    history?.status === "found"
+      ? {
+          locationText: history.locationText || "",
+          sessionName: history.sessionName || "",
+          sessionStatus: history.sessionStatus || "",
+          inventoriedAt: history.inventoriedAt || "",
+          expectedQty: history.expectedQty ?? null
+        }
+      : null
+  );
   const historyPhotos = getInventoryItemPhotos({ photos: history?.photos || [] });
   const savedPhotos = getInventoryItemPhotos(savedItem);
   const photos = history ? (historyPhotos.length ? historyPhotos : savedPhotos) : savedPhotos;
@@ -708,22 +720,23 @@ function getPriorInventorySnapshot(item) {
   const additionalSavedPhotos = history && historyPhotos.length
     ? savedPhotos.filter(photo => !historyPhotoKeys.has(photo.mediaUploadId || photo.url))
     : [];
-  const location = history ? (history.locationText || "") : (savedItem?.currentLocation || "");
-  const inventoriedAt = history ? (history.inventoriedAt || "") : (savedItem?.lastVerifiedAt || "");
-  const sessionName = history?.sessionName || "";
+  const location = history ? (lastFound?.locationText || "") : (savedItem?.currentLocation || "");
+  const inventoriedAt = history ? (lastFound?.inventoriedAt || "") : (savedItem?.lastVerifiedAt || "");
+  const sessionName = history ? (lastFound?.sessionName || "") : "";
   const historyCount = Math.max(0, Number(history?.historyCount || 0));
 
-  if (!photos.length && !location && !inventoriedAt && !sessionName) return null;
+  if (!history && !photos.length && !location && !inventoriedAt && !sessionName) return null;
 
   return {
     history,
+    lastFound,
     photos,
     location,
     inventoriedAt,
     sessionName,
     historyCount,
     status: history?.status || "",
-    expectedQty: history?.expectedQty ?? null,
+    expectedQty: lastFound?.expectedQty ?? null,
     sessionStatus: history?.sessionStatus || "",
     photoContext: historyPhotos.length ? (history?.photoContext || history) : {
       sessionName: "Saved item record",
@@ -749,12 +762,21 @@ function PriorInventorySnapshot({ item, onOpenPhoto }) {
         : "Earlier hand-receipt record"
     : "Saved item record";
   const photoContext = snapshot.photoContext || snapshot.history;
+  const displayedFoundContext = snapshot.lastFound || snapshot.history;
+  const latestUsesDifferentRecord = Boolean(
+    snapshot.history
+    && (
+      !snapshot.lastFound
+      || snapshot.history.sessionName !== snapshot.lastFound.sessionName
+      || snapshot.history.inventoriedAt !== snapshot.lastFound.inventoriedAt
+    )
+  );
   const photosUseDifferentRecord = Boolean(
     snapshot.history
     && photoContext
     && (
-      photoContext.sessionName !== snapshot.sessionName
-      || photoContext.inventoriedAt !== snapshot.inventoriedAt
+      photoContext.sessionName !== displayedFoundContext?.sessionName
+      || photoContext.inventoriedAt !== displayedFoundContext?.inventoriedAt
     )
   );
   const savedDetails = snapshot.history && snapshot.savedItem ? [
@@ -775,25 +797,29 @@ function PriorInventorySnapshot({ item, onOpenPhoto }) {
         </div>
       </div>
 
-      {snapshot.location || snapshot.sessionName || snapshot.inventoriedAt ? (
+      {snapshot.location || snapshot.sessionName || snapshot.inventoriedAt || snapshot.history?.status ? (
         <div className="prior-inventory-facts">
           {snapshot.location ? (
             <div className="prior-inventory-location">
-              <span>Reported location</span>
+              <span>Last found at</span>
               <strong>{snapshot.location}</strong>
             </div>
           ) : null}
           {snapshot.sessionName || snapshot.inventoriedAt ? (
             <div>
-              <span>Recorded in</span>
+              <span>Found in</span>
               {snapshot.sessionName ? <strong>{snapshot.sessionName}</strong> : null}
               {snapshot.inventoriedAt ? <time dateTime={snapshot.inventoriedAt}>{formatDate(snapshot.inventoriedAt)}</time> : null}
             </div>
           ) : null}
           {snapshot.status ? (
             <div>
-              <span>Previous result</span>
+              <span>Latest approved result</span>
               <strong>{formatItemStatus(snapshot.status)}</strong>
+              {latestUsesDifferentRecord && snapshot.history?.sessionName ? <small>{snapshot.history.sessionName}</small> : null}
+              {latestUsesDifferentRecord && snapshot.history?.inventoriedAt ? (
+                <time dateTime={snapshot.history.inventoriedAt}>{formatDate(snapshot.history.inventoriedAt)}</time>
+              ) : null}
             </div>
           ) : null}
           {snapshot.expectedQty != null ? (
@@ -4328,7 +4354,7 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
         <header className="proof-viewer-heading">
           <div>
             <p className="eyebrow">{viewer.sessionName || "Submitted evidence"}</p>
-            <h2 id="proofViewerTitle">Evidence photo</h2>
+            <h2 id="proofViewerTitle">{viewer.title || "Evidence photo"}</h2>
             <p id="proofViewerContext">{viewer.packetLine || "Inventory proof"}</p>
           </div>
           <button className="proof-viewer-icon-button" type="button" aria-label="Close evidence viewer" onClick={onClose} autoFocus>
@@ -4362,12 +4388,15 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
 
             <dl className="proof-viewer-facts">
               <div>
-                <dt>Submitted by</dt>
-                <dd>{viewer.submittedBy || "Unknown"}</dd>
+                <dt>{viewer.personLabel || "Submitted by"}</dt>
+                <dd className={viewer.sourceContextLabel ? "proof-viewer-source-line" : undefined}>
+                  <span>{viewer.submittedBy || "Unknown"}</span>
+                  {viewer.sourceContextLabel ? <span className="equipment-open-inventory">{viewer.sourceContextLabel}</span> : null}
+                </dd>
               </div>
               {viewer.createdAt ? (
                 <div>
-                  <dt>Submitted</dt>
+                  <dt>{viewer.dateLabel || "Submitted"}</dt>
                   <dd>{formatDate(viewer.createdAt)}</dd>
                 </div>
               ) : null}
@@ -4418,7 +4447,7 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
               <button
                 className={index === viewer.index ? "active" : ""}
                 type="button"
-                key={item.id || item.storageKey}
+                key={item.id || item.storageKey || item.url || index}
                 aria-label={`Show ${proofPhotoAlt(item)}`}
                 aria-current={index === viewer.index ? "true" : undefined}
                 onClick={() => onSelect(index)}
@@ -8664,6 +8693,478 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
   );
 }
 
+function equipmentIdentifiers(entry) {
+  return [
+    ...(entry?.lins || []).map(value => `LIN ${value}`),
+    ...(entry?.nsns || []).map(value => `NSN ${value}`)
+  ].filter(Boolean);
+}
+
+function equipmentLocationText(location) {
+  return String(location?.locationText || location?.location || "").trim();
+}
+
+function equipmentLatest(entry) {
+  return entry?.latest || {
+    outcome: entry?.latestOutcome,
+    sessionName: entry?.latestSessionName,
+    sessionStatus: entry?.latestSessionStatus,
+    observedAt: entry?.latestObservedAt
+  };
+}
+
+function equipmentReportedLocations(entry) {
+  return entry?.recentFoundLocations || entry?.locations || [];
+}
+
+function equipmentOpenInventoryLabel(sessionStatus) {
+  const normalizedStatus = String(sessionStatus || "").trim().toLowerCase();
+  return normalizedStatus && normalizedStatus !== "closed" ? "Open inventory" : "";
+}
+
+function equipmentEntrySearchValues(entry) {
+  const latest = equipmentLatest(entry);
+  return [
+    entry?.displayName,
+    entry?.key,
+    latest?.outcome,
+    latest?.sessionName,
+    latest?.sessionStatus,
+    latest?.observedAt,
+    entry?.lastFound?.locationText,
+    entry?.lastFound?.sessionName,
+    entry?.lastFound?.observedAt,
+    entry?.photoContext?.sessionName,
+    ...(entry?.lins || []),
+    ...(entry?.nsns || []),
+    ...equipmentReportedLocations(entry).flatMap(location => [
+      equipmentLocationText(location),
+      location?.sessionName,
+      location?.observedAt
+    ])
+  ];
+}
+
+function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
+  const [entries, setEntries] = useState([]);
+  const [unlinkedActiveRows, setUnlinkedActiveRows] = useState([]);
+  const [rememberedLinks, setRememberedLinks] = useState([]);
+  const [generatedAt, setGeneratedAt] = useState("");
+  const [status, setStatus] = useState({ text: "Loading equipment library...", isError: false });
+  const [isLoading, setIsLoading] = useState(true);
+  const [linkingRow, setLinkingRow] = useState(null);
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkTargetKey, setLinkTargetKey] = useState("");
+  const [linkStatus, setLinkStatus] = useState({ text: "", isError: false });
+  const [linkAction, setLinkAction] = useState("");
+  const [removingLinkId, setRemovingLinkId] = useState("");
+  const [photoViewer, setPhotoViewer] = useState(null);
+  const loadRequestRef = useRef(0);
+  const linkTriggerRef = useRef(null);
+  const photoTriggerRef = useRef(null);
+
+  async function loadEquipmentLibrary({ quiet = false } = {}) {
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
+    try {
+      if (!quiet) {
+        setIsLoading(true);
+        setStatus({ text: "Loading equipment library...", isError: false });
+      }
+      const data = await apiRequest("/inventory/equipment-library", { token, tenantSlug });
+      if (requestId !== loadRequestRef.current) return false;
+      setEntries(data.entries || []);
+      setUnlinkedActiveRows(data.unlinkedActiveRows || []);
+      setRememberedLinks(data.rememberedLinks || []);
+      setGeneratedAt(data.generatedAt || "");
+      if (!quiet) setStatus({ text: "", isError: false });
+      return true;
+    } catch (error) {
+      if (requestId === loadRequestRef.current) {
+        setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
+      return false;
+    } finally {
+      if (requestId === loadRequestRef.current) setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadEquipmentLibrary();
+  }, [tenantSlug, token]);
+
+  useEffect(() => {
+    if (!linkingRow && !photoViewer) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [Boolean(linkingRow), Boolean(photoViewer)]);
+
+  const visibleEntries = useMemo(() => entries
+    .filter(entry => matchesSearch(equipmentEntrySearchValues(entry), query))
+    .sort((first, second) => String(first.displayName || first.key).localeCompare(String(second.displayName || second.key))), [entries, query]);
+  const visibleUnlinkedRows = useMemo(() => unlinkedActiveRows.filter(row => matchesSearch([
+    row.packetLine,
+    row.sessionName,
+    row.expectedQty
+  ], query)), [unlinkedActiveRows, query]);
+  const linkChoices = useMemo(() => entries
+    .filter(entry => matchesSearch(equipmentEntrySearchValues(entry), linkSearch))
+    .sort((first, second) => String(first.displayName || first.key).localeCompare(String(second.displayName || second.key))), [entries, linkSearch]);
+
+  function openLinkDialog(row, trigger) {
+    linkTriggerRef.current = trigger || document.activeElement;
+    setLinkingRow(row);
+    setLinkSearch("");
+    setLinkTargetKey("");
+    setLinkStatus({ text: "", isError: false });
+  }
+
+  function closeLinkDialog() {
+    if (linkAction) return;
+    setLinkingRow(null);
+    setLinkSearch("");
+    setLinkTargetKey("");
+    setLinkStatus({ text: "", isError: false });
+    window.requestAnimationFrame(() => linkTriggerRef.current?.focus?.());
+  }
+
+  async function rememberEquipmentLink(event) {
+    event.preventDefault();
+    if (!linkingRow?.id || !linkTargetKey || linkAction) {
+      if (!linkTargetKey) setLinkStatus({ text: "Choose the equipment this row belongs to.", isError: true });
+      return;
+    }
+    setLinkAction("save");
+    setLinkStatus({ text: "Remembering link...", isError: false });
+    try {
+      await apiRequest("/inventory/equipment-library/links", {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: {
+          sourceSessionItemId: linkingRow.id,
+          targetEntryKey: linkTargetKey
+        }
+      });
+      await loadEquipmentLibrary({ quiet: true });
+      setLinkingRow(null);
+      setLinkSearch("");
+      setLinkTargetKey("");
+      setStatus({ text: "Equipment link remembered for matching packet wording.", isError: false });
+      window.requestAnimationFrame(() => linkTriggerRef.current?.focus?.());
+    } catch (error) {
+      setLinkStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setLinkAction("");
+    }
+  }
+
+  async function removeRememberedLink(link) {
+    if (!link?.id || removingLinkId) return;
+    setRemovingLinkId(link.id);
+    setStatus({ text: "Removing remembered link...", isError: false });
+    try {
+      await apiRequest(`/inventory/equipment-library/links/${encodeURIComponent(link.id)}`, {
+        method: "DELETE",
+        token,
+        tenantSlug
+      });
+      await loadEquipmentLibrary({ quiet: true });
+      setStatus({ text: "Remembered equipment link removed.", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      setRemovingLinkId("");
+    }
+  }
+
+  function openEquipmentPhoto(entry, index, trigger) {
+    if (!entry?.photos?.length) return;
+    const photoContext = entry.photoContext || entry.lastFound || {};
+    photoTriggerRef.current = trigger || document.activeElement;
+    setPhotoViewer({
+      photos: entry.photos,
+      index,
+      isZoomed: false,
+      title: "Equipment photo",
+      packetLine: entry.displayName || "Equipment",
+      sessionName: photoContext.sessionName || "Approved inventory",
+      submittedBy: "Approved found inventory",
+      personLabel: "Source",
+      sourceContextLabel: equipmentOpenInventoryLabel(photoContext.sessionStatus || entry.lastFound?.sessionStatus),
+      createdAt: photoContext.observedAt || entry.lastFound?.observedAt,
+      dateLabel: "Found",
+      locationText: photoContext.locationText || entry.lastFound?.locationText || ""
+    });
+  }
+
+  function closeEquipmentPhoto() {
+    setPhotoViewer(null);
+    window.requestAnimationFrame(() => photoTriggerRef.current?.focus?.());
+  }
+
+  function moveEquipmentPhoto(delta) {
+    setPhotoViewer(current => {
+      if (!current?.photos?.length) return current;
+      return {
+        ...current,
+        index: (current.index + delta + current.photos.length) % current.photos.length,
+        isZoomed: false
+      };
+    });
+  }
+
+  return (
+    <div className="leader-dashboard equipment-library-page">
+      <div className="leader-page-heading">
+        <div>
+          <h1>Equipment Library</h1>
+          <p>Automatically built from approved inventories. Locations are the last places equipment was reported found, not a live location.</p>
+        </div>
+      </div>
+
+      <StatusLine status={status} />
+
+      {!isLoading && entries.length ? (
+        <div className="equipment-library-summary" aria-label="Equipment library summary">
+          <strong>{countLabel(entries.length, "equipment record")}</strong>
+          <span>{generatedAt ? `Updated ${formatRelativeTime(generatedAt)}` : "Built from approved inventory history"}</span>
+        </div>
+      ) : null}
+
+      {!isLoading && visibleEntries.length ? (
+        <section className="equipment-library-grid" aria-label="Equipment library results">
+          {visibleEntries.map(entry => {
+            const identifiers = equipmentIdentifiers(entry);
+            const photos = (entry.photos || []).slice(0, 3);
+            const latest = equipmentLatest(entry);
+            const latestMeta = [latest?.sessionName, latest?.observedAt ? formatDate(latest.observedAt) : ""].filter(Boolean).join(" - ");
+            const latestOpenInventoryLabel = equipmentOpenInventoryLabel(latest?.sessionStatus);
+            const lastFound = entry.lastFound || null;
+            const lastFoundMeta = [lastFound?.sessionName, lastFound?.observedAt ? formatDate(lastFound.observedAt) : ""].filter(Boolean).join(" - ");
+            const lastFoundOpenInventoryLabel = equipmentOpenInventoryLabel(lastFound?.sessionStatus);
+            const earlierLocations = equipmentReportedLocations(entry).filter(location => {
+              const text = equipmentLocationText(location);
+              if (!text) return false;
+              return !(lastFound?.locationText && text === lastFound.locationText && (!location.observedAt || location.observedAt === lastFound.observedAt));
+            });
+            return (
+              <article className="equipment-library-card" key={entry.key}>
+                {photos.length ? (
+                  <div className={`equipment-library-photos count-${photos.length}`} aria-label={`Found photos for ${entry.displayName}`}>
+                    {photos.map((photo, index) => (
+                      <button
+                        type="button"
+                        key={photo.id || photo.url || index}
+                        aria-label={`View found photo ${index + 1} for ${entry.displayName}`}
+                        aria-haspopup="dialog"
+                        onClick={event => openEquipmentPhoto(entry, index, event.currentTarget)}
+                      >
+                        <img src={photo.url} alt="" loading="lazy" />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="equipment-library-card-body">
+                  <header className="equipment-library-card-heading">
+                    <div>
+                      <h2>{entry.displayName || "Unnamed equipment"}</h2>
+                      {identifiers.length ? <p>{identifiers.join(" - ")}</p> : null}
+                    </div>
+                    {latest?.outcome || latestOpenInventoryLabel ? (
+                      <div className="equipment-library-result-badges">
+                        {latest?.outcome ? <span className={`status-pill ${latest.outcome}`}>{formatItemStatus(latest.outcome)}</span> : null}
+                        {latestOpenInventoryLabel ? <span className="equipment-open-inventory">{latestOpenInventoryLabel}</span> : null}
+                      </div>
+                    ) : null}
+                  </header>
+
+                  {latestMeta ? <p className="equipment-library-latest"><strong>Latest approved result</strong><span>{latestMeta}</span></p> : null}
+
+                  {lastFound ? (
+                    <section className="equipment-last-found" aria-label={`Last found details for ${entry.displayName}`}>
+                      <span>Last found</span>
+                      {lastFound.locationText ? <strong>{lastFound.locationText}</strong> : null}
+                      {lastFoundMeta || lastFoundOpenInventoryLabel ? (
+                        <small className="equipment-context-line">
+                          {lastFoundMeta ? <span>{lastFoundMeta}</span> : null}
+                          {lastFoundOpenInventoryLabel ? <span className="equipment-open-inventory">{lastFoundOpenInventoryLabel}</span> : null}
+                        </small>
+                      ) : null}
+                      {lastFound.expectedQty != null ? <small>Quantity on record: {lastFound.expectedQty}</small> : null}
+                    </section>
+                  ) : null}
+
+                  {earlierLocations.length ? (
+                    <section className="equipment-prior-locations" aria-label={`Earlier reported locations for ${entry.displayName}`}>
+                      <h3>Earlier reported locations</h3>
+                      <ul>
+                        {earlierLocations.slice(0, 3).map((location, index) => {
+                          const locationMeta = [location.sessionName, location.observedAt ? formatDate(location.observedAt) : ""].filter(Boolean).join(" - ");
+                          const locationOpenInventoryLabel = equipmentOpenInventoryLabel(location.sessionStatus);
+                          return (
+                            <li key={`${equipmentLocationText(location)}-${location.observedAt || index}`}>
+                              <strong>{equipmentLocationText(location)}</strong>
+                              {locationMeta || locationOpenInventoryLabel ? (
+                                <span className="equipment-context-line">
+                                  {locationMeta ? <span>{locationMeta}</span> : null}
+                                  {locationOpenInventoryLabel ? <span className="equipment-open-inventory">{locationOpenInventoryLabel}</span> : null}
+                                </span>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {earlierLocations.length > 3 ? <small>+{earlierLocations.length - 3} more reported {earlierLocations.length - 3 === 1 ? "location" : "locations"}</small> : null}
+                    </section>
+                  ) : null}
+
+                  <footer className="equipment-library-card-footer">
+                    <span>{countLabel(Number(entry.observationCount || 0), "approved observation")}</span>
+                    {Number(entry.sessionCount || 0) ? <span>{countLabel(Number(entry.sessionCount), "inventory session")}</span> : null}
+                  </footer>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      ) : !isLoading ? (
+        <EmptyPanel
+          title={query.trim() ? "No matching equipment" : "No approved equipment yet"}
+          body={query.trim()
+            ? "Clear the search or try an equipment name, LIN, NSN, or reported location."
+            : "Approved inventory proof will appear here automatically."}
+          action={query.trim() ? <button className="btn btn-secondary btn-small" type="button" onClick={() => onQueryChange("")}>Clear search</button> : null}
+        />
+      ) : null}
+
+      {unlinkedActiveRows.length ? (
+        <section className="leader-card equipment-exceptions" aria-label="Unmatched active rows">
+          <div className="equipment-section-heading">
+            <div>
+              <p className="eyebrow">Manual exceptions</p>
+              <h2>Unmatched active rows</h2>
+              <p>Operational rows normally link automatically. Remember a link only when the row is the same equipment; this does not merge serialized assets.</p>
+            </div>
+            <span>{unlinkedActiveRows.length}</span>
+          </div>
+          <div className="equipment-exception-list">
+            {visibleUnlinkedRows.length ? visibleUnlinkedRows.map(row => (
+              <article className="equipment-exception-row" key={row.id}>
+                <div>
+                  <strong>{row.packetLine || "Unnamed packet row"}</strong>
+                  {row.sessionName ? <span>{row.sessionName}</span> : null}
+                  {row.expectedQty != null ? <small>Quantity: {row.expectedQty}</small> : null}
+                </div>
+                <button className="btn btn-secondary btn-small" type="button" onClick={event => openLinkDialog(row, event.currentTarget)}>Link to equipment</button>
+              </article>
+            )) : <p className="equipment-section-empty">No unmatched active rows match this search.</p>}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="leader-card equipment-remembered-links" aria-label="Remembered links">
+        <div className="equipment-section-heading">
+          <div>
+            <p className="eyebrow">Maintenance</p>
+            <h2>Remembered links</h2>
+            <p>These exceptions apply to future rows with identical packet wording. Removing one does not change past inventory evidence or merge saved assets.</p>
+          </div>
+          {rememberedLinks.length ? <span>{rememberedLinks.length}</span> : null}
+        </div>
+        {rememberedLinks.length ? (
+          <div className="equipment-remembered-list">
+            {rememberedLinks.map(link => (
+              <article className="equipment-remembered-row" key={link.id}>
+                <div>
+                  <span>{link.sourcePacketLine}</span>
+                  <strong>{link.targetDisplayName || link.targetEntryKey}</strong>
+                  {link.createdAt ? <small>Remembered {formatDate(link.createdAt)}</small> : null}
+                </div>
+                <button className="btn btn-danger-soft btn-small" type="button" disabled={Boolean(removingLinkId)} onClick={() => removeRememberedLink(link)}>
+                  {removingLinkId === link.id ? "Removing..." : "Remove"}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="equipment-section-empty">No manual equipment links are remembered.</p>
+        )}
+      </section>
+
+      {linkingRow ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={event => {
+          if (event.target === event.currentTarget) closeLinkDialog();
+        }}>
+          <form className="modal-panel equipment-link-panel" role="dialog" aria-modal="true" aria-labelledby="equipmentLinkTitle" onSubmit={rememberEquipmentLink} onKeyDown={event => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeLinkDialog();
+            }
+          }}>
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">Manual exception</p>
+                <h2 id="equipmentLinkTitle">Link unmatched row</h2>
+                <p className="modal-copy">Choose the equipment represented by <strong>{linkingRow.packetLine}</strong>.</p>
+              </div>
+              <button className="icon-button" type="button" aria-label="Close equipment link" disabled={Boolean(linkAction)} onClick={closeLinkDialog}><X aria-hidden="true" /></button>
+            </div>
+
+            <div className="equipment-link-warning">
+              <Info aria-hidden="true" />
+              <p>The remembered link applies to future active rows with identical packet wording. It groups operational history only and does not merge serialized assets.</p>
+            </div>
+
+            <label className="equipment-link-search">
+              <span>Search equipment</span>
+              <input className="input" type="search" value={linkSearch} autoFocus placeholder="Name, LIN, NSN, or reported location" onChange={event => setLinkSearch(event.target.value)} />
+            </label>
+
+            <div className="equipment-link-choices" role="radiogroup" aria-label="Equipment link choices">
+              {linkChoices.length ? linkChoices.map(entry => {
+                const identifiers = equipmentIdentifiers(entry);
+                return (
+                  <label className={`equipment-link-choice ${linkTargetKey === entry.key ? "selected" : ""}`} key={entry.key}>
+                    <input type="radio" name="equipmentLinkTarget" value={entry.key} checked={linkTargetKey === entry.key} onChange={() => {
+                      setLinkTargetKey(entry.key);
+                      setLinkStatus({ text: "", isError: false });
+                    }} />
+                    {entry.photos?.[0]?.url ? <img src={entry.photos[0].url} alt="" loading="lazy" /> : <span className="equipment-link-choice-icon"><Camera aria-hidden="true" /></span>}
+                    <span>
+                      <strong>{entry.displayName || "Unnamed equipment"}</strong>
+                      {identifiers.length ? <small>{identifiers.join(" - ")}</small> : null}
+                      {entry.lastFound?.locationText ? <small>Last found: {entry.lastFound.locationText}</small> : null}
+                    </span>
+                  </label>
+                );
+              }) : <p className="equipment-section-empty">No equipment matches this search.</p>}
+            </div>
+
+            <StatusLine status={linkStatus} />
+            <div className="modal-actions">
+              <button className="btn btn-secondary" type="button" disabled={Boolean(linkAction)} onClick={closeLinkDialog}>Cancel</button>
+              <button className="btn btn-primary" type="submit" disabled={Boolean(linkAction) || !linkTargetKey}>{linkAction ? "Remembering..." : "Remember link"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      <ProofPhotoViewer
+        viewer={photoViewer}
+        onClose={closeEquipmentPhoto}
+        onMove={moveEquipmentPhoto}
+        onSelect={index => setPhotoViewer(current => current ? { ...current, index, isZoomed: false } : current)}
+        onToggleZoom={() => setPhotoViewer(current => current ? { ...current, isZoomed: !current.isZoomed } : current)}
+      />
+    </div>
+  );
+}
+
 function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
   const [sessions, setSessions] = useState([]);
   const [rows, setRows] = useState([]);
@@ -9843,12 +10344,16 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const canSubmitProof = Boolean(isCrew || isTenantAdmin || me?.membership?.role === "contributor");
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: Home },
+    ...(isTenantAdmin ? [{ id: "equipment", label: "Equipment", icon: ClipboardList }] : []),
     ...(isTenantAdmin ? [{ id: "reports", label: "Reports", icon: BarChart3 }] : []),
     ...(isTenantAdmin ? [{ id: "people", label: "Team", icon: Users }] : []),
     ...(isTenantAdmin ? [{ id: "activity", label: "Activity Log", icon: History }] : []),
     ...(isTenantAdmin ? [{ id: "settings", label: "Workspace Settings", icon: Settings }] : [])
   ];
-  const [activeTab, setActiveTab] = useState(() => tenantRouteFromLocation().tab);
+  const [activeTab, setActiveTab] = useState(() => {
+    const requestedTab = tenantRouteFromLocation().tab;
+    return isTenantAdmin || requestedTab === "dashboard" ? requestedTab : "dashboard";
+  });
   const [isSessionWorkspaceOpen, setIsSessionWorkspaceOpen] = useState(() => isCrew || tenantRouteFromLocation().panel === "sessions");
   const [isReviewWorkspaceOpen, setIsReviewWorkspaceOpen] = useState(() => isTenantAdmin && tenantRouteFromLocation().panel === "review");
   const [sessionIntent, setSessionIntent] = useState("");
@@ -9902,6 +10407,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     dashboard: {
       label: "Search dashboard",
       placeholder: "Search dashboard items, sessions, locations..."
+    },
+    equipment: {
+      label: "Search equipment",
+      placeholder: "Search equipment, LIN, NSN, or reported location..."
     },
     reports: {
       label: "Search reports",
@@ -10964,6 +11473,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
 
           {activeTab === "reports" && isTenantAdmin ? (
             <ReportsPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} onQueryChange={setLeaderQuery} />
+          ) : null}
+
+          {activeTab === "equipment" && isTenantAdmin ? (
+            <EquipmentLibraryPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} onQueryChange={setLeaderQuery} />
           ) : null}
 
 

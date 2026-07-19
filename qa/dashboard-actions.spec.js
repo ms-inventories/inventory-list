@@ -224,6 +224,7 @@ test.describe("dashboard action destinations", () => {
     expect(historyItem?.id).toBeTruthy();
 
     const inventoriedAt = "2026-06-18T14:30:00.000Z";
+    const latestOutcomeAt = "2026-07-02T16:45:00.000Z";
     await page.route(`**/api/inventory/sessions/${session.id}`, async route => {
       if (route.request().method() !== "GET") {
         await route.continue();
@@ -253,13 +254,20 @@ test.describe("dashboard action destinations", () => {
               photos: []
             }],
             priorInventoryHistory: {
-              sessionName: "June 2026 inventory",
+              sessionName: "July 2026 recheck",
               sessionStatus: "closed",
-              status: "found",
-              locationText: "Motor pool, bay 4",
-              inventoriedAt,
+              status: "not_found",
+              locationText: "This must not replace the last-found location",
+              inventoriedAt: latestOutcomeAt,
               expectedQty: 4,
               historyCount: 3,
+              lastFound: {
+                sessionName: "June 2026 inventory",
+                sessionStatus: "closed",
+                locationText: "Motor pool, bay 4",
+                inventoriedAt,
+                expectedQty: 4
+              },
               photoContext: {
                 sessionName: "June 2026 inventory",
                 sessionStatus: "closed",
@@ -294,9 +302,12 @@ test.describe("dashboard action destinations", () => {
     await expect(dashboardHistory.getByText("3 earlier records", { exact: true })).toBeVisible();
     await expect(dashboardHistory.getByText("Motor pool, bay 4", { exact: true })).toBeVisible();
     await expect(dashboardHistory.getByText("June 2026 inventory", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.getByText("Found", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("Not found", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("July 2026 recheck", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("This must not replace the last-found location", { exact: true })).toHaveCount(0);
     await expect(dashboardHistory.getByText("4", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.locator("time")).toHaveAttribute("datetime", inventoriedAt);
+    await expect(dashboardHistory.locator(`time[datetime="${inventoriedAt}"]`)).toBeVisible();
+    await expect(dashboardHistory.locator(`time[datetime="${latestOutcomeAt}"]`)).toBeVisible();
     await expect(dashboardHistory.locator("img")).toHaveCount(2);
     await expect(dashboardRow.locator(".leader-thumb img"), "history supplies the claim-row thumbnail").toBeVisible();
     await expect(dashboardRow.getByRole("button", { name: "Claim item", exact: true })).toBeVisible();
