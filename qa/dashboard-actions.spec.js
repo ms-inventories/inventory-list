@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
+const PHOTO_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR42mNk+M9QDwADgQGAUj0KkwAAAABJRU5ErkJggg==";
 
 const qaRoot = {
   sub: "qa-root",
@@ -206,6 +207,122 @@ test.describe("dashboard action destinations", () => {
           data: { memberId: null }
         }));
       }
+    }
+  });
+
+  test("previous inventory photos and location stay visible before an item is claimed", async ({ page, request }, testInfo) => {
+    const sessionPayload = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
+      headers: qaHeaders(testInfo)
+    }));
+    const session = sessionPayload.sessions.find(candidate => candidate.name === "Search behavior fixture");
+    expect(session?.id).toBeTruthy();
+
+    const originalDetail = await responseJson(await request.get(`${API_URL}/inventory/sessions/${session.id}`, {
+      headers: qaHeaders(testInfo)
+    }));
+    const historyItem = originalDetail.items.find(item => item.inventoryItem?.commonName === "Quiet Generator");
+    expect(historyItem?.id).toBeTruthy();
+
+    const inventoriedAt = "2026-06-18T14:30:00.000Z";
+    await page.route(`**/api/inventory/sessions/${session.id}`, async route => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      const detail = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...detail,
+          items: (detail.items || []).map(item => item.id === historyItem.id ? {
+            ...item,
+            packetLine: "Quiet Generator",
+            inventoryItem: null,
+            status: "unchecked",
+            assignedTo: null,
+            assignedToEmail: null,
+            assignedToName: null,
+            submissions: [{
+              id: "current-rejected-proof",
+              sessionItemId: item.id,
+              status: "found",
+              reviewState: "rejected",
+              reviewNote: "CURRENT SESSION REQUEST MUST NOT APPEAR ON PRIOR PHOTOS",
+              createdAt: "2026-07-18T18:00:00.000Z",
+              photos: []
+            }],
+            priorInventoryHistory: {
+              sessionName: "June 2026 inventory",
+              sessionStatus: "closed",
+              status: "found",
+              locationText: "Motor pool, bay 4",
+              inventoriedAt,
+              expectedQty: 4,
+              historyCount: 3,
+              photoContext: {
+                sessionName: "June 2026 inventory",
+                sessionStatus: "closed",
+                status: "found",
+                locationText: "Motor pool, bay 4",
+                inventoriedAt,
+                expectedQty: 4
+              },
+              photos: [
+                { url: PHOTO_DATA_URL, kind: "general", caption: "Generator front view" },
+                { url: `${PHOTO_DATA_URL}#second`, kind: "location", caption: "Generator in motor pool bay 4" }
+              ]
+            }
+          } : item)
+        }
+      });
+    });
+
+    await signInAsRoot(page, testInfo);
+    const activeInventory = page.getByRole("region", { name: "Active inventory" });
+    const sessionSelector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+    if (await sessionSelector.isVisible()) await sessionSelector.selectOption(session.id);
+
+    const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
+    await pendingResults.getByRole("group", { name: "Dashboard work assignment lists" })
+      .getByRole("button", { name: /^Unclaimed\b/ })
+      .click();
+    const dashboardRow = pendingResults.locator(".leader-table-row", { hasText: "Quiet Generator" });
+    await expect(dashboardRow).toBeVisible();
+    const dashboardHistory = dashboardRow.getByRole("region", { name: "Previous inventory for Quiet Generator" });
+    await expect(dashboardHistory.getByText("Previous inventory", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("3 earlier records", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("Motor pool, bay 4", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("June 2026 inventory", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("Found", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.getByText("4", { exact: true })).toBeVisible();
+    await expect(dashboardHistory.locator("time")).toHaveAttribute("datetime", inventoriedAt);
+    await expect(dashboardHistory.locator("img")).toHaveCount(2);
+    await expect(dashboardRow.locator(".leader-thumb img"), "history supplies the claim-row thumbnail").toBeVisible();
+    await expect(dashboardRow.getByRole("button", { name: "Claim item", exact: true })).toBeVisible();
+    await expect(dashboardRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+    expect(await dashboardRow.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+
+    await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
+    await expectSessionsPageWithoutCreateDialog(page);
+    const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" })
+      .getByRole("button", { name: /^Unclaimed\b/ })
+      .click();
+    const sessionRow = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
+    await expect(sessionRow).toBeVisible();
+    await expect(sessionRow.getByRole("region", { name: "Previous inventory for Quiet Generator" })).toContainText("Motor pool, bay 4");
+    await expect(sessionRow.locator(".session-item-leading-thumb img"), "history supplies the full-session thumbnail").toBeVisible();
+    await expect(sessionRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+    await sessionRow.getByRole("button", { name: "View previous inventory photo 1" }).click();
+    const viewer = page.getByRole("dialog", { name: "Evidence photo" });
+    await expect(viewer).toBeVisible();
+    await expect(viewer).toContainText("June 2026 inventory");
+    await expect(viewer).not.toContainText("CURRENT SESSION REQUEST MUST NOT APPEAR ON PRIOR PHOTOS");
+    await expect(viewer.locator(".proof-viewer-request")).toHaveCount(0);
+    await viewer.getByRole("button", { name: "Close evidence viewer" }).click();
+    if (testInfo.project.name === "mobile-chrome") {
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
     }
   });
 

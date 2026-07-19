@@ -134,8 +134,9 @@ async function signInAndOpenReviewQueue(page) {
 
   await page.getByRole("region", { name: "Dashboard review results" })
     .getByRole("button", { name: "Open review queue", exact: true })
+    .first()
     .click();
-  await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
 }
 

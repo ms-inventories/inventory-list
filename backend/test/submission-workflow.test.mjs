@@ -8,6 +8,10 @@ import {
   parseSubmissionReviewBody,
   sessionTimingFromRow
 } from "../src/routes.js";
+import {
+  findPriorInventoryHistoryMatches,
+  inventoryHistoryRowsMatch
+} from "../src/inventory-history.js";
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -76,12 +80,101 @@ test("session timing derives completion only when every row reached a completed 
 });
 
 test("automatic history reuse requires one unique saved LIN or NSN", () => {
-  const first = { id: "first", lins: new Set(["A12345"]), nsns: new Set(["1234567890123"]) };
-  const second = { id: "second", lins: new Set(["A12345"]), nsns: new Set() };
+  const first = { id: "first", explicitLin: "A12345", lins: new Set(["A12345"]), nsns: new Set(["1234567890123"]) };
+  const second = { id: "second", explicitLin: "A12345", lins: new Set(["A12345"]), nsns: new Set() };
   assert.equal(findUniqueInventoryIdentifierMatch("LIN A12345 radio mount", [first]), first);
+  assert.equal(
+    findUniqueInventoryIdentifierMatch("000000002 63053N CUTTING MACHINE", [
+      { id: "mixed", explicitLin: "63053N", lins: new Set(["63053N"]), nsns: new Set() }
+    ])?.id,
+    "mixed"
+  );
+  assert.equal(
+    findUniqueInventoryIdentifierMatch("CO5036 COMPRESSOR", [
+      { id: "mixed-prefix", explicitLin: "CO5036", lins: new Set(["CO5036"]), nsns: new Set() }
+    ])?.id,
+    "mixed-prefix"
+  );
   assert.equal(findUniqueInventoryIdentifierMatch("LIN A12345 radio mount", [first, second]), null);
   assert.equal(findUniqueInventoryIdentifierMatch("NSN 1234-56-789-0123", [first, second]), first);
   assert.equal(findUniqueInventoryIdentifierMatch("radio mount without an identifier", [first]), null);
+  assert.equal(findUniqueInventoryIdentifierMatch("RADIO M12345 MODEL", [
+    { id: "model-code", explicitLin: "M12345", lins: new Set(["M12345"]), nsns: new Set() }
+  ]), null);
+});
+
+test("prior inventory history selects the latest approved row by mixed LIN and exact packet fallback", () => {
+  const matches = findPriorInventoryHistoryMatches(
+    [
+      {
+        id: "current-lin",
+        packet_line: "000000002 63053N CUTTING MACHINE OXYGEN",
+        expected_qty: 4
+      },
+      {
+        id: "current-exact",
+        packet_line: "Cable assembly / no stock number"
+      },
+      {
+        id: "current-unmatched",
+        packet_line: "Cable assembly different model"
+      },
+      {
+        id: "current-model-code",
+        packet_line: "RADIO M12345 MODEL"
+      }
+    ],
+    [
+      {
+        submission_id: "older-lin",
+        packet_line: "63053N CUTTING MACHINE OXYGEN",
+        inventoried_at: "2026-05-01T12:00:00.000Z",
+        has_photos: true
+      },
+      {
+        submission_id: "newer-lin",
+        packet_line: "000000009 63053N CUTTING MACHINE OXYGEN",
+        inventoried_at: "2026-06-01T12:00:00.000Z",
+        has_photos: false
+      },
+      {
+        submission_id: "exact-fallback",
+        packet_line: "CABLE ASSEMBLY - NO STOCK NUMBER",
+        inventoried_at: "2026-04-01T12:00:00.000Z"
+      },
+      {
+        submission_id: "similar-is-not-exact",
+        packet_line: "Cable assembly another model",
+        inventoried_at: "2026-07-01T12:00:00.000Z"
+      },
+      {
+        submission_id: "description-model-code",
+        packet_line: "GENERATOR M12345 MODEL",
+        inventoried_at: "2026-07-02T12:00:00.000Z"
+      }
+    ]
+  );
+
+  assert.equal(matches.get("current-lin")?.latest.submission_id, "newer-lin");
+  assert.equal(matches.get("current-lin")?.historyCount, 2);
+  assert.equal(matches.get("current-lin")?.matchBasis, "lin");
+  assert.equal(matches.get("current-lin")?.latestWithPhotos?.submission_id, "older-lin");
+  assert.equal(matches.get("current-exact")?.latest.submission_id, "exact-fallback");
+  assert.equal(matches.get("current-exact")?.historyCount, 1);
+  assert.equal(matches.has("current-unmatched"), false);
+  assert.equal(matches.has("current-model-code"), false);
+  assert.equal(inventoryHistoryRowsMatch(
+    { packet_line: "000000002 63053N CUTTING MACHINE" },
+    { packet_line: "63053N CUTTING MACHINE" }
+  ), true);
+  assert.equal(inventoryHistoryRowsMatch(
+    { packet_line: "RADIO M12345 MODEL" },
+    { packet_line: "GENERATOR M12345 MODEL" }
+  ), false);
+  assert.equal(inventoryHistoryRowsMatch(
+    { packet_line: "000000002", inventory_nsn: "1234-56-789-0123" },
+    { packet_line: "1234567890123 MEDICAL SET" }
+  ), true);
 });
 
 test("a new proof submission clears stale direct-check attribution", async () => {

@@ -34,6 +34,12 @@ function qaHeaders(identity, tenantSlug = "ms") {
   };
 }
 
+function mixedPositionLin(value) {
+  let hash = 0;
+  for (const character of String(value)) hash = ((hash * 31) + character.charCodeAt(0)) >>> 0;
+  return `7${hash.toString(36).toUpperCase().padStart(4, "0").slice(-4)}N`;
+}
+
 async function responseJson(response) {
   if (!response.ok()) {
     const body = await response.text();
@@ -126,10 +132,85 @@ async function submitFound(request, {
 }
 
 test.describe("verified item reuse API", () => {
+  test("session detail exposes prior approved photos and location without a saved item link", async ({ request }, testInfo) => {
+    const stamp = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
+    const lin = mixedPositionLin(stamp);
+    const source = await createSessionItem(request, {
+      name: `QA prior history source ${stamp}`,
+      packetLine: `000000002 ${lin} CUTTING MACHINE HISTORY ${stamp.toUpperCase()}`,
+      expectedQty: 4
+    });
+    await responseJson(await request.patch(`${API_URL}/session-items/${source.sessionItemId}/assignment`, {
+      headers: qaHeaders(qaNco),
+      data: { memberId: "self" }
+    }));
+    const sourcePhoto = await uploadPhoto(request, {
+      identity: qaNco,
+      label: `prior-history-${stamp}`
+    });
+    const sourceSubmission = await submitFound(request, {
+      identity: qaNco,
+      sessionItemId: source.sessionItemId,
+      location: "History cage, shelf four",
+      serialNumber: `HISTORY-${stamp}`,
+      photos: [sourcePhoto]
+    });
+    await responseJson(await request.patch(
+      `${API_URL}/submissions/${sourceSubmission.submission.id}/review`,
+      {
+        headers: qaHeaders(qaAdmin),
+        data: { decision: "approved", saveItem: false }
+      }
+    ));
+    await responseJson(await request.patch(`${API_URL}/inventory/sessions/${source.sessionId}`, {
+      headers: qaHeaders(qaAdmin),
+      data: { status: "closed" }
+    }));
+
+    const current = await createSessionItem(request, {
+      name: `QA prior history current ${stamp}`,
+      packetLine: `000000099 ${lin} CUTTING MACHINE HISTORY ${stamp.toUpperCase()}`,
+      expectedQty: 6
+    });
+    const adminDetail = await responseJson(await request.get(
+      `${API_URL}/inventory/sessions/${current.sessionId}`,
+      { headers: qaHeaders(qaAdmin) }
+    ));
+    const adminRow = adminDetail.items.find(item => item.id === current.sessionItemId);
+    expect(adminRow.inventoryItem).toBeNull();
+    expect(adminRow.priorInventoryHistory).toMatchObject({
+      sessionName: `QA prior history source ${stamp}`,
+      sessionStatus: "closed",
+      status: "found",
+      locationText: "History cage, shelf four",
+      expectedQty: 4,
+      historyCount: 1,
+      inventoriedAt: expect.any(String)
+    });
+    for (const internalField of ["submissionId", "sessionItemId", "sessionId", "serialNumber", "note", "matchBasis"]) {
+      expect(adminRow.priorInventoryHistory).not.toHaveProperty(internalField);
+    }
+    expect(adminRow.priorInventoryHistory.photos).toHaveLength(1);
+    expect(adminRow.priorInventoryHistory.photos[0]).toMatchObject({
+      url: sourcePhoto.url,
+      caption: `prior-history-${stamp}`,
+      kind: "general"
+    });
+    expect(adminRow.priorInventoryHistory.photos[0]).not.toHaveProperty("storageKey");
+    expect(adminRow.priorInventoryHistory.photos[0]).not.toHaveProperty("mediaUploadId");
+
+    const contributorDetail = await responseJson(await request.get(
+      `${API_URL}/inventory/sessions/${current.sessionId}`,
+      { headers: qaHeaders(qaNco) }
+    ));
+    const contributorRow = contributorDetail.items.find(item => item.id === current.sessionItemId);
+    expect(contributorRow.suggestedInventoryItem).toBeNull();
+    expect(contributorRow.priorInventoryHistory).toEqual(adminRow.priorInventoryHistory);
+  });
+
   test("leaders confirm prior matches and atomically choose saved proof photos", async ({ request }, testInfo) => {
     const stamp = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
-    const lin = `R${String(Date.now() % 100000).padStart(5, "0")}`;
-    const packetLine = `${lin} VERIFIED REUSE ${stamp.toUpperCase()}`;
+    const packetLine = `VERIFIED REUSE ITEM${Date.now().toString(36).toUpperCase()}`;
 
     const first = await createSessionItem(request, {
       name: `QA reuse first ${stamp}`,
@@ -251,7 +332,7 @@ test.describe("verified item reuse API", () => {
       identity: qaRoot,
       tenantSlug: "qa-other",
       name: `QA other reuse ${stamp}`,
-      packetLine: `X${lin.slice(1)} OTHER TENANT ${stamp}`
+      packetLine: `OTHER TENANT REUSE ${stamp}`
     });
     const otherPhoto = await uploadPhoto(request, {
       identity: qaRoot,

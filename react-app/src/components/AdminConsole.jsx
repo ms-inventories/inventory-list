@@ -698,6 +698,179 @@ function getInventoryItemImages(item) {
   return getInventoryItemPhotos(item).map(photo => photo.url);
 }
 
+function getPriorInventorySnapshot(item) {
+  const history = item?.priorInventoryHistory || null;
+  const savedItem = item?.inventoryItem || null;
+  const historyPhotos = getInventoryItemPhotos({ photos: history?.photos || [] });
+  const savedPhotos = getInventoryItemPhotos(savedItem);
+  const photos = history ? (historyPhotos.length ? historyPhotos : savedPhotos) : savedPhotos;
+  const historyPhotoKeys = new Set(historyPhotos.map(photo => photo.mediaUploadId || photo.url));
+  const additionalSavedPhotos = history && historyPhotos.length
+    ? savedPhotos.filter(photo => !historyPhotoKeys.has(photo.mediaUploadId || photo.url))
+    : [];
+  const location = history ? (history.locationText || "") : (savedItem?.currentLocation || "");
+  const inventoriedAt = history ? (history.inventoriedAt || "") : (savedItem?.lastVerifiedAt || "");
+  const sessionName = history?.sessionName || "";
+  const historyCount = Math.max(0, Number(history?.historyCount || 0));
+
+  if (!photos.length && !location && !inventoriedAt && !sessionName) return null;
+
+  return {
+    history,
+    photos,
+    location,
+    inventoriedAt,
+    sessionName,
+    historyCount,
+    status: history?.status || "",
+    expectedQty: history?.expectedQty ?? null,
+    sessionStatus: history?.sessionStatus || "",
+    photoContext: historyPhotos.length ? (history?.photoContext || history) : {
+      sessionName: "Saved item record",
+      status: "",
+      locationText: savedItem?.currentLocation || "",
+      inventoriedAt: savedItem?.lastVerifiedAt || ""
+    },
+    additionalSavedPhotos,
+    savedItem
+  };
+}
+
+function PriorInventorySnapshot({ item, onOpenPhoto }) {
+  const snapshot = getPriorInventorySnapshot(item);
+  if (!snapshot) return null;
+
+  const title = itemDisplayName(item);
+  const countCopy = snapshot.history
+    ? snapshot.sessionStatus && snapshot.sessionStatus !== "closed"
+      ? "Approved in another open inventory"
+      : snapshot.historyCount > 1
+        ? `${snapshot.historyCount} earlier records`
+        : "Earlier hand-receipt record"
+    : "Saved item record";
+  const photoContext = snapshot.photoContext || snapshot.history;
+  const photosUseDifferentRecord = Boolean(
+    snapshot.history
+    && photoContext
+    && (
+      photoContext.sessionName !== snapshot.sessionName
+      || photoContext.inventoriedAt !== snapshot.inventoriedAt
+    )
+  );
+  const savedDetails = snapshot.history && snapshot.savedItem ? [
+    snapshot.savedItem.armyName,
+    snapshot.savedItem.description,
+    snapshot.savedItem.currentLocation && snapshot.savedItem.currentLocation !== snapshot.location
+      ? `Current saved location: ${snapshot.savedItem.currentLocation}`
+      : ""
+  ].filter(Boolean) : [];
+
+  return (
+    <section className="prior-inventory-snapshot" aria-label={`Previous inventory for ${title}`}>
+      <div className="prior-inventory-heading">
+        <History aria-hidden="true" />
+        <div>
+          <strong>Previous inventory</strong>
+          <span>{countCopy}</span>
+        </div>
+      </div>
+
+      {snapshot.location || snapshot.sessionName || snapshot.inventoriedAt ? (
+        <div className="prior-inventory-facts">
+          {snapshot.location ? (
+            <div className="prior-inventory-location">
+              <span>Reported location</span>
+              <strong>{snapshot.location}</strong>
+            </div>
+          ) : null}
+          {snapshot.sessionName || snapshot.inventoriedAt ? (
+            <div>
+              <span>Recorded in</span>
+              {snapshot.sessionName ? <strong>{snapshot.sessionName}</strong> : null}
+              {snapshot.inventoriedAt ? <time dateTime={snapshot.inventoriedAt}>{formatDate(snapshot.inventoriedAt)}</time> : null}
+            </div>
+          ) : null}
+          {snapshot.status ? (
+            <div>
+              <span>Previous result</span>
+              <strong>{formatItemStatus(snapshot.status)}</strong>
+            </div>
+          ) : null}
+          {snapshot.expectedQty != null ? (
+            <div>
+              <span>Quantity on record</span>
+              <strong>{snapshot.expectedQty}</strong>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {snapshot.photos.length ? (
+        <div className="prior-inventory-photo-block">
+          {photosUseDifferentRecord ? (
+            <small className="prior-inventory-photo-source">
+              Photos from {photoContext.sessionName || "an earlier inventory"}
+              {photoContext.inventoriedAt ? ` - ${formatDate(photoContext.inventoriedAt)}` : ""}
+            </small>
+          ) : null}
+          <div className="prior-inventory-photos" aria-label={`Previous inventory photos for ${title}`}>
+            {snapshot.photos.slice(0, 3).map((photo, index) => (
+              onOpenPhoto ? (
+                <button
+                  type="button"
+                  key={photo.id || photo.url}
+                  aria-label={`View previous inventory photo ${index + 1}`}
+                  onClick={() => onOpenPhoto(index, snapshot)}
+                >
+                  <img src={photo.url} alt={photo.caption || `Previous inventory photo ${index + 1}`} loading="lazy" />
+                </button>
+              ) : (
+                <span className="prior-inventory-photo" key={photo.id || photo.url}>
+                  <img src={photo.url} alt={photo.caption || `Previous inventory photo ${index + 1}`} loading="lazy" />
+                </span>
+              )
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {snapshot.additionalSavedPhotos.length ? (
+        <div className="prior-inventory-photo-block">
+          <small className="prior-inventory-photo-source">Saved reference photos</small>
+          <div className="prior-inventory-photos" aria-label={`Saved reference photos for ${title}`}>
+            {snapshot.additionalSavedPhotos.slice(0, 3).map((photo, index) => (
+              onOpenPhoto ? (
+                <button
+                  type="button"
+                  key={photo.id || photo.url}
+                  aria-label={`View saved reference photo ${index + 1}`}
+                  onClick={() => onOpenPhoto(index, {
+                    ...snapshot,
+                    photos: snapshot.additionalSavedPhotos,
+                    photoContext: {
+                      sessionName: "Saved item record",
+                      locationText: snapshot.savedItem?.currentLocation || "",
+                      inventoriedAt: snapshot.savedItem?.lastVerifiedAt || ""
+                    }
+                  })}
+                >
+                  <img src={photo.url} alt={photo.caption || `Saved reference photo ${index + 1}`} loading="lazy" />
+                </button>
+              ) : (
+                <span className="prior-inventory-photo" key={photo.id || photo.url}>
+                  <img src={photo.url} alt={photo.caption || `Saved reference photo ${index + 1}`} loading="lazy" />
+                </span>
+              )
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {savedDetails.length ? (
+        <p className="prior-inventory-saved-details"><strong>Saved item details:</strong> {savedDetails.join(" - ")}</p>
+      ) : null}
+    </section>
+  );
+}
+
 function sessionProgress(session) {
   const total = Number(session?.itemCount || 0);
   const done = Number(session?.foundCount || 0);
@@ -1800,6 +1973,7 @@ function SessionItemInlineContext({
   onAssign,
   onDirectCheck,
   onResolveMatch,
+  onOpenPriorPhoto,
   onOpenSavedPhoto,
   onOpenProofPhoto
 }) {
@@ -1821,6 +1995,8 @@ function SessionItemInlineContext({
 
   return (
     <div className="session-item-context-stack">
+      {item.priorInventoryHistory ? <PriorInventorySnapshot item={item} onOpenPhoto={onOpenPriorPhoto} /> : null}
+
       {canManage && !isClosed && item.suggestedInventoryItem ? (
         <PossiblePriorMatchCard
           item={item}
@@ -1830,7 +2006,7 @@ function SessionItemInlineContext({
         />
       ) : null}
 
-      {savedRecord && (hasSavedFacts || savedPhotos.length) ? (
+      {!item.priorInventoryHistory && savedRecord && (hasSavedFacts || savedPhotos.length) ? (
         <section className="session-item-context session-item-saved-record" aria-label={`Saved record for ${title}`}>
           <div className="session-item-context-heading">
             <h3>Saved record</h3>
@@ -3017,13 +3193,15 @@ function SessionPanel({
       index,
       isZoomed: false,
       packetLine: item.packetLine || itemDisplayName(item),
-      sessionName: selectedSession?.name || "Inventory session",
-      submittedBy: submission ? submissionPerson(submission) : "Saved inventory record",
-      createdAt: submission?.createdAt,
+      sessionName: submission?.sessionName || selectedSession?.name || "Inventory session",
+      submittedBy: submission
+        ? (submission.submittedByName || submission.submittedByEmail ? submissionPerson(submission) : "Previous inventory")
+        : "Saved inventory record",
+      createdAt: submission?.createdAt || submission?.inventoriedAt,
       locationText: submission?.locationText || item.inventoryItem?.currentLocation || "",
       serialNumber: submission?.serialNumber || "",
       note: submission?.note || "",
-      requestedProof: submission ? applicableProofRequest(item.submissions, submission) : ""
+      requestedProof: submission?.reviewState ? applicableProofRequest(item.submissions, submission) : ""
     });
   }
 
@@ -3407,12 +3585,16 @@ function SessionPanel({
                   const matchAction = matchActions.get(item.id) || "";
                   const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
                   const importBatch = item.importBatchId ? importBatchById.get(item.importBatchId) || null : null;
+                  const priorSnapshot = getPriorInventorySnapshot(item);
+                  const leadingPhoto = priorSnapshot?.photos[0] || getInventoryItemPhotos(item.inventoryItem)[0] || null;
                   const isDirectCheckPending = Boolean(directCheckAction);
                   const isAssignmentPending = Boolean(assignmentAction);
                   return (
                     <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} data-session-item-id={item.id} key={item.id}>
                       <div className="session-item-main">
-                        <FileText aria-hidden="true" />
+                        <span className="session-item-leading-thumb">
+                          {leadingPhoto ? <img src={leadingPhoto.url} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
+                        </span>
                         <div>
                           <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
                           {item.inventoryItem?.lin || item.inventoryItem?.nsn ? (
@@ -3481,6 +3663,7 @@ function SessionPanel({
                         onAssign={memberId => updateSessionItemAssignment(item.id, memberId)}
                         onDirectCheck={nextStatus => updateDirectCheck(item.id, nextStatus)}
                         onResolveMatch={action => resolvePriorMatch(item.id, action)}
+                        onOpenPriorPhoto={(index, snapshot) => openItemPhotoViewer(item, snapshot.photos, index, snapshot.photoContext || snapshot.history)}
                         onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
                         onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                       />
@@ -3553,6 +3736,7 @@ function SessionPanel({
                           onAssign={() => {}}
                           onDirectCheck={() => {}}
                           onResolveMatch={() => {}}
+                          onOpenPriorPhoto={(index, snapshot) => openItemPhotoViewer(item, snapshot.photos, index, snapshot.photoContext || snapshot.history)}
                           onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
                           onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                         />
@@ -7940,7 +8124,7 @@ function LeaderOverviewPanel({
   }
 
   function itemLocation(item) {
-    return item.locationHint || item.inventoryItem?.currentLocation || "No location yet";
+    return item.locationHint || item.inventoryItem?.currentLocation || "";
   }
 
   async function claimDashboardItem(item) {
@@ -7993,6 +8177,9 @@ function LeaderOverviewPanel({
       item.inventoryItem?.lin,
       item.inventoryItem?.nsn,
       item.inventoryItem?.description,
+      item.priorInventoryHistory?.sessionName,
+      item.priorInventoryHistory?.locationText,
+      item.priorInventoryHistory?.inventoriedAt,
       item.status,
       item.session?.name,
       assignedPerson(item)
@@ -8140,7 +8327,11 @@ function LeaderOverviewPanel({
 
           <div className="leader-table">
             {visiblePendingItems.length ? visiblePendingItems.map(item => {
-              const imageUrls = getInventoryItemImages(item.inventoryItem);
+              const priorSnapshot = getPriorInventorySnapshot(item);
+              const imageUrls = priorSnapshot?.photos.length
+                ? priorSnapshot.photos.map(photo => photo.url)
+                : getInventoryItemImages(item.inventoryItem);
+              const currentLocation = itemLocation(item);
               const assignedName = assignedPerson(item);
               const canClaimItem = Boolean(canSubmit && !item.assignedTo && !item.assignedToEmail && sessionItemAssignmentBucket(item, me) === "available");
               return (
@@ -8155,7 +8346,8 @@ function LeaderOverviewPanel({
                       <small>{assignedName ? `Assigned to ${assignedName}` : "Unassigned"}</small>
                     </div>
                   </div>
-                  <span>{itemLocation(item)}</span>
+                  {currentLocation && currentLocation !== priorSnapshot?.location ? <span>{currentLocation}</span> : null}
+                  <PriorInventorySnapshot item={item} />
                   <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
                   {canClaimItem ? (
                     <button className="btn btn-primary btn-small" type="button" disabled={Boolean(claimingItemId)} onClick={() => claimDashboardItem(item)}>

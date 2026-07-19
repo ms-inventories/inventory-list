@@ -30,6 +30,11 @@ import {
 } from "./crew-auth.js";
 import { query, withTransaction } from "./db.js";
 import {
+  extractPrimaryInventoryLinValues,
+  findPriorInventoryHistoryMatches,
+  inventoryHistoryCandidateKeys
+} from "./inventory-history.js";
+import {
   buildMediaUrl,
   issueMediaSession,
   mediaStorageKeyFromUrl,
@@ -1029,7 +1034,8 @@ function rowToSession(row) {
 function rowToSessionItem(row, {
   inventoryPhotos = [],
   suggestedInventoryPhotos = [],
-  includeSuggestion = false
+  includeSuggestion = false,
+  priorInventoryHistory = null
 } = {}) {
   return {
     id: row.id,
@@ -1087,6 +1093,7 @@ function rowToSessionItem(row, {
       metadata: row.suggested_item_metadata || {},
       photos: suggestedInventoryPhotos
     } : null,
+    priorInventoryHistory,
     submissions: []
   };
 }
@@ -1251,6 +1258,124 @@ async function loadInventoryItemsById(tenantId, inventoryItemIds, execute = quer
     row.id,
     rowToInventoryItem(row, mediaByItemId.get(row.id) || [])
   ]));
+}
+
+async function loadPriorInventoryHistory(tenantId, sessionId, currentRows, execute = query) {
+  const historyBySessionItemId = new Map();
+  if (!currentRows.length) return historyBySessionItemId;
+  const candidateKeys = inventoryHistoryCandidateKeys(currentRows);
+
+  const historyResult = await execute(
+    `
+      SELECT submission.id AS submission_id,
+        submission.session_item_id,
+        submission.status AS submission_status,
+        submission.location_text,
+        submission.created_at AS inventoried_at,
+        prior_item.inventory_item_id,
+        prior_item.packet_line,
+        prior_item.expected_qty,
+        prior_inventory.lin AS inventory_lin,
+        prior_inventory.nsn AS inventory_nsn,
+        prior_session.id AS prior_session_id,
+        prior_session.name AS prior_session_name,
+        prior_session.status AS prior_session_status,
+        EXISTS (
+          SELECT 1
+          FROM submission_photos history_photo
+          WHERE history_photo.submission_id = submission.id
+        ) AS has_photos
+      FROM item_submissions submission
+      JOIN inventory_session_items prior_item ON prior_item.id = submission.session_item_id
+      JOIN inventory_sessions prior_session ON prior_session.id = prior_item.session_id
+      LEFT JOIN inventory_items prior_inventory
+        ON prior_inventory.id = prior_item.inventory_item_id
+       AND prior_inventory.tenant_id = prior_session.tenant_id
+      WHERE prior_session.tenant_id = $1
+        AND prior_session.id <> $2
+        AND submission.review_state = 'approved'
+        AND (
+          prior_item.inventory_item_id = ANY($3::uuid[])
+          OR btrim(regexp_replace(upper(COALESCE(prior_item.packet_line, '')), '[^A-Z0-9]+', ' ', 'g')) = ANY($4::text[])
+          OR upper(regexp_replace(COALESCE(prior_inventory.lin, ''), '[^A-Z0-9]', '', 'g')) = ANY($5::text[])
+          OR regexp_replace(COALESCE(prior_inventory.nsn, ''), '[^0-9]', '', 'g') = ANY($6::text[])
+          OR EXISTS (
+            SELECT 1
+            FROM unnest($5::text[]) current_lin
+            WHERE (' ' || btrim(regexp_replace(upper(COALESCE(prior_item.packet_line, '')), '[^A-Z0-9]+', ' ', 'g')) || ' ')
+              LIKE ('% ' || current_lin || ' %')
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM unnest($6::text[]) current_nsn
+            WHERE regexp_replace(COALESCE(prior_item.packet_line, ''), '[^0-9]', '', 'g')
+              LIKE ('%' || current_nsn || '%')
+          )
+        )
+      ORDER BY submission.created_at DESC, submission.id DESC
+    `,
+    [
+      tenantId,
+      sessionId,
+      candidateKeys.inventoryItemIds,
+      candidateKeys.packetLines,
+      candidateKeys.lins,
+      candidateKeys.nsns
+    ]
+  );
+
+  const matches = findPriorInventoryHistoryMatches(currentRows, historyResult.rows);
+  const photoSubmissionIds = [...new Set(
+    [...matches.values()].map(match => match.latestWithPhotos?.submission_id).filter(Boolean)
+  )];
+  const photosBySubmissionId = new Map(photoSubmissionIds.map(id => [id, []]));
+  if (photoSubmissionIds.length) {
+    const photosResult = await execute(
+      `
+        SELECT *
+        FROM submission_photos
+        WHERE submission_id = ANY($1::uuid[])
+        ORDER BY created_at ASC, id ASC
+      `,
+      [photoSubmissionIds]
+    );
+    photosResult.rows.forEach(row => {
+      const photos = photosBySubmissionId.get(row.submission_id) || [];
+      photos.push(rowToPhoto(row));
+      photosBySubmissionId.set(row.submission_id, photos);
+    });
+  }
+
+  matches.forEach((match, currentSessionItemId) => {
+    const latest = match.latest;
+    const photoRecord = match.latestWithPhotos;
+    const photos = (photosBySubmissionId.get(photoRecord?.submission_id) || []).map(photo => ({
+      url: photo.url,
+      caption: photo.caption,
+      kind: photo.kind,
+      createdAt: photo.createdAt
+    }));
+    historyBySessionItemId.set(currentSessionItemId, {
+      sessionName: latest.prior_session_name,
+      sessionStatus: latest.prior_session_status,
+      status: latest.submission_status,
+      locationText: latest.location_text || null,
+      inventoriedAt: latest.inventoried_at,
+      expectedQty: latest.expected_qty,
+      photos,
+      photoContext: photoRecord ? {
+        sessionName: photoRecord.prior_session_name,
+        sessionStatus: photoRecord.prior_session_status,
+        status: photoRecord.submission_status,
+        locationText: photoRecord.location_text || null,
+        inventoriedAt: photoRecord.inventoried_at,
+        expectedQty: photoRecord.expected_qty
+      } : null,
+      historyCount: match.historyCount
+    });
+  });
+
+  return historyBySessionItemId;
 }
 
 function rowToImportBatch(row, { includeText = false } = {}) {
@@ -2161,8 +2286,10 @@ function textTokens(value) {
 function extractLinValues(text) {
   const values = new Set();
   const normalized = normalizeMatchText(text);
-  const matches = normalized.match(/\b[A-Z][0-9]{5}\b/g) || [];
-  matches.forEach(value => values.add(value));
+  const matches = normalized.match(/\b[A-Z0-9]{6}\b/g) || [];
+  matches
+    .filter(value => /[A-Z]/.test(value) && /\d/.test(value))
+    .forEach(value => values.add(value));
   return values;
 }
 
@@ -2194,6 +2321,7 @@ function itemMatchProfile(item) {
 
   return {
     ...item,
+    explicitLin,
     lins,
     nsns,
     normalizedTitle: normalizeMatchText(item.title),
@@ -2205,7 +2333,7 @@ function itemMatchProfile(item) {
 
 function scoreInventoryItemMatch(packetLine, item) {
   const packetText = normalizeMatchText(packetLine);
-  const packetLinValues = extractLinValues(packetLine);
+  const packetLinValues = extractPrimaryInventoryLinValues(packetLine);
   const packetNsnValues = extractNsnValues(packetLine);
   let score = 0;
   const reasons = [];
@@ -2274,12 +2402,12 @@ function findInventoryItemMatch(packetLine, inventoryItems) {
 }
 
 export function findUniqueInventoryIdentifierMatch(packetLine, inventoryItems) {
-  const packetLins = extractLinValues(packetLine);
+  const packetLins = extractPrimaryInventoryLinValues(packetLine);
   const packetNsns = extractNsnValues(packetLine);
   if (!packetLins.size && !packetNsns.size) return null;
 
   const matches = inventoryItems.filter(item => (
-    [...packetLins].some(lin => item.lins?.has(lin))
+    [...packetLins].some(lin => (item.explicitLin || normalizeIdentifier(item.lin)) === lin)
     || [...packetNsns].some(nsn => item.nsns?.has(nsn))
   ));
   return matches.length === 1 ? matches[0] : null;
@@ -6279,11 +6407,17 @@ export function registerRoutes(app) {
       row.inventory_item_id,
       row.suggested_inventory_item_id
     ]));
+    const priorInventoryHistoryByItemId = await loadPriorInventoryHistory(
+      context.tenant.id,
+      session.id,
+      itemsResult.rows
+    );
     const includeSuggestion = hasTenantRole(context, ["tenant_admin"]);
     const items = itemsResult.rows.map(row => rowToSessionItem(row, {
       inventoryPhotos: mediaByItemId.get(row.inventory_item_id) || [],
       suggestedInventoryPhotos: mediaByItemId.get(row.suggested_inventory_item_id) || [],
-      includeSuggestion
+      includeSuggestion,
+      priorInventoryHistory: priorInventoryHistoryByItemId.get(row.id) || null
     }));
     const itemById = new Map(items.map(item => [item.id, item]));
     const submissions = submissionsResult.rows.map(rowToSubmission);
@@ -8183,7 +8317,7 @@ export function registerRoutes(app) {
           savedInventoryItem = savedResult.rows[0] || null;
         } else {
           const packetLine = String(sessionItem.packet_line || "Verified inventory item").trim() || "Verified inventory item";
-          const lin = [...extractLinValues(packetLine)][0] || null;
+          const lin = [...extractPrimaryInventoryLinValues(packetLine)][0] || null;
           const nsn = [...extractNsnValues(packetLine)][0] || null;
           const savedResult = await client.query(
             `

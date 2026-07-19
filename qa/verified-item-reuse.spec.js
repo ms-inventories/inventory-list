@@ -223,10 +223,10 @@ test.describe("verified item reuse UI", () => {
       await expectMinHeight(dismissRecord, touchTargetMinimum);
       await useRecord.click();
       await expect(matchCard).toBeHidden();
-      const savedRecord = row.getByRole("region", { name: `Saved record for ${packetLine}` });
-      await expect(savedRecord.getByRole("heading", { name: "Saved record" })).toBeVisible();
-      await expect(savedRecord).toContainText("Cage 12, upper shelf");
-      await expect(savedRecord.locator(`[aria-label="Saved record photos for ${packetLine}"]`)).toBeVisible();
+      const previousInventory = row.getByRole("region", { name: `Previous inventory for ${packetLine}` });
+      await expect(previousInventory.getByText("Previous inventory", { exact: true })).toBeVisible();
+      await expect(previousInventory).toContainText("Cage 12, upper shelf");
+      await expect(previousInventory.locator(`[aria-label="Previous inventory photos for ${packetLine}"]`)).toBeVisible();
 
       await row.getByRole("button", { name: "Add proof" }).click();
       const proofDialog = page.getByRole("dialog", { name: `Add proof for ${packetLine}` });

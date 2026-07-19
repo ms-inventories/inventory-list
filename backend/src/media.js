@@ -4,6 +4,7 @@ import path from "node:path";
 import { config } from "./config.js";
 import { crewMediaAccessIsActive } from "./crew-auth.js";
 import { query } from "./db.js";
+import { inventoryHistoryRowsMatch } from "./inventory-history.js";
 
 const mediaCookiePrefix = "inventory_media_";
 
@@ -230,6 +231,57 @@ async function authorizedMediaRecord(session, storageKey) {
       ]
     );
     if (submissionResult.rows[0]) return { kind: "evidence" };
+
+    if (session.authKind === "crew" && crewSessionId) {
+      // An active crew pass may read approved evidence for the same hand-receipt
+      // line across this tenant's other inventories. It never grants unrelated
+      // tenant media, and the shared matcher keeps disclosure and access aligned.
+      const [priorPhotoResult, activeItemsResult] = await Promise.all([
+        query(
+          `
+            SELECT item.inventory_item_id,
+              item.packet_line,
+              inventory.lin AS inventory_lin,
+              inventory.nsn AS inventory_nsn
+            FROM submission_photos photo
+            JOIN item_submissions submission ON submission.id = photo.submission_id
+            JOIN inventory_session_items item ON item.id = submission.session_item_id
+            JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+            LEFT JOIN inventory_items inventory
+              ON inventory.id = item.inventory_item_id
+             AND inventory.tenant_id = inventory_session.tenant_id
+            WHERE photo.storage_key = $1
+              AND inventory_session.tenant_id = $2
+              AND inventory_session.id <> $3
+              AND submission.review_state = 'approved'
+            LIMIT 1
+          `,
+          [storageKey, session.tenantId, crewSessionId]
+        ),
+        query(
+          `
+            SELECT item.inventory_item_id,
+              item.packet_line,
+              inventory.lin AS inventory_lin,
+              inventory.nsn AS inventory_nsn
+            FROM inventory_session_items item
+            JOIN inventory_sessions inventory_session ON inventory_session.id = item.session_id
+            LEFT JOIN inventory_items inventory
+              ON inventory.id = item.inventory_item_id
+             AND inventory.tenant_id = inventory_session.tenant_id
+            WHERE inventory_session.id = $1
+              AND inventory_session.tenant_id = $2
+              AND inventory_session.status = 'active'
+          `,
+          [crewSessionId, session.tenantId]
+        )
+      ]);
+      const priorPhoto = priorPhotoResult.rows[0];
+      if (
+        priorPhoto
+        && activeItemsResult.rows.some(activeItem => inventoryHistoryRowsMatch(priorPhoto, activeItem))
+      ) return { kind: "evidence" };
+    }
 
     const inventoryReferenceResult = await query(
       `

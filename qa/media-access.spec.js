@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 
 const API_URL = process.env.QA_API_URL || "http://localhost:5300/api";
+const TENANT_ORIGIN = process.env.QA_TENANT_ORIGIN || "http://ms.localhost:5175";
 const PHOTO_DATA_URL = `data:image/jpeg;base64,${fs.readFileSync(path.resolve("assets/dagr.jpg")).toString("base64")}`;
 
 const qaAdmin = {
@@ -27,6 +28,12 @@ function qaHeaders(identity) {
     "X-Dev-Groups": identity.groups.join(","),
     "X-Tenant-Slug": "ms"
   };
+}
+
+function mixedPositionLin(value, first = "7", last = "N") {
+  let hash = 0;
+  for (const character of String(value)) hash = ((hash * 31) + character.charCodeAt(0)) >>> 0;
+  return `${first}${hash.toString(36).toUpperCase().padStart(4, "0").slice(-4)}${last}`;
 }
 
 async function responseJson(response) {
@@ -58,6 +65,106 @@ function assertProtectedMediaUrl(value) {
 }
 
 test.describe("tenant media access", () => {
+  test("crew media sessions allow matching approved history and deny unrelated prior photos", async ({ playwright }, testInfo) => {
+    const admin = await playwright.request.newContext();
+    const contributor = await playwright.request.newContext();
+    const crew = await playwright.request.newContext();
+
+    try {
+      const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
+      const matchingLin = mixedPositionLin(suffix);
+      const unrelatedLin = mixedPositionLin(suffix, "8", "P");
+      const source = await responseJson(await admin.post(`${API_URL}/inventory/sessions`, {
+        headers: qaHeaders(qaAdmin),
+        data: { name: `QA crew prior media source ${suffix}`, status: "active" }
+      }));
+      const priorPhotos = new Map();
+
+      for (const [lin, label] of [[matchingLin, "matching"], [unrelatedLin, "unrelated"]]) {
+        const item = await responseJson(await admin.post(`${API_URL}/inventory/sessions/${source.session.id}/items`, {
+          headers: qaHeaders(qaAdmin),
+          data: { packetLine: `000000001 ${lin} PRIOR MEDIA ${label.toUpperCase()}`, expectedQty: 4 }
+        }));
+        await responseJson(await contributor.patch(`${API_URL}/session-items/${item.sessionItem.id}/assignment`, {
+          headers: qaHeaders(qaNco),
+          data: { memberId: "self" }
+        }));
+        const upload = await responseJson(await contributor.post(`${API_URL}/uploads/photos`, {
+          headers: qaHeaders(qaNco),
+          data: {
+            fileName: `crew-prior-${label}-${suffix}.jpg`,
+            mimeType: "image/jpeg",
+            dataUrl: PHOTO_DATA_URL,
+            caption: `Crew prior ${label}`,
+            kind: "general"
+          }
+        }));
+        const submission = await responseJson(await contributor.post(`${API_URL}/session-items/${item.sessionItem.id}/submissions`, {
+          headers: qaHeaders(qaNco),
+          data: {
+            status: "found",
+            locationText: `${label} history shelf`,
+            photos: [{
+              uploadId: upload.photo.uploadId,
+              caption: upload.photo.caption,
+              kind: upload.photo.kind
+            }]
+          }
+        }));
+        await responseJson(await admin.patch(`${API_URL}/submissions/${submission.submission.id}/review`, {
+          headers: qaHeaders(qaAdmin),
+          data: { decision: "approved", saveItem: false }
+        }));
+        priorPhotos.set(label, upload.photo);
+      }
+      await responseJson(await admin.patch(`${API_URL}/inventory/sessions/${source.session.id}`, {
+        headers: qaHeaders(qaAdmin),
+        data: { status: "closed" }
+      }));
+
+      const active = await responseJson(await admin.post(`${API_URL}/inventory/sessions`, {
+        headers: qaHeaders(qaAdmin),
+        data: { name: `QA crew prior media active ${suffix}`, status: "active" }
+      }));
+      const activeItem = await responseJson(await admin.post(`${API_URL}/inventory/sessions/${active.session.id}/items`, {
+        headers: qaHeaders(qaAdmin),
+        data: { packetLine: `000000099 ${matchingLin} PRIOR MEDIA MATCHING`, expectedQty: 6 }
+      }));
+      const access = await responseJson(await admin.post(`${API_URL}/inventory/sessions/${active.session.id}/crew-access`, {
+        headers: qaHeaders(qaAdmin),
+        data: { displayName: `Prior media crew ${suffix}` }
+      }));
+      await responseJson(await crew.post(`${API_URL}/crew/consume`, {
+        headers: { "X-Tenant-Slug": "ms", Origin: TENANT_ORIGIN },
+        data: { code: access.code, inviteToken: access.inviteToken }
+      }));
+
+      const detailResponse = await crew.get(`${API_URL}/inventory/sessions/${active.session.id}`, {
+        headers: { "X-Tenant-Slug": "ms" }
+      });
+      const detail = await responseJson(detailResponse);
+      const row = detail.items.find(item => item.id === activeItem.sessionItem.id);
+      expect(row.priorInventoryHistory).toMatchObject({
+        sessionName: `QA crew prior media source ${suffix}`,
+        locationText: "matching history shelf",
+        historyCount: 1
+      });
+      expect(row.priorInventoryHistory.photos[0].url).toBe(priorPhotos.get("matching").url);
+      expect(detailResponse.headers()["set-cookie"]).toContain("inventory_media_ms=");
+
+      const matchingPhotoUrl = assertProtectedMediaUrl(priorPhotos.get("matching").url);
+      const matchingResponse = await crew.get(matchingPhotoUrl.toString());
+      expect(matchingResponse.status()).toBe(200);
+      expect(matchingResponse.headers()["content-type"]).toMatch(/^image\/jpeg/);
+      expect((await matchingResponse.body()).length).toBeGreaterThan(1000);
+
+      const unrelatedPhotoUrl = assertProtectedMediaUrl(priorPhotos.get("unrelated").url);
+      await expectMediaDenied(await crew.get(unrelatedPhotoUrl.toString()));
+    } finally {
+      await Promise.all([admin.dispose(), contributor.dispose(), crew.dispose()]);
+    }
+  });
+
   test("requires a tenant-scoped HttpOnly session and enforces record and role access", async ({ playwright }, testInfo) => {
     const admin = await playwright.request.newContext();
     const contributor = await playwright.request.newContext();
