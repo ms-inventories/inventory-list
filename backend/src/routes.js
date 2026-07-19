@@ -4825,7 +4825,7 @@ export function registerRoutes(app) {
           END,
           u.email ASC
       `,
-      [context.tenant.id, context.crew?.sessionId || null]
+      [context.tenant.id]
     );
 
     return {
@@ -5772,7 +5772,7 @@ export function registerRoutes(app) {
         WHERE tenant_id = $1
         ORDER BY title ASC
       `,
-      [context.tenant.id, context.crew?.sessionId || null]
+      [context.tenant.id]
     );
     const mediaByItemId = await loadInventoryItemMedia(result.rows.map(row => row.id));
 

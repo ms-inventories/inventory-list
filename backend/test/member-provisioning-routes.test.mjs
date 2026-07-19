@@ -205,6 +205,20 @@ test("permanent member retry and enrollment routes remain registered beside lega
   assert.equal(routes.has("DELETE /api/platform/tenants/:tenantId"), true);
 });
 
+test("leader member and saved-item queries bind only the placeholders they declare", async () => {
+  const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const source = await fs.readFile(path.resolve(currentDirectory, "../src/routes.js"), "utf8");
+
+  assert.match(
+    source,
+    /route\(app, "get", "\/api\/tenant\/members"[\s\S]*?ORDER BY[\s\S]*?u\.email ASC\s*`,\s*\[context\.tenant\.id\]\s*\);/i
+  );
+  assert.match(
+    source,
+    /route\(app, "get", "\/api\/inventory\/items"[\s\S]*?ORDER BY title ASC\s*`,\s*\[context\.tenant\.id\]\s*\);/i
+  );
+});
+
 test("member mutations serialize last-admin removal and only adopt unprovisioned legacy invites", async () => {
   const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
   const source = await fs.readFile(path.resolve(currentDirectory, "../src/routes.js"), "utf8");
