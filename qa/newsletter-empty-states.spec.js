@@ -7,7 +7,7 @@ async function signInAsNewsletterAdmin(page) {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.locator("summary").filter({ hasText: "QA users" }).click();
   await page.getByRole("button", { name: "Newsletter admin" }).click();
-  await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
 }
 
 async function openNewsletterSection(page, name) {
@@ -44,18 +44,24 @@ test.describe("newsletter empty-state guidance", () => {
     await mockNewsletterAdmin(page, newsletterAdminData());
     await signInAsNewsletterAdmin(page);
 
-    let emptyPanel = page.locator(".admin-empty").filter({ hasText: "No homepage updates yet" });
+    await expect(page.getByRole("heading", { name: "Homepage updates" })).toBeVisible();
+    await page.getByRole("button", { name: "Update homepage" }).click();
+    const homepageDialog = page.getByRole("dialog", { name: "Manage homepage updates" });
+    let emptyPanel = homepageDialog.locator(".admin-empty").filter({ hasText: "No homepage updates yet" });
     await expect(emptyPanel).toBeVisible();
     await emptyPanel.getByRole("button", { name: "Add homepage update" }).click();
-    await expect(page.getByLabel("Title")).toBeFocused();
+    await expect(homepageDialog.getByLabel("Title")).toBeFocused();
     await expect(page.getByRole("status")).toContainText("New homepage update ready.");
+    await homepageDialog.getByRole("button", { name: "Close homepage editor" }).click();
 
     await openNewsletterSection(page, "Issues");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No newsletters yet" });
     await expect(emptyPanel).toBeVisible();
     await emptyPanel.getByRole("button", { name: "Write first newsletter" }).click();
-    await expect(page.getByLabel("Title")).toBeFocused();
+    const issueDialog = page.getByRole("dialog", { name: "Create issue" });
+    await expect(issueDialog.getByLabel("Title")).toBeFocused();
     await expect(page.getByRole("status")).toContainText("New newsletter draft ready.");
+    await issueDialog.getByRole("button", { name: "Close issue editor" }).click();
 
     await openNewsletterSection(page, "Subscribers");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No subscribers yet" });
@@ -108,18 +114,21 @@ test.describe("newsletter empty-state guidance", () => {
     }));
     await signInAsNewsletterAdmin(page);
 
-    await page.getByLabel("Search public content").fill("not in any update");
-    let emptyPanel = page.locator(".admin-empty").filter({ hasText: "No matching homepage updates" });
+    await page.getByRole("button", { name: "Update homepage" }).click();
+    const homepageDialog = page.getByRole("dialog", { name: "Manage homepage updates" });
+    await homepageDialog.getByLabel("Search public content").fill("not in any update");
+    let emptyPanel = homepageDialog.locator(".admin-empty").filter({ hasText: "No matching homepage updates" });
     await expect(emptyPanel).toBeVisible();
     await emptyPanel.getByRole("button", { name: "Clear filters" }).click();
-    await expect(page.locator(".frg-content-list").getByText(contentTitle, { exact: true })).toBeVisible();
+    await expect(homepageDialog.locator(".frg-content-list").getByText(contentTitle, { exact: true })).toBeVisible();
+    await homepageDialog.getByRole("button", { name: "Close homepage editor" }).click();
 
     await openNewsletterSection(page, "Issues");
     await page.getByLabel("Search newsletter issues").fill("not in any newsletter");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No matching newsletters" });
     await expect(emptyPanel).toBeVisible();
     await emptyPanel.getByRole("button", { name: "Clear search" }).click();
-    await expect(page.locator(".newsletter-issue-list").getByText(issueTitle, { exact: true })).toBeVisible();
+    await expect(page.getByRole("table", { name: "Newsletter issues" }).getByText(issueTitle, { exact: true })).toBeVisible();
 
     await openNewsletterSection(page, "Subscribers");
     emptyPanel = page.locator(".admin-empty").filter({ hasText: "No pending requests" });

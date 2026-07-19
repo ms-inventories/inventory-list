@@ -58,11 +58,11 @@ async function seedQaSession(page, identity) {
 }
 
 async function openSessions(page) {
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) {
-    await mobileMenu.click();
-  }
-  await page.getByRole("button", { name: "Inventory Sessions", exact: true }).click();
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open sessions", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
 }
 
@@ -120,9 +120,9 @@ test.describe("session assignment", () => {
     await expect(toolKitRow.getByRole("button", { name: "Claim item" })).toBeVisible();
     await toolKitRow.getByRole("button", { name: /Open details for/ }).click();
     const assignmentDrawer = page.getByRole("dialog");
-    const leaderTools = assignmentDrawer.locator("details.session-detail-disclosure").filter({ hasText: "Manage item" });
-    await leaderTools.locator("summary").click();
-    await leaderTools.getByRole("combobox").selectOption({ label: "QA NCO" });
+    const leaderTools = assignmentDrawer.locator(".session-item-manage-disclosure");
+    await expect(leaderTools.getByRole("heading", { name: "Manage item" })).toBeVisible();
+    await leaderTools.getByRole("combobox", { name: "Assign to" }).selectOption({ label: "QA NCO" });
     await expect(assignmentDrawer.getByRole("status")).toContainText("Row assigned.");
     await assignmentDrawer.getByRole("button", { name: "Close item details" }).click();
     await expect(toolKitRow.getByText("Assigned to QA NCO")).toBeVisible();

@@ -54,6 +54,16 @@ async function mockTokenExchange(page, { status = 200 } = {}) {
       })
     });
   });
+  await page.route("**/api/auth/oidc/refresh", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      access_token: "qa-dev",
+      token_type: "Bearer",
+      refresh_available: true,
+      expires_in: 3600
+    })
+  }));
 }
 
 test.describe("OIDC callback recovery", () => {

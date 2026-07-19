@@ -88,9 +88,9 @@ async function createViewerScenario(request, projectName) {
   });
 
   const requestMessage = `Need the serial plate and exact shelf location for ${suffix}.`;
-  await responseJson(await request.post(`${API_URL}/submissions/${firstSubmission.submission.id}/evidence-requests`, {
+  await responseJson(await request.patch(`${API_URL}/submissions/${firstSubmission.submission.id}/review`, {
     headers: qaHeaders(qaAdmin),
-    data: { message: requestMessage, requestedFields: ["serial_photo", "location"] }
+    data: { decision: "rejected", note: requestMessage, returnAssignment: "submitter" }
   }));
 
   const photoDefinitions = [
@@ -132,9 +132,10 @@ async function signInAndOpenReviewQueue(page) {
   await page.getByRole("button", { name: "Platoon admin" }).click();
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) await mobileMenu.click();
-  await page.getByRole("button", { name: "Review Queue", exact: true }).click();
+  await page.getByRole("region", { name: "Dashboard review results" })
+    .getByRole("button", { name: "Open review queue", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
 }
 

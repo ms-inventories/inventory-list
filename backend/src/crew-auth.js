@@ -222,26 +222,42 @@ async function recordRateFailure(client, tenantId, bucket) {
 }
 
 export async function expireCrewAccess(client, tenantId = null) {
-  const params = tenantId ? [tenantId] : [];
-  const tenantFilter = tenantId ? "AND tenant_id = $1" : "";
+  const reservationParams = tenantId ? [tenantId] : [];
+  const reservationTenantFilter = tenantId ? "AND tenant_id = $1" : "";
   await client.query(
     `
       DELETE FROM session_crew_code_reservations
       WHERE expires_at <= now()
-        ${tenantFilter}
+        ${reservationTenantFilter}
     `,
-    params
+    reservationParams
   );
+  const expiryParams = tenantId
+    ? [config.crewAccess.inactivityTtlHours, tenantId]
+    : [config.crewAccess.inactivityTtlHours];
+  const grantTenantFilter = tenantId ? "AND crew_grant.tenant_id = $2" : "";
   const expired = await client.query(
     `
-      UPDATE session_crew_grants
+      UPDATE session_crew_grants crew_grant
       SET status = 'expired', revoke_reason = 'expired'
-      WHERE status IN ('pending', 'consumed')
-        AND expires_at <= now()
-        ${tenantFilter}
-      RETURNING id, tenant_id, session_id, consumed_by
+      WHERE crew_grant.status IN ('pending', 'consumed')
+        AND (
+          crew_grant.expires_at <= now()
+          OR (
+            crew_grant.status = 'consumed'
+            AND EXISTS (
+              SELECT 1
+              FROM session_crew_auth_sessions auth_session
+              WHERE auth_session.grant_id = crew_grant.id
+                AND auth_session.revoked_at IS NULL
+                AND auth_session.last_seen_at <= now() - ($1::int * interval '1 hour')
+            )
+          )
+        )
+        ${grantTenantFilter}
+      RETURNING crew_grant.id, crew_grant.tenant_id, crew_grant.session_id, crew_grant.consumed_by
     `,
-    params
+    expiryParams
   );
   if (expired.rows.length) {
     await client.query(
@@ -263,6 +279,15 @@ export async function expireCrewAccess(client, tenantId = null) {
     }
   }
   return expired.rows.length;
+}
+
+export function crewAccessIsInactive(
+  lastSeenAt,
+  { now = Date.now(), inactivityTtlHours = config.crewAccess.inactivityTtlHours } = {}
+) {
+  const lastSeen = new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(lastSeen)) return true;
+  return lastSeen <= now - inactivityTtlHours * 60 * 60 * 1000;
 }
 
 export async function createCrewGrant(client, { tenantId, sessionId, displayName, createdBy }) {
@@ -513,12 +538,13 @@ export async function lockActiveCrewAccess(client, {
         AND auth_session.user_id = $4
         AND auth_session.revoked_at IS NULL
         AND auth_session.expires_at > now()
+        AND auth_session.last_seen_at > now() - ($5::int * interval '1 hour')
         AND crew_grant.status = 'consumed'
         AND crew_grant.expires_at > now()
         AND inventory_session.status = 'active'
       ${lockClause}
     `,
-    [authSessionId, tenantId, sessionId, userId]
+    [authSessionId, tenantId, sessionId, userId, config.crewAccess.inactivityTtlHours]
   );
   if (!result.rows[0]) {
     throw crewRequestError("This crew access has ended.", 401, "crew_access_ended");
@@ -535,6 +561,7 @@ async function retireDetectedExpiredCrewAccess(row) {
           auth_session.session_id,
           auth_session.user_id,
           auth_session.expires_at AS auth_expires_at,
+          auth_session.last_seen_at AS auth_last_seen_at,
           crew_grant.id AS grant_id,
           crew_grant.status AS grant_status,
           crew_grant.expires_at AS grant_expires_at
@@ -556,6 +583,7 @@ async function retireDetectedExpiredCrewAccess(row) {
     if (!access) return;
     const expired = access.grant_status === "expired"
       || new Date(access.auth_expires_at).getTime() <= Date.now()
+      || crewAccessIsInactive(access.auth_last_seen_at)
       || new Date(access.grant_expires_at).getTime() <= Date.now();
     if (!expired) return;
 
@@ -608,6 +636,7 @@ export async function authenticateCrewRequest(request) {
         auth_session.tenant_id,
         auth_session.session_id,
         auth_session.expires_at AS auth_expires_at,
+        auth_session.last_seen_at AS auth_last_seen_at,
         auth_session.revoked_at AS auth_revoked_at,
         crew_grant.id AS grant_id,
         crew_grant.status AS grant_status,
@@ -647,12 +676,14 @@ export async function authenticateCrewRequest(request) {
 
   const ended = row.auth_revoked_at
     || new Date(row.auth_expires_at).getTime() <= Date.now()
+    || crewAccessIsInactive(row.auth_last_seen_at)
     || row.grant_status !== "consumed"
     || new Date(row.grant_expires_at).getTime() <= Date.now()
     || row.session_status !== "active";
   if (ended) {
     const expired = row.grant_status === "expired"
       || new Date(row.auth_expires_at).getTime() <= Date.now()
+      || crewAccessIsInactive(row.auth_last_seen_at)
       || new Date(row.grant_expires_at).getTime() <= Date.now();
     if (expired) await retireDetectedExpiredCrewAccess(row);
     throw crewRequestError("This crew access has ended.", 401, "crew_access_ended");
@@ -877,12 +908,13 @@ export async function crewMediaAccessIsActive({ authSessionId, tenantId, session
         AND auth_session.session_id = $3
         AND auth_session.revoked_at IS NULL
         AND auth_session.expires_at > now()
+        AND auth_session.last_seen_at > now() - ($4::int * interval '1 hour')
         AND crew_grant.status = 'consumed'
         AND crew_grant.expires_at > now()
         AND inventory_session.status = 'active'
       LIMIT 1
     `,
-    [authSessionId, tenantId, sessionId]
+    [authSessionId, tenantId, sessionId, config.crewAccess.inactivityTtlHours]
   );
   return Boolean(result.rows[0]);
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ArrowRight,
   BarChart3,
   Bell,
   Building2,
@@ -19,6 +20,7 @@ import {
   FileUp,
   Home,
   History,
+  Info,
   ListChecks,
   LogIn,
   LogOut,
@@ -52,8 +54,10 @@ import {
   beginOidcLogin,
   clearAuthSession,
   completeOidcRedirect,
+  endOidcSession,
   getSessionAccessToken,
   readAuthSession,
+  refreshAuthSession,
   saveAuthSession
 } from "../lib/auth.js";
 import { packetFileReadErrorMessage, readPacketFileText } from "../lib/ocr.js";
@@ -486,14 +490,14 @@ function getMissingTenantRedirectUrl(profile) {
   if (isLocal) {
     const port = window.location.port ? `:${window.location.port}` : "";
     const targetHost = destination ? `${destination}.localhost` : "localhost";
-    const hash = destination ? "/#/admin" : "/#/launch";
+    const hash = "/#/launch";
     return `${window.location.protocol}//${targetHost}${port}${hash}`;
   }
 
   const targetHost = destination
     ? `${destination}.${appConfig.baseDomain}`
     : appConfig.baseDomain;
-  const hash = destination ? "/#/admin" : "/#/launch";
+  const hash = "/#/launch";
   return `https://${targetHost}${hash}`;
 }
 
@@ -696,7 +700,7 @@ function latestSubmission(item) {
 }
 
 function itemNeedsMoreProof(item) {
-  return latestSubmission(item)?.reviewState === "request_more_info";
+  return ["request_more_info", "rejected"].includes(latestSubmission(item)?.reviewState);
 }
 
 function itemHasPendingProof(item) {
@@ -705,7 +709,9 @@ function itemHasPendingProof(item) {
 
 function sessionItemNeedsAction(item) {
   const latest = latestSubmission(item);
-  return !["approved", "found"].includes(item?.status) || ["pending", "request_more_info", "rejected"].includes(latest?.reviewState);
+  const directlyResolved = Boolean(item?.directVerifiedBy) && ["found", "not_found", "mismatch"].includes(item?.status);
+  return !["approved", "found", "not_found", "mismatch"].includes(item?.status)
+    || (!directlyResolved && ["pending", "request_more_info", "rejected"].includes(latest?.reviewState));
 }
 
 function sessionItemNeedsReview(item) {
@@ -718,7 +724,9 @@ function sessionItemHasProblem(item) {
 }
 
 function sessionItemIsComplete(item) {
-  return ["approved", "found"].includes(item?.status) && !["pending", "request_more_info", "rejected"].includes(latestSubmission(item)?.reviewState);
+  const directlyResolved = Boolean(item?.directVerifiedBy) && ["found", "not_found", "mismatch"].includes(item?.status);
+  return ["approved", "found", "not_found", "mismatch"].includes(item?.status)
+    && (directlyResolved || !["pending", "request_more_info", "rejected"].includes(latestSubmission(item)?.reviewState));
 }
 
 function sessionItemAssignedToUser(item, me) {
@@ -789,6 +797,7 @@ function formatReviewState(value) {
     approved: "Approved",
     request_more_info: "More proof requested",
     rejected: "Rejected",
+    withdrawn: "Withdrawn",
     superseded: "Earlier proof"
   };
 
@@ -824,7 +833,7 @@ function itemDisplayName(item) {
 }
 
 function reportItemIsResolved(item) {
-  return ["approved", "found"].includes(item?.status);
+  return ["approved", "found", "not_found", "mismatch"].includes(item?.status);
 }
 
 function reportItemOutcome(item) {
@@ -987,11 +996,15 @@ function buildReportsCsv(rows) {
     "Location",
     "Serial",
     "Note",
-    "Submitted By",
+    "Reported By",
     "Updated"
   ];
   const values = (rows || []).map(item => {
-    const latest = latestSubmission(item);
+    const wasDirectlyVerified = Boolean(item.directVerifiedBy || item.directVerifiedByName || item.directVerifiedByEmail);
+    const latest = wasDirectlyVerified ? null : latestSubmission(item);
+    const reportedBy = item.directVerifiedByName
+      || item.directVerifiedByEmail
+      || (latest ? submissionPerson(latest) : "");
     return [
       item.sessionName || "",
       formatItemStatus(item.sessionStatus),
@@ -1002,11 +1015,11 @@ function buildReportsCsv(rows) {
       item.expectedQty ?? "",
       formatItemStatus(reportItemOutcome(item)),
       formatItemStatus(item.status),
-      latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof",
+      wasDirectlyVerified ? "Direct check" : latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof",
       latest?.locationText || item.inventoryItem?.currentLocation || item.locationHint || "",
       hasMeaningfulSerial(latest?.serialNumber) ? latest.serialNumber : "",
       latest?.note || latest?.reviewNote || "",
-      latest ? submissionPerson(latest) : "",
+      reportedBy,
       formatDate(latest?.createdAt || item.updatedAt || item.createdAt)
     ];
   });
@@ -1105,11 +1118,13 @@ function proofPhotoAlt(photo) {
 }
 
 function applicableProofRequest(history = [], evidence = null) {
-  if (evidence?.reviewState === "request_more_info" && evidence?.reviewNote) return evidence.reviewNote;
+  if (["request_more_info", "rejected"].includes(evidence?.reviewState) && evidence?.reviewNote) {
+    return evidence.reviewNote;
+  }
   const evidenceCreatedAt = Date.parse(evidence?.createdAt || "") || Number.POSITIVE_INFINITY;
   return history.find(historyItem => (
     historyItem.id !== evidence?.id &&
-    ["request_more_info", "superseded"].includes(historyItem.reviewState) &&
+    ["request_more_info", "rejected", "superseded"].includes(historyItem.reviewState) &&
     historyItem.reviewNote &&
     (Date.parse(historyItem.createdAt || "") || 0) <= evidenceCreatedAt
   ))?.reviewNote || "";
@@ -1436,33 +1451,27 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
         </div>
       ) : null}
 
-      <div className="segmented-control" role="group" aria-label="Inventory result">
-        {[
-          ["found", "Found / accounted for"],
-          ["not_found", "Not found"],
-          ["mismatch", "Mismatch"]
-        ].map(([value, label]) => (
-          <button
-            className={form.status === value ? "active" : ""}
-            type="button"
-            key={value}
-            aria-pressed={form.status === value}
-            autoFocus={value === "found"}
-            disabled={isSaving}
-            onClick={() => setForm(current => ({ ...current, status: value }))}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <label className="field-label" htmlFor={`proofResult-${item.id}`}>Inventory result</label>
+      <select
+        id={`proofResult-${item.id}`}
+        className="select proof-result-select"
+        value={form.status}
+        disabled={isSaving}
+        autoFocus
+        onChange={event => setForm(current => ({ ...current, status: event.target.value }))}
+      >
+        <option value="found">Found / accounted for</option>
+        <option value="not_found">Not found</option>
+        <option value="mismatch">Mismatch</option>
+      </select>
 
-      <div className={`proof-evidence-requirement ${form.photoFiles.length || hasMeaningfulAccountabilityNote(form.note) ? "satisfied" : ""}`} role="note">
-        <ShieldCheck aria-hidden="true" />
-        <div>
-          <strong>Item photo or accountability note required</strong>
-          <span>Use a photo when available. If the item is signed out, in maintenance, or confirmed elsewhere, note who verified it and its status.</span>
-        </div>
-      </div>
+      <details className={`proof-requirement-help ${form.photoFiles.length || hasMeaningfulAccountabilityNote(form.note) ? "satisfied" : ""}`}>
+        <summary>
+          <Info aria-hidden="true" />
+          <span>What counts as proof?</span>
+        </summary>
+        <p>Use a photo when available. If the item is signed out, in maintenance, or confirmed elsewhere, write who verified it and its status.</p>
+      </details>
 
       <label className="proof-field">
         <span>Location</span>
@@ -1734,7 +1743,8 @@ function SessionItemDrawer({
 
   const title = itemDisplayName(item);
   const latest = latestSubmission(item);
-  const needsMoreProof = latest?.reviewState === "request_more_info";
+  const isRejectedProof = latest?.reviewState === "rejected";
+  const needsMoreProof = latest?.reviewState === "request_more_info" || isRejectedProof;
   const pendingProof = latest?.reviewState === "pending";
   const isDirectCheckPending = Boolean(directCheckAction);
   const isAssignmentPending = Boolean(assignmentAction);
@@ -1800,7 +1810,7 @@ function SessionItemDrawer({
               <div className="session-detail-section-heading">
                 <div>
                   <p className="eyebrow">Proof</p>
-                  <h3>{needsMoreProof ? "Send the requested proof" : "Record what you found"}</h3>
+                  <h3>{isRejectedProof ? "Fix and resubmit" : needsMoreProof ? "Send the requested proof" : "Record what you found"}</h3>
                 </div>
                 <span>Photo or verification note</span>
               </div>
@@ -1819,8 +1829,8 @@ function SessionItemDrawer({
             <>
           <div className="session-item-drawer-summary">
             <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
-            <span>{item.expectedQty == null ? "Quantity not listed" : `Expected quantity ${item.expectedQty}`}</span>
-            <span>{assignedName ? `Assigned to ${assignedName}` : "Unassigned"}</span>
+            {item.expectedQty == null ? null : <span>Expected quantity {item.expectedQty}</span>}
+            {assignedName ? <span>Assigned to {assignedName}</span> : null}
           </div>
 
           {canManage && item.suggestedInventoryItem ? (
@@ -1832,84 +1842,66 @@ function SessionItemDrawer({
             />
           ) : null}
 
-          <details className="session-detail-section session-detail-disclosure">
-            <summary>
-              <span>
-                <small>Packet row</small>
-                <strong>Inventory details</strong>
-              </span>
-              <ChevronDown aria-hidden="true" />
-            </summary>
+          {(item.packetLine || item.locationHint || assignedName || item.assignedByName || item.assignedByEmail || item.directVerifiedByName || item.directVerifiedByEmail) ? (
+          <section className="session-detail-section session-detail-visible-section">
+            <div className="session-detail-section-heading"><div><p className="eyebrow">Packet row</p><h3>Inventory details</h3></div></div>
             <dl className="session-detail-facts">
-              <div>
+              {item.packetLine ? <div>
                 <dt>Packet line</dt>
-                <dd>{item.packetLine || "Not provided"}</dd>
-              </div>
-              <div>
+                <dd>{item.packetLine}</dd>
+              </div> : null}
+              {item.locationHint ? <div>
                 <dt>Location hint</dt>
-                <dd>{item.locationHint || "Not provided"}</dd>
-              </div>
-              <div>
+                <dd>{item.locationHint}</dd>
+              </div> : null}
+              {assignedName ? <div>
                 <dt>Assignment</dt>
-                <dd>{assignedName || "Unassigned"}</dd>
-              </div>
+                <dd>{assignedName}</dd>
+              </div> : null}
               {item.assignedByName || item.assignedByEmail ? (
                 <div>
                   <dt>Assigned by</dt>
                   <dd>{item.assignedByName || item.assignedByEmail}{item.assignedAt ? ` - ${formatDate(item.assignedAt)}` : ""}</dd>
                 </div>
               ) : null}
-              {item.directVerifiedByEmail ? (
+              {item.directVerifiedByName || item.directVerifiedByEmail ? (
                 <div>
                   <dt>Direct check</dt>
-                  <dd>{item.directVerifiedByEmail}</dd>
+                  <dd>{item.directVerifiedByName || item.directVerifiedByEmail}</dd>
                 </div>
               ) : null}
-              <div>
-                <dt>Last updated</dt>
-                <dd>{formatDate(item.updatedAt || item.createdAt)}</dd>
-              </div>
             </dl>
-          </details>
+          </section>
+          ) : null}
 
-          <details className="session-detail-section session-detail-disclosure">
-            <summary>
-              <span>
-                <small>Previous inventory</small>
-                <strong>Saved record</strong>
-              </span>
-              <span className="session-detail-summary-side">
-                {item.inventoryItem ? <span className="session-detail-match">Matched</span> : null}
-                <ChevronDown aria-hidden="true" />
-              </span>
-            </summary>
-            {item.inventoryItem ? (
-              <>
+          {item.inventoryItem ? (
+            <section className="session-detail-section session-detail-visible-section">
+              <div className="session-detail-section-heading"><div><p className="eyebrow">Previous inventory</p><h3>Saved record</h3></div><span className="session-detail-match">Matched</span></div>
                 <dl className="session-detail-facts">
-                  <div>
+                  {item.inventoryItem.commonName || item.inventoryItem.title ? <div>
                     <dt>Common name</dt>
-                    <dd>{item.inventoryItem.commonName || item.inventoryItem.title || "Not provided"}</dd>
-                  </div>
-                  <div>
+                    <dd>{item.inventoryItem.commonName || item.inventoryItem.title}</dd>
+                  </div> : null}
+                  {item.inventoryItem.armyName ? <div>
                     <dt>Army name</dt>
-                    <dd>{item.inventoryItem.armyName || "Not provided"}</dd>
-                  </div>
-                  <div>
+                    <dd>{item.inventoryItem.armyName}</dd>
+                  </div> : null}
+                  {item.inventoryItem.lin ? <div>
                     <dt>LIN</dt>
-                    <dd>{item.inventoryItem.lin || "Not provided"}</dd>
-                  </div>
-                  <div>
+                    <dd>{item.inventoryItem.lin}</dd>
+                  </div> : null}
+                  {item.inventoryItem.nsn ? <div>
                     <dt>NSN</dt>
-                    <dd>{item.inventoryItem.nsn || "Not provided"}</dd>
-                  </div>
-                  <div>
+                    <dd>{item.inventoryItem.nsn}</dd>
+                  </div> : null}
+                  {item.inventoryItem.currentLocation ? <div>
                     <dt>Known location</dt>
-                    <dd>{item.inventoryItem.currentLocation || "Not provided"}</dd>
-                  </div>
-                  <div>
+                    <dd>{item.inventoryItem.currentLocation}</dd>
+                  </div> : null}
+                  {item.inventoryItem.description ? <div>
                     <dt>Description</dt>
-                    <dd>{item.inventoryItem.description || "Not provided"}</dd>
-                  </div>
+                    <dd>{item.inventoryItem.description}</dd>
+                  </div> : null}
                 </dl>
                 {knownImages.length ? (
                   <div className="session-detail-known-photos" aria-label="Known item photos">
@@ -1920,21 +1912,12 @@ function SessionItemDrawer({
                     ))}
                   </div>
                 ) : null}
-              </>
-            ) : (
-              <p className="session-detail-empty">No saved item record is linked to this packet row yet.</p>
-            )}
-          </details>
+            </section>
+          ) : null}
 
-          <details className="session-detail-section session-detail-disclosure">
-            <summary>
-              <span>
-                <small>Traceability</small>
-                <strong>Packet source</strong>
-              </span>
-              <ChevronDown aria-hidden="true" />
-            </summary>
-            {importBatch ? (
+          {canManage && importBatch ? (
+            <section className="session-detail-section session-detail-visible-section">
+              <div className="session-detail-section-heading"><div><p className="eyebrow">Traceability</p><h3>Packet source</h3></div></div>
               <div className="session-detail-source">
                 <div>
                   <strong>{importBatch.sourceName || "Packet import"}</strong>
@@ -1954,25 +1937,12 @@ function SessionItemDrawer({
                   </a>
                 ) : null}
               </div>
-            ) : item.importBatchId ? (
-              <p className="session-detail-empty">Imported from a packet batch. Source details are available to platoon admins.</p>
-            ) : (
-              <p className="session-detail-empty">This row was added manually and is not linked to a packet batch.</p>
-            )}
-          </details>
+            </section>
+          ) : null}
 
-          <details className="session-detail-section session-detail-disclosure">
-            <summary>
-              <span>
-                <small>Evidence</small>
-                <strong>Proof history</strong>
-              </span>
-              <span className="session-detail-summary-side">
-                <span>{countLabel(item.submissions?.length || 0, "submission")}</span>
-                <ChevronDown aria-hidden="true" />
-              </span>
-            </summary>
-            {item.submissions?.length ? (
+          {item.submissions?.length ? (
+            <section className="session-detail-section session-detail-visible-section">
+              <div className="session-detail-section-heading"><div><p className="eyebrow">Evidence</p><h3>Proof history</h3></div><span>{countLabel(item.submissions.length, "submission")}</span></div>
               <div className="session-detail-proof-list">
                 {item.submissions.map(submission => (
                   <article className="session-detail-proof" key={submission.id}>
@@ -2002,20 +1972,12 @@ function SessionItemDrawer({
                   </article>
                 ))}
               </div>
-            ) : (
-              <p className="session-detail-empty">No proof has been submitted for this row.</p>
-            )}
-          </details>
+            </section>
+          ) : null}
 
           {canManage ? (
-            <details className="session-detail-section session-detail-disclosure session-item-manage-disclosure">
-              <summary>
-                <span>
-                  <small>Leader tools</small>
-                  <strong>Manage item</strong>
-                </span>
-                <ChevronDown aria-hidden="true" />
-              </summary>
+            <section className="session-detail-section session-detail-visible-section session-item-manage-disclosure">
+              <div className="session-detail-section-heading"><div><p className="eyebrow">Leader tools</p><h3>Manage item</h3></div></div>
               <label className="session-assignment-control">
                 <span>Assign to</span>
                 <select value={assignedMemberId} disabled={isAssignmentPending || isDirectCheckPending || isClosed} onChange={event => onAssign(event.target.value)}>
@@ -2028,17 +1990,18 @@ function SessionItemDrawer({
                 </select>
               </label>
               {!isClosed ? (
-                <div className="button-row session-item-direct-actions">
-                  <button className="btn btn-secondary btn-small" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => onDirectCheck("approved")}>
-                    <CheckCircle2 aria-hidden="true" />
-                    <span>{directCheckAction === "approved" ? "Marking found..." : "Mark found"}</span>
-                  </button>
-                  <button className="btn btn-secondary btn-small" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => onDirectCheck("not_found")}>
-                    <span>{directCheckAction === "not_found" ? "Marking not found..." : "Mark not found"}</span>
-                  </button>
-                </div>
+                <label className="session-assignment-control">
+                  <span>Set result</span>
+                  <select value="" disabled={isAssignmentPending || isDirectCheckPending} onChange={event => {
+                    if (event.target.value) onDirectCheck(event.target.value);
+                  }}>
+                    <option value="">{isDirectCheckPending ? "Saving result..." : "Choose a result"}</option>
+                    <option value="approved">Found / accounted for</option>
+                    <option value="not_found">Not found</option>
+                  </select>
+                </label>
               ) : null}
-            </details>
+            </section>
           ) : null}
 
             </>
@@ -2121,6 +2084,7 @@ function SessionPanel({
   const [assignmentActions, setAssignmentActions] = useState(() => new Map());
   const [matchActions, setMatchActions] = useState(() => new Map());
   const [sessionStatusActions, setSessionStatusActions] = useState(() => new Map());
+  const [withdrawingSubmissionId, setWithdrawingSubmissionId] = useState("");
   const [printReportId, setPrintReportId] = useState("");
   const [closedSessionLimit, setClosedSessionLimit] = useState(20);
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
@@ -2516,7 +2480,12 @@ function SessionPanel({
       return [];
     }
 
-    setStatus({ text: `Found ${rows.length} packet rows and ignored ${analysis.ignoredCount} non-item lines.`, isError: false });
+    setStatus({
+      text: analysis.ignoredCount
+        ? `${rows.length} item rows ready. ${analysis.ignoredCount} lines of headers or page text were skipped.`
+        : `${rows.length} item rows ready.`,
+      isError: false
+    });
     return rows;
   }
 
@@ -2702,6 +2671,26 @@ function SessionPanel({
     if (!summary) return;
     setPacketWizardSummary(summary);
     setPacketWizardStep(4);
+  }
+
+  async function withdrawSubmission(submission) {
+    if (!submission?.id || withdrawingSubmissionId) return;
+    setWithdrawingSubmissionId(submission.id);
+    setStatus({ text: "Withdrawing proof...", isError: false });
+    try {
+      await apiRequest(`/submissions/${submission.id}/withdraw`, {
+        method: "POST",
+        token,
+        tenantSlug
+      });
+      await loadSessions(selectedSessionId);
+      setStatus({ text: "Submission withdrawn. You can update the proof and submit it again.", isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+      await loadSessions(selectedSessionId);
+    } finally {
+      setWithdrawingSubmissionId("");
+    }
   }
 
   async function updateDirectCheck(sessionItemId, nextStatus) {
@@ -3174,8 +3163,8 @@ function SessionPanel({
   const openCount = openSessions.length;
   const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
   const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
-  const foundRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
-  const overallProgress = totalRows ? Math.round((foundRows / totalRows) * 100) : 0;
+  const resolvedRows = openSessions.reduce((total, session) => total + Number(session.completedCount ?? session.foundCount ?? 0), 0);
+  const overallProgress = totalRows ? Math.round((resolvedRows / totalRows) * 100) : 0;
 
   function renderSessionButton(session) {
     const progress = sessionProgress(session);
@@ -3336,7 +3325,7 @@ function SessionPanel({
                   </span>
                 </div>
                 <div className="admin-row-meta session-summary-actions">
-                  <span className="badge">{selectedSession.foundCount || 0} found</span>
+                  <span className="badge">{selectedSession.foundCount || 0} resolved</span>
                   <span className="badge">{selectedSession.needsReviewCount || 0} needs review</span>
                   {canManage && selectedSession.status === "active" && onInviteCrew ? (
                     <button className="btn btn-primary btn-small" type="button" onClick={() => onInviteCrew(selectedSession)}>
@@ -3489,8 +3478,14 @@ function SessionPanel({
               <div className="session-items" role="region" aria-label="Session row results">
                 {visibleDetailItems.length ? visibleDetailItems.map(item => {
                   const submission = latestSubmission(item);
-                  const needsMoreProof = submission?.reviewState === "request_more_info";
+                  const isRejectedProof = submission?.reviewState === "rejected";
+                  const needsMoreProof = submission?.reviewState === "request_more_info" || isRejectedProof;
                   const pendingProof = submission?.reviewState === "pending";
+                  const currentUserEmail = String(me?.user?.email || "").trim().toLowerCase();
+                  const canWithdrawProof = Boolean(pendingProof && submission && (
+                    submission.submittedBy === me?.user?.id
+                    || (currentUserEmail && String(submission.submittedByEmail || "").trim().toLowerCase() === currentUserEmail)
+                  ));
                   const knownLocation = item.inventoryItem?.currentLocation || "";
                   const assignedName = assignedPerson(item);
                   const assignedToCurrentUser = sessionItemAssignedToUser(item, me);
@@ -3520,7 +3515,7 @@ function SessionPanel({
                             </small>
                           ) : null}
                           {needsMoreProof && submission.reviewNote ? (
-                            <small className="session-proof-request">Requested: {submission.reviewNote}</small>
+                            <small className="session-proof-request">{isRejectedProof ? "Rejected" : "Requested"}: {submission.reviewNote}</small>
                           ) : null}
                           <small className={`session-assignment-summary ${assignedName ? "assigned" : ""}`}>
                             {assignedName ? `Assigned to ${assignedName}` : "Unassigned"}
@@ -3550,7 +3545,12 @@ function SessionPanel({
                             <span>{assignmentAction === "claim" ? "Claiming..." : "Claim item"}</span>
                           </button>
                         ) : null}
-                        {pendingProof && canManage && onOpenReview && !selectedSessionIsClosed ? (
+                        {canWithdrawProof && !selectedSessionIsClosed ? (
+                          <button className="btn btn-secondary btn-small session-row-primary-action" type="button" disabled={withdrawingSubmissionId === submission.id} onClick={() => withdrawSubmission(submission)}>
+                            <X aria-hidden="true" />
+                            <span>{withdrawingSubmissionId === submission.id ? "Withdrawing..." : "Withdraw submission"}</span>
+                          </button>
+                        ) : pendingProof && canManage && onOpenReview && !selectedSessionIsClosed ? (
                           <button className="btn btn-primary btn-small session-row-primary-action" type="button" onClick={onOpenReview}>
                             <MessageSquare aria-hidden="true" />
                             <span>Review proof</span>
@@ -3918,9 +3918,9 @@ function SessionPanel({
                         <small>low confidence</small>
                       </div>
                       <div>
-                        <span>Ignored</span>
+                        <span>Skipped page text</span>
                         <strong>{packetParseSummary.ignoredCount || 0}</strong>
-                        <small>headers, notes, or duplicates</small>
+                        <small>headers and page noise kept out</small>
                       </div>
                     </div>
                   ) : null}
@@ -3961,8 +3961,15 @@ function SessionPanel({
                         {packetDraftRows.map((row, index) => (
                           <div className="packet-review-row" key={row.id}>
                             <div className="packet-review-row-top">
-                              <span className="packet-row-number">{index + 1}</span>
-                              <span className={`packet-confidence ${row.confidence}`}>{row.confidence}</span>
+                              <span className="packet-row-number" aria-label={`Packet row ${index + 1}`}>{index + 1}</span>
+                              <span
+                                className={`packet-confidence ${row.confidence}`}
+                                title={`${row.confidence === "high" ? "High" : row.confidence === "medium" ? "Medium" : "Low"} parser confidence. Review the packet text and quantity before importing.`}
+                                aria-label={`${row.confidence} parser confidence`}
+                              >
+                                {row.confidence}
+                                <Info aria-hidden="true" />
+                              </span>
                               <button
                                 className="icon-button"
                                 type="button"
@@ -4094,7 +4101,7 @@ function SessionPanel({
                 </span>
                 <span>
                   <strong>{closeSessionTarget.foundCount || 0}</strong>
-                  found
+                  resolved
                 </span>
                 <span>
                   <strong>{closeSessionTarget.needsReviewCount || 0}</strong>
@@ -4353,9 +4360,9 @@ function savedEvidenceChoices(submission) {
 }
 
 function defaultSavedEvidenceIds(submission) {
-  const choices = savedEvidenceChoices(submission);
-  const saved = choices.filter(photo => photo.source === "saved");
-  return saved.slice(0, 3).map(photo => photo.mediaUploadId);
+  return savedEvidenceChoices(submission)
+    .slice(0, 3)
+    .map(photo => photo.mediaUploadId);
 }
 
 function SavedEvidencePicker({
@@ -4437,6 +4444,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
   const [requestingSubmissionId, setRequestingSubmissionId] = useState("");
   const [proofRequestMessage, setProofRequestMessage] = useState("");
   const [proofRequestFields, setProofRequestFields] = useState(["serial_photo", "wide_photo"]);
+  const [keepRejectedAssignment, setKeepRejectedAssignment] = useState(true);
   const [reviewActions, setReviewActions] = useState(() => new Map());
   const [savedEvidenceBySubmission, setSavedEvidenceBySubmission] = useState({});
   const [saveItemBySubmission, setSaveItemBySubmission] = useState({});
@@ -4446,7 +4454,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
   const reviewQueueRequestRef = useRef(0);
   const proofRequestOpenRef = useRef("");
   const hasSearchQuery = searchTerms(query).length > 0;
-  const isAnyProofRequestPending = [...reviewActions.values()].includes("request");
+  const isAnyProofRequestPending = [...reviewActions.values()].includes("reject");
   const visibleSubmissions = submissions.filter(submission => matchesSearch([
     submission.sessionItem?.packetLine,
     submission.session?.name,
@@ -4524,7 +4532,12 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
       setSaveItemBySubmission(current => {
         const next = {};
         nextSubmissions.forEach(submission => {
-          next[submission.id] = Boolean(current[submission.id]);
+          const canSaveReference = submission.status === "found"
+            && (submission.sessionItem?.expectedQty == null || Number(submission.sessionItem.expectedQty) === 1)
+            && !submission.sessionItem?.suggestedInventoryItem;
+          next[submission.id] = Object.prototype.hasOwnProperty.call(current, submission.id)
+            ? Boolean(current[submission.id])
+            : canSaveReference;
         });
         return next;
       });
@@ -4551,8 +4564,8 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
     };
   }, [Boolean(photoViewer)]);
 
-  async function review(submissionId, decision, note = "") {
-    if (proofRequestOpenRef.current === submissionId) return;
+  async function review(submissionId, decision, note = "", returnAssignment = "unassigned") {
+    if (proofRequestOpenRef.current === submissionId && decision !== "rejected") return;
     const submission = submissions.find(item => item.id === submissionId);
     const packetLine = submission?.sessionItem?.packetLine || "the submitted proof";
     const actionLabel = decision === "approved" ? "Approved" : "Rejected";
@@ -4577,6 +4590,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
         body: {
           decision,
           note,
+          ...(decision === "rejected" ? { returnAssignment } : {}),
           saveItem: shouldSaveItem,
           savedMediaUploadIds: shouldSaveItem ? (savedEvidenceBySubmission[submissionId] || []) : undefined
         }
@@ -4633,54 +4647,27 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
   }
 
   function openProofRequest(submission) {
-    if (proofRequestOpenRef.current || [...reviewActionRef.current.values()].includes("request") || reviewActionRef.current.has(submission.id)) return;
-    const defaultFields = hasMeaningfulSerial(submission.serialNumber) ? ["wide_photo", "location"] : ["serial_photo", "wide_photo"];
+    if (proofRequestOpenRef.current || [...reviewActionRef.current.values()].includes("reject") || reviewActionRef.current.has(submission.id)) return;
     proofRequestOpenRef.current = submission.id;
     setRequestingSubmissionId(submission.id);
-    setProofRequestFields(defaultFields);
-    setProofRequestMessage(buildProofRequestMessage(defaultFields));
-  }
-
-  function toggleProofRequestField(field) {
-    const next = proofRequestFields.includes(field)
-      ? proofRequestFields.filter(value => value !== field)
-      : [...proofRequestFields, field];
-    setProofRequestFields(next);
-    setProofRequestMessage(buildProofRequestMessage(next));
+    setProofRequestFields([]);
+    setProofRequestMessage("");
+    setKeepRejectedAssignment(true);
   }
 
   async function sendProofRequest(e) {
     e.preventDefault();
     const submissionId = requestingSubmissionId;
     const message = proofRequestMessage.trim();
-    if (!submissionId || !message) {
-      setStatus({ text: "Add what proof you need first.", isError: true });
+    if (!submissionId || message.length < 2) {
+      setStatus({ text: "Add a short reason so the submitter knows what to fix.", isError: true });
       return;
     }
-
-    const action = "request";
-    if (!beginReviewAction(submissionId, action)) return;
-    try {
-      setStatus({ text: "Sending proof request...", isError: false });
-      await apiRequest(`/submissions/${submissionId}/evidence-requests`, {
-        method: "POST",
-        token,
-        tenantSlug,
-        body: { message, requestedFields: proofRequestFields }
-      });
-      proofRequestOpenRef.current = "";
-      setRequestingSubmissionId("");
-      setProofRequestMessage("");
-      setProofRequestFields(["serial_photo", "wide_photo"]);
-      await loadQueue();
-      const submission = submissions.find(item => item.id === submissionId);
-      const packetLine = submission?.sessionItem?.packetLine || "the submitted proof";
-      setStatus({ text: `Proof request sent for ${packetLine}.`, isError: false });
-    } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
-    } finally {
-      finishReviewAction(submissionId, action);
-    }
+    proofRequestOpenRef.current = "";
+    setRequestingSubmissionId("");
+    setProofRequestMessage("");
+    setProofRequestFields([]);
+    await review(submissionId, "rejected", message, keepRejectedAssignment ? "submitter" : "unassigned");
   }
 
   function openPhotoViewer(submission, evidence, photos, index) {
@@ -4835,58 +4822,43 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
                 <span>{reviewActions.get(submission.id) === "approve" ? "Approving..." : submission.sessionItem?.suggestedInventoryItem ? "Check match first" : "Approve"}</span>
               </button>
               <button
-                className="btn btn-secondary btn-small"
+                className="btn btn-danger-soft btn-small"
                 type="button"
                 disabled={Boolean(reviewActions.get(submission.id)) || Boolean(requestingSubmissionId) || isAnyProofRequestPending}
                 onClick={() => openProofRequest(submission)}
               >
-                <Camera aria-hidden="true" />
-                <span>{requestingSubmissionId === submission.id ? "Request open" : "More proof"}</span>
-              </button>
-              <button
-                className="btn btn-danger-soft btn-small"
-                type="button"
-                disabled={Boolean(reviewActions.get(submission.id)) || requestingSubmissionId === submission.id}
-                onClick={() => review(submission.id, "rejected")}
-              >
                 <XCircle aria-hidden="true" />
-                <span>{reviewActions.get(submission.id) === "reject" ? "Rejecting..." : "Reject"}</span>
+                <span>{requestingSubmissionId === submission.id ? "Reason open" : "Reject"}</span>
               </button>
             </div>
 
             {requestingSubmissionId === submission.id ? (
               <form className="proof-request-form" onSubmit={sendProofRequest}>
-                <div className="proof-request-chips" role="group" aria-label="Requested proof">
-                  {proofRequestOptions.map(option => (
-                    <button
-                      className={proofRequestFields.includes(option.value) ? "active" : ""}
-                      type="button"
-                      key={option.value}
-                      aria-pressed={proofRequestFields.includes(option.value)}
-                      disabled={reviewActions.get(submission.id) === "request"}
-                      onClick={() => toggleProofRequestField(option.value)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <label className="field-label" htmlFor={`proofRequest-${submission.id}`}>Request note</label>
+                <label className="field-label" htmlFor={`proofRequest-${submission.id}`}>Reason for rejection</label>
                 <textarea
                   id={`proofRequest-${submission.id}`}
                   className="input proof-request-note"
                   value={proofRequestMessage}
-                  disabled={reviewActions.get(submission.id) === "request"}
+                  placeholder="Explain what is wrong or what evidence should be resubmitted."
+                  disabled={reviewActions.get(submission.id) === "reject"}
                   onChange={e => setProofRequestMessage(e.target.value)}
                 />
+                <label className="proof-return-assignment">
+                  <input type="checkbox" checked={keepRejectedAssignment} disabled={reviewActions.get(submission.id) === "reject"} onChange={event => setKeepRejectedAssignment(event.target.checked)} />
+                  <span>
+                    <strong>Keep assigned to the submitter</strong>
+                    <small>Turn this off to return the item to the unclaimed queue.</small>
+                  </span>
+                </label>
                 <div className="button-row">
-                  <button className="btn btn-primary btn-small" type="submit" disabled={reviewActions.get(submission.id) === "request"}>
-                    <Send aria-hidden="true" />
-                    <span>{reviewActions.get(submission.id) === "request" ? "Sending request..." : "Send request"}</span>
+                  <button className="btn btn-danger-soft btn-small" type="submit" disabled={reviewActions.get(submission.id) === "reject"}>
+                    <XCircle aria-hidden="true" />
+                    <span>{reviewActions.get(submission.id) === "reject" ? "Rejecting..." : "Reject with reason"}</span>
                   </button>
                   <button
                     className="btn btn-secondary btn-small"
                     type="button"
-                    disabled={reviewActions.get(submission.id) === "request"}
+                    disabled={reviewActions.get(submission.id) === "reject"}
                     onClick={() => {
                       if (reviewActionRef.current.has(submission.id)) return;
                       proofRequestOpenRef.current = "";
@@ -4936,9 +4908,12 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const [deliveries, setDeliveries] = useState([]);
   const [subscriberStats, setSubscriberStats] = useState({ pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 });
   const [deliverySettings, setDeliverySettings] = useState({ emailConfigured: false });
-  const [activeSection, setActiveSection] = useState("content");
+  const [activeSection, setActiveSection] = useState("overview");
   const [selectedIssueId, setSelectedIssueId] = useState("");
   const [selectedContentBlockId, setSelectedContentBlockId] = useState("");
+  const [isContentEditorOpen, setIsContentEditorOpen] = useState(false);
+  const [isIssueEditorOpen, setIsIssueEditorOpen] = useState(false);
+  const [selectedSubscriberId, setSelectedSubscriberId] = useState("");
   const [form, setForm] = useState(() => newsletterIssueForm());
   const [contentForm, setContentForm] = useState(() => frgContentForm());
   const [testEmail, setTestEmail] = useState(() => {
@@ -4965,6 +4940,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
   const selectedIssue = issues.find(issue => issue.id === selectedIssueId) || null;
   const selectedContentBlock = contentBlocks.find(block => block.id === selectedContentBlockId) || null;
+  const selectedSubscriber = subscribers.find(subscriber => subscriber.id === selectedSubscriberId) || null;
   const filteredContentBlocks = contentBlocks.filter(block => {
     const matchesType = contentTypeFilter === "all" || block.blockType === contentTypeFilter;
     const matchesQuery = matchesSearch([
@@ -5109,6 +5085,21 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isMobileNavOpen, isMobileViewport]);
 
+  useEffect(() => {
+    if (!isContentEditorOpen && !isIssueEditorOpen && !selectedSubscriberId) return undefined;
+
+    function handleDialogKeyDown(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (isContentEditorOpen) closeContentEditor();
+      if (isIssueEditorOpen) closeIssueEditor();
+      if (selectedSubscriberId) closeSubscriberDetails();
+    }
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => document.removeEventListener("keydown", handleDialogKeyDown);
+  }, [isContentEditorOpen, isIssueEditorOpen, selectedSubscriberId, contentAction, issueAction, newsletterActions]);
+
   function updateForm(key, value) {
     setForm(current => ({ ...current, [key]: value }));
   }
@@ -5141,6 +5132,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     if (newsletterActionRef.current.size) return;
     setSelectedContentBlockId(block.id);
     setContentForm(frgContentForm(block));
+    setIsContentEditorOpen(true);
     setActionStatus(current => current.scope === "content" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
     if (isMobileViewport) {
@@ -5152,7 +5144,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     if (newsletterActionRef.current.size) return;
     setSelectedContentBlockId("");
     setContentForm(frgContentForm());
-    setActiveSection("content");
+    setIsContentEditorOpen(true);
     setActionStatus(current => current.scope === "content" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "New homepage update ready.", isError: false });
     window.requestAnimationFrame(() => contentTitleRef.current?.focus());
@@ -5162,6 +5154,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     if (newsletterActionRef.current.size) return;
     setSelectedIssueId(issue.id);
     setForm(newsletterIssueForm(issue));
+    setIsIssueEditorOpen(true);
     setActionStatus(current => current.scope === "issue" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
     if (isMobileViewport) {
@@ -5173,6 +5166,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     if (newsletterActionRef.current.size) return;
     setSelectedIssueId("");
     setForm(newsletterIssueForm());
+    setIsIssueEditorOpen(true);
     setActionStatus(current => current.scope === "issue" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "New newsletter draft ready.", isError: false });
     window.requestAnimationFrame(() => issueTitleRef.current?.focus());
@@ -5190,6 +5184,29 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   function clearSubscriberFilters() {
     setSubscriberQuery("");
     setSubscriberStatusFilter("all");
+  }
+
+  function showSubscribers(statusFilter = "all") {
+    if (newsletterActionRef.current.size) return;
+    setSubscriberStatusFilter(statusFilter);
+    setSubscriberQuery("");
+    setActiveSection("subscribers");
+    closeNewsletterNav();
+  }
+
+  function closeContentEditor() {
+    if (contentAction) return;
+    setIsContentEditorOpen(false);
+  }
+
+  function closeIssueEditor() {
+    if (issueAction) return;
+    setIsIssueEditorOpen(false);
+  }
+
+  function closeSubscriberDetails() {
+    if (selectedSubscriberId && newsletterActions.get(`subscriber:${selectedSubscriberId}`)) return;
+    setSelectedSubscriberId("");
   }
 
   async function saveContentBlock(event) {
@@ -5248,6 +5265,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setContentBlocks(current => current.filter(block => block.id !== contentBlockId));
       setSelectedContentBlockId("");
       setContentForm(frgContentForm());
+      setIsContentEditorOpen(false);
       const refreshed = await loadNewsletter({ quiet: true, preferredContentBlockId: "" });
       if (!refreshed.ok && !refreshed.stale) {
         showActionStatus(scope, `Homepage update removed, but the latest list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
@@ -5365,6 +5383,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setDeliveries(current => current.filter(delivery => delivery.issueId !== issueId));
       setSelectedIssueId("");
       setForm(newsletterIssueForm());
+      setIsIssueEditorOpen(false);
       const refreshed = await loadNewsletter({ quiet: true, preferredIssueId: "" });
       const deliveryText = data.deletedDeliveries
         ? ` ${data.deletedDeliveries} delivery record${data.deletedDeliveries === 1 ? "" : "s"} removed.`
@@ -5531,6 +5550,35 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
     }
   }
 
+  async function removeSubscriber(subscriberId) {
+    const scope = `subscriber:${subscriberId}`;
+    const action = "remove";
+    if (!beginNewsletterAction(scope, action)) return;
+    const subscriber = subscribers.find(item => item.id === subscriberId);
+    const subscriberLabel = subscriber?.displayName || subscriber?.email || "Subscriber";
+    showActionStatus("subscribers", `Removing ${subscriberLabel} from newsletter delivery...`);
+    setStatus({ text: "", isError: false });
+    try {
+      const data = await apiRequest(`/newsletter/admin/subscribers/${subscriberId}/remove`, {
+        method: "POST",
+        token
+      });
+      if (data.subscriber) {
+        setSubscribers(current => current.map(item => item.id === subscriberId ? data.subscriber : item));
+      }
+      const refreshed = await loadNewsletter({ quiet: true });
+      if (!refreshed.ok && !refreshed.stale) {
+        showActionStatus("subscribers", `${subscriberLabel} was removed from delivery, but the latest list could not be loaded. ${getApiErrorMessage(refreshed.error)}`, true);
+      } else {
+        showActionStatus("subscribers", `${subscriberLabel} was removed from newsletter delivery. Their audit history was kept.`);
+      }
+    } catch (error) {
+      showActionStatus("subscribers", getApiErrorMessage(error), true);
+    } finally {
+      finishNewsletterAction(scope, action);
+    }
+  }
+
   async function refreshNewsletter() {
     const scope = "refresh";
     const action = "refresh";
@@ -5548,20 +5596,24 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   }
 
   const sectionMeta = {
-    content: {
-      title: "Public content",
-      copy: "Manage public announcements, events, and resources for the homepage."
+    overview: {
+      title: "Newsletter",
+      copy: "Choose what you want to manage: the public homepage, newsletter issues, or subscribers."
     },
     issues: {
       title: "Newsletter issues",
-      copy: "Write, publish, and track Black Shadow Company newsletter updates."
+      copy: "Create, review, and publish Black Shadow Company updates."
     },
     subscribers: {
       title: "Subscribers",
-      copy: "Review public signup requests and export newsletter contacts."
+      copy: "Review signup requests and manage the approved audience."
+    },
+    analytics: {
+      title: "Delivery analytics",
+      copy: "Review delivery results and export the newsletter delivery record."
     }
   };
-  const activeMeta = sectionMeta[activeSection] || sectionMeta.content;
+  const activeMeta = sectionMeta[activeSection] || sectionMeta.overview;
   const publishedContentCount = contentBlocks.filter(block => block.status === "published").length;
   const isEmailConfigured = Boolean(deliverySettings.emailConfigured);
   const subscriberEmptyTitle = subscribers.length
@@ -5588,9 +5640,9 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         </div>
 
         <nav className="platform-nav" aria-label="Newsletter admin">
-          <button className={activeSection === "content" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("content")}>
-            <Megaphone aria-hidden="true" />
-            <span>Public content</span>
+          <button className={activeSection === "overview" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("overview")}>
+            <Home aria-hidden="true" />
+            <span>Overview</span>
           </button>
           <button className={activeSection === "issues" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("issues")}>
             <FileText aria-hidden="true" />
@@ -5599,6 +5651,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
           <button className={activeSection === "subscribers" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("subscribers")}>
             <Users aria-hidden="true" />
             <span>Subscribers</span>
+          </button>
+          <button className={activeSection === "analytics" ? "active" : ""} type="button" disabled={hasNewsletterAction} onClick={() => selectNewsletterSection("analytics")}>
+            <BarChart3 aria-hidden="true" />
+            <span>Analytics</span>
           </button>
           {me?.isPlatformAdmin ? (
             <button type="button" onClick={() => window.location.assign("/#/admin")}>
@@ -5676,33 +5732,35 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               <p>{activeMeta.copy}</p>
             </div>
             <div className="newsletter-heading-actions">
-              {activeSection !== "content" ? (
+              {activeSection !== "overview" ? (
                 <span className={`newsletter-delivery-status ${isEmailConfigured ? "ready" : "offline"}`} title={isEmailConfigured ? "Newsletter email delivery is configured." : "Newsletter email delivery is not configured in this environment."}>
                   <MailPlus aria-hidden="true" />
                   <span>{isEmailConfigured ? "Email ready" : "Email offline"}</span>
                 </span>
               ) : null}
-              <a className="btn btn-secondary" href={`https://${appConfig.baseDomain}/`} target="_blank" rel="noreferrer">
-                <Home aria-hidden="true" />
-                <span>View public site</span>
-              </a>
-              {activeSection === "content" ? (
-                <button className="btn btn-primary" type="button" disabled={newsletterLoadState !== "ready" || Boolean(contentAction)} onClick={startNewContentBlock}>
-                  <Plus aria-hidden="true" />
-                  <span>Add homepage update</span>
-                </button>
+              {activeSection === "overview" ? (
+                <a className="btn btn-secondary" href={`https://${appConfig.baseDomain}/`} target="_blank" rel="noreferrer">
+                  <ExternalLink aria-hidden="true" />
+                  <span>Preview homepage</span>
+                </a>
               ) : null}
               {activeSection === "issues" ? (
-                <>
-                  <button className="btn btn-secondary" type="button" onClick={exportDeliveries} disabled={!deliveries.length}>
-                    <Download aria-hidden="true" />
-                    <span>Export deliveries</span>
-                  </button>
-                  <button className="btn btn-primary" type="button" disabled={newsletterLoadState !== "ready" || Boolean(issueAction)} onClick={startNewDraft}>
-                    <Plus aria-hidden="true" />
-                    <span>Write newsletter</span>
-                  </button>
-                </>
+                <button className="btn btn-primary" type="button" disabled={newsletterLoadState !== "ready" || Boolean(issueAction)} onClick={startNewDraft}>
+                  <Plus aria-hidden="true" />
+                  <span>Create issue</span>
+                </button>
+              ) : null}
+              {activeSection === "subscribers" ? (
+                <button className="btn btn-secondary" type="button" onClick={exportSubscribers} disabled={!subscribers.length}>
+                  <Download aria-hidden="true" />
+                  <span>Export subscribers</span>
+                </button>
+              ) : null}
+              {activeSection === "analytics" ? (
+                <button className="btn btn-secondary" type="button" onClick={exportDeliveries} disabled={!deliveries.length}>
+                  <Download aria-hidden="true" />
+                  <span>Export deliveries</span>
+                </button>
               ) : null}
             </div>
           </div>
@@ -5733,92 +5791,111 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             </div>
           ) : null}
 
-          {newsletterLoadState === "ready" ? (
-          <section className="platform-stat-grid newsletter-stat-grid" aria-label="Newsletter totals">
-            {activeSection === "content" ? (
-              <>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon blue">
-                    <Megaphone aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{contentBlocks.length}</strong>
-                    <span>Total blocks</span>
-                  </div>
+          {newsletterLoadState === "ready" && (activeSection === "overview" || activeSection === "issues") ? (
+            <section className="platform-stat-grid newsletter-stat-grid newsletter-subscriber-summary" aria-label="Subscriber requests">
+              <button className="platform-stat-card newsletter-stat-link" type="button" onClick={() => showSubscribers("pending")}>
+                <span className="platform-stat-icon blue"><ShieldCheck aria-hidden="true" /></span>
+                <div>
+                  <strong>{subscriberStats.pending || 0}</strong>
+                  <span>Pending requests</span>
                 </div>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon green">
-                    <CheckCircle2 aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{publishedContentCount}</strong>
-                    <span>Published</span>
-                  </div>
+                <ArrowRight aria-hidden="true" />
+              </button>
+              <button className="platform-stat-card newsletter-stat-link" type="button" onClick={() => showSubscribers("active")}>
+                <span className="platform-stat-icon green"><Users aria-hidden="true" /></span>
+                <div>
+                  <strong>{subscriberStats.active || 0}</strong>
+                  <span>Approved subscribers</span>
                 </div>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon amber">
-                    <CalendarDays aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{contentBlocks.filter(block => block.blockType === "event").length}</strong>
-                    <span>Events</span>
-                  </div>
-                </div>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon purple">
-                    <ShieldCheck aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{contentBlocks.filter(block => block.blockType === "resource").length}</strong>
-                    <span>Resources</span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon blue">
-                    <ShieldCheck aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{subscriberStats.pending || 0}</strong>
-                    <span>Pending requests</span>
-                  </div>
-                </div>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon green">
-                    <Users aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{subscriberStats.active || 0}</strong>
-                    <span>Approved subscribers</span>
-                  </div>
-                </div>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon amber">
-                    <Send aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{issues.reduce((sum, issue) => sum + Number(issue.sentCount || 0), 0)}</strong>
-                    <span>Emails sent</span>
-                  </div>
-                </div>
-                <div className="platform-stat-card">
-                  <span className="platform-stat-icon purple">
-                    <CheckCircle2 aria-hidden="true" />
-                  </span>
-                  <div>
-                    <strong>{issues.filter(issue => issue.status === "published").length}</strong>
-                    <span>Published issues</span>
-                  </div>
-                </div>
-              </>
-            )}
-          </section>
+                <ArrowRight aria-hidden="true" />
+              </button>
+            </section>
           ) : null}
 
-          {newsletterLoadState === "ready" && activeSection === "content" ? (
-            <div className="newsletter-admin-grid frg-content-admin-grid">
+          {newsletterLoadState === "ready" && activeSection === "overview" ? (
+            <section className="newsletter-overview-grid" aria-label="Newsletter management">
+              <article className="platform-table-card newsletter-overview-card">
+                <span className="newsletter-overview-icon blue"><Megaphone aria-hidden="true" /></span>
+                <div>
+                  <p className="eyebrow">Public homepage</p>
+                  <h2>Homepage updates</h2>
+                  <p>Preview what visitors see or update the announcements, events, and resources shown on the public site.</p>
+                </div>
+                <dl className="newsletter-overview-facts">
+                  <div><dt>Published</dt><dd>{publishedContentCount}</dd></div>
+                  <div><dt>Drafts</dt><dd>{Math.max(0, contentBlocks.length - publishedContentCount)}</dd></div>
+                </dl>
+                <div className="button-row">
+                  <a className="btn btn-secondary" href={`https://${appConfig.baseDomain}/`} target="_blank" rel="noreferrer">
+                    <ExternalLink aria-hidden="true" />
+                    <span>Preview homepage</span>
+                  </a>
+                  <button className="btn btn-primary" type="button" onClick={() => selectedContentBlock ? selectContentBlock(selectedContentBlock) : startNewContentBlock()}>
+                    <FileText aria-hidden="true" />
+                    <span>Update homepage</span>
+                  </button>
+                </div>
+              </article>
+
+              <article className="platform-table-card newsletter-overview-card">
+                <span className="newsletter-overview-icon green"><MailPlus aria-hidden="true" /></span>
+                <div>
+                  <p className="eyebrow">Email newsletter</p>
+                  <h2>Newsletter issues</h2>
+                  <p>Manage previous issues, prepare the next update, and publish it to approved subscribers.</p>
+                </div>
+                <dl className="newsletter-overview-facts">
+                  <div><dt>Total issues</dt><dd>{issues.length}</dd></div>
+                  <div><dt>Published</dt><dd>{issues.filter(issue => issue.status === "published").length}</dd></div>
+                </dl>
+                <div className="button-row">
+                  <button className="btn btn-secondary" type="button" onClick={() => selectNewsletterSection("issues")}>
+                    <ListChecks aria-hidden="true" />
+                    <span>Manage issues</span>
+                  </button>
+                  <button className="btn btn-primary" type="button" onClick={startNewDraft}>
+                    <Plus aria-hidden="true" />
+                    <span>Create issue</span>
+                  </button>
+                </div>
+              </article>
+
+              <article className="platform-table-card newsletter-overview-card newsletter-overview-card-wide">
+                <span className="newsletter-overview-icon purple"><Users aria-hidden="true" /></span>
+                <div>
+                  <p className="eyebrow">Audience</p>
+                  <h2>Subscribers</h2>
+                  <p>Review pending signup requests and audit the people currently approved to receive issues.</p>
+                </div>
+                <dl className="newsletter-overview-facts">
+                  <div><dt>Pending</dt><dd>{subscriberStats.pending || 0}</dd></div>
+                  <div><dt>Approved</dt><dd>{subscriberStats.active || 0}</dd></div>
+                </dl>
+                <div className="button-row">
+                  <button className="btn btn-primary" type="button" onClick={() => showSubscribers("all")}>
+                    <Users aria-hidden="true" />
+                    <span>Manage subscribers</span>
+                  </button>
+                </div>
+              </article>
+            </section>
+          ) : null}
+
+          {newsletterLoadState === "ready" && isContentEditorOpen ? (
+            <div className="modal-backdrop newsletter-modal-backdrop" role="presentation" onMouseDown={event => {
+              if (event.target === event.currentTarget) closeContentEditor();
+            }}>
+              <div className="modal-panel newsletter-management-modal" role="dialog" aria-modal="true" aria-labelledby="homepageEditorTitle">
+                <div className="newsletter-modal-heading">
+                  <div>
+                    <p className="eyebrow">Public homepage</p>
+                    <h2 id="homepageEditorTitle">Manage homepage updates</h2>
+                  </div>
+                  <button className="icon-button" type="button" aria-label="Close homepage editor" disabled={Boolean(contentAction)} onClick={closeContentEditor}>
+                    <X aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="newsletter-admin-grid frg-content-admin-grid">
               <section className="platform-table-card newsletter-issue-list-card">
                 <div className="platform-table-toolbar">
                   <div className="platform-search" role="search">
@@ -5843,6 +5920,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <option key={type.value} value={type.value}>{type.label}</option>
                     ))}
                   </select>
+                  <button className="btn btn-primary btn-small" type="button" disabled={Boolean(contentAction)} onClick={startNewContentBlock}>
+                    <Plus aria-hidden="true" />
+                    <span>New update</span>
+                  </button>
                 </div>
 
                 <div className="newsletter-issue-list frg-content-list">
@@ -6027,11 +6108,13 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                   </aside>
                 </div>
               </section>
+                </div>
+              </div>
             </div>
           ) : null}
 
           {newsletterLoadState === "ready" && activeSection === "issues" ? (
-          <div className="newsletter-admin-grid">
+          <div className="newsletter-issues-management">
             <section className="platform-table-card newsletter-issue-list-card">
               <div className="platform-table-toolbar">
                 <div className="platform-search" role="search">
@@ -6047,22 +6130,34 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                 </div>
               </div>
 
-              <div className="newsletter-issue-list">
-                {filteredIssues.length ? filteredIssues.map(issue => (
-                  <button
-                    className={issue.id === selectedIssueId ? "newsletter-issue-button active" : "newsletter-issue-button"}
-                    type="button"
-                    key={issue.id}
-                    disabled={Boolean(issueAction)}
-                    onClick={() => selectIssue(issue)}
-                  >
-                    <span>
-                      <strong>{issue.title}</strong>
-                      <small>{issue.editionLabel || formatShortDate(issue.createdAt)}</small>
-                    </span>
-                    <span className={`status-pill ${issue.status}`}>{issue.status}</span>
-                  </button>
-                )) : (
+              {filteredIssues.length ? (
+                <div className="newsletter-management-table" role="table" aria-label="Newsletter issues">
+                  <div className="newsletter-management-table-head newsletter-issue-table-row" role="row">
+                    <span role="columnheader">Issue</span>
+                    <span role="columnheader">Status</span>
+                    <span role="columnheader">Published / updated</span>
+                    <span role="columnheader">Recipients</span>
+                    <span role="columnheader"><span className="sr-only">Actions</span></span>
+                  </div>
+                  {filteredIssues.map(issue => (
+                    <div className="newsletter-management-table-row newsletter-issue-table-row" role="row" key={issue.id}>
+                      <div role="cell">
+                        <strong>{issue.title}</strong>
+                        {issue.editionLabel ? <small>{issue.editionLabel}</small> : null}
+                      </div>
+                      <div role="cell"><span className={`status-pill ${issue.status}`}>{issue.status}</span></div>
+                      <span role="cell">{formatShortDate(issue.publishedAt || issue.updatedAt || issue.createdAt)}</span>
+                      <span role="cell">{issue.status === "published" ? countLabel(Number(issue.sentCount || 0), "delivery") : "Not sent"}</span>
+                      <div role="cell">
+                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(issueAction)} onClick={() => selectIssue(issue)}>
+                          <FileText aria-hidden="true" />
+                          <span>{issue.status === "published" ? "View" : "Edit"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
                   <EmptyPanel
                     title={hasIssueSearch ? "No matching newsletters" : "No newsletters yet"}
                     body={hasIssueSearch ? "Clear the search to see every newsletter." : "Write the first newsletter and save it as a draft before publishing."}
@@ -6072,13 +6167,26 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <button className="btn btn-primary btn-small" type="button" onClick={startNewDraft}>Write first newsletter</button>
                     )}
                   />
-                )}
-              </div>
+              )}
             </section>
 
-            <section className="platform-table-card newsletter-editor-card">
-              <div className="newsletter-editor-layout">
-                <form className="newsletter-editor-form" onSubmit={saveIssue} aria-busy={Boolean(issueAction)}>
+            {isIssueEditorOpen ? (
+              <div className="modal-backdrop newsletter-modal-backdrop" role="presentation" onMouseDown={event => {
+                if (event.target === event.currentTarget) closeIssueEditor();
+              }}>
+                <div className="modal-panel newsletter-management-modal newsletter-issue-modal" role="dialog" aria-modal="true" aria-labelledby="newsletterIssueEditorTitle">
+                  <div className="newsletter-modal-heading">
+                    <div>
+                      <p className="eyebrow">Newsletter issue</p>
+                      <h2 id="newsletterIssueEditorTitle">{selectedIssueId ? (selectedIssue?.status === "published" ? "View issue" : "Edit issue") : "Create issue"}</h2>
+                    </div>
+                    <button className="icon-button" type="button" aria-label="Close issue editor" disabled={Boolean(issueAction)} onClick={closeIssueEditor}>
+                      <X aria-hidden="true" />
+                    </button>
+                  </div>
+                  <section className="platform-table-card newsletter-editor-card">
+                    <div className="newsletter-editor-layout">
+                      <form className="newsletter-editor-form" onSubmit={saveIssue} aria-busy={Boolean(issueAction)}>
                   <div className="newsletter-editor-heading">
                     <div>
                       <p className="eyebrow">{selectedIssue?.status || "Draft"}</p>
@@ -6196,45 +6304,12 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                       <p className="muted-copy">The issue preview appears as you write.</p>
                     )}
                   </div>
-                  <div className="newsletter-delivery-log">
-                    <div className="newsletter-delivery-log-heading">
-                      <div>
-                        <strong>Delivery records</strong>
-                        <span>{selectedIssueDeliveries.length ? countLabel(selectedIssueDeliveries.length, "recipient") : "No delivery records yet"}</span>
-                      </div>
-                      <button
-                        className="btn btn-secondary btn-small"
-                        type="button"
-                        onClick={exportSelectedIssueDeliveries}
-                        disabled={!selectedIssueDeliveries.length}
-                      >
-                        <Download aria-hidden="true" />
-                        <span>Export</span>
-                      </button>
-                    </div>
-                    {selectedIssueDeliveries.length ? (
-                      <div className="newsletter-delivery-list">
-                        {selectedIssueDeliveries.map(delivery => (
-                          <div className="newsletter-delivery-row" key={delivery.id}>
-                            <div>
-                              <strong>{delivery.subscriberName || delivery.email}</strong>
-                              <span>{delivery.email}</span>
-                              {delivery.error ? <small>{delivery.error}</small> : null}
-                            </div>
-                            <div className="newsletter-delivery-row-meta">
-                              <span className={`status-pill ${delivery.status}`}>{deliveryStatusLabel(delivery.status)}</span>
-                              <small>{delivery.sentAt ? formatDate(delivery.sentAt) : formatDate(delivery.createdAt)}</small>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="muted-copy">Publish the issue to create delivery records for approved subscribers.</p>
-                    )}
-                  </div>
                 </aside>
               </div>
             </section>
+                </div>
+              </div>
+            ) : null}
           </div>
           ) : null}
 
@@ -6280,92 +6355,31 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             </div>
 
             {filteredSubscribers.length ? (
-              <div className="newsletter-subscriber-list">
-                {filteredSubscribers.map(subscriber => {
-                  const canApprove = subscriber.status === "pending" || subscriber.status === "rejected";
-                  const canReject = subscriber.status === "pending";
-                  const subscriberAction = newsletterActions.get(`subscriber:${subscriber.id}`) || "";
-                  const isReviewing = Boolean(subscriberAction);
-                  const noteValue = reviewNotes[subscriber.id] ?? "";
-                  const details = [
-                    subscriber.reviewNote ? ["Review note", subscriber.reviewNote] : null,
-                    subscriber.reviewedAt ? ["Reviewed", formatDate(subscriber.reviewedAt)] : null,
-                    subscriber.lastDeliveryAt ? [
-                      "Last delivery",
-                      `${deliveryStatusLabel(subscriber.lastDeliveryStatus)}${subscriber.lastDeliveryIssueTitle ? ` for ${subscriber.lastDeliveryIssueTitle}` : ""} on ${formatDate(subscriber.lastDeliveryAt)}`
-                    ] : null,
-                    subscriber.lastDeliveryError ? ["Delivery note", subscriber.lastDeliveryError] : null
-                  ].filter(Boolean);
-
-                  return (
-                  <article className="admin-list-row" key={subscriber.id} aria-busy={isReviewing}>
-                    <div className="newsletter-subscriber-main">
-                      <strong>{subscriber.displayName || subscriber.email}</strong>
-                      <span>{subscriber.email}</span>
-                      <span>{subscriber.platoon || "No connection provided"}</span>
-                      <span>Unit contact: {subscriber.supervisorName || "Not provided"}</span>
-                      {details.length ? (
-                        <details className="newsletter-subscriber-details">
-                          <summary>Details</summary>
-                          <dl>
-                            {details.map(([label, value]) => (
-                              <div key={label}>
-                                <dt>{label}</dt>
-                                <dd>{value}</dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </details>
-                      ) : null}
-                      {canApprove || canReject ? (
-                        <label className="newsletter-review-note">
-                          <span>Optional review note</span>
-                          <textarea
-                            className="input"
-                            value={noteValue}
-                            disabled={isReviewing}
-                            placeholder="Private note for this request..."
-                            maxLength={600}
-                            onChange={event => updateReviewNote(subscriber.id, event.target.value)}
-                          />
-                        </label>
-                      ) : null}
+              <div className="newsletter-management-table newsletter-subscriber-table" role="table" aria-label="Newsletter subscribers">
+                <div className="newsletter-management-table-head newsletter-subscriber-table-row" role="row">
+                  <span role="columnheader">Name</span>
+                  <span role="columnheader">Platoon</span>
+                  <span role="columnheader">Status</span>
+                  <span role="columnheader">Requested</span>
+                  <span role="columnheader"><span className="sr-only">Actions</span></span>
+                </div>
+                {filteredSubscribers.map(subscriber => (
+                  <div className="newsletter-management-table-row newsletter-subscriber-table-row" role="row" key={subscriber.id}>
+                    <div role="cell">
+                      <strong>{subscriber.displayName || "Subscriber request"}</strong>
+                      {subscriber.supervisorName ? <small>Unit contact: {subscriber.supervisorName}</small> : null}
                     </div>
-                    <div className="admin-row-meta newsletter-subscriber-meta">
-                      <div className="newsletter-subscriber-state">
-                        <span className={`status-pill ${subscriber.status}`}>{subscriber.status}</span>
-                        <span className="badge">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
-                      </div>
-                      {canApprove || canReject ? (
-                        <div className="newsletter-subscriber-actions">
-                          {canApprove ? (
-                            <button
-                              className="btn btn-primary btn-small"
-                              type="button"
-                              disabled={isReviewing}
-                              onClick={() => reviewSubscriber(subscriber.id, "approved")}
-                            >
-                              <CheckCircle2 aria-hidden="true" />
-                              <span>{subscriberAction === "approved" ? "Approving..." : "Approve"}</span>
-                            </button>
-                          ) : null}
-                          {canReject ? (
-                            <button
-                              className="btn btn-danger-soft btn-small"
-                              type="button"
-                              disabled={isReviewing}
-                              onClick={() => reviewSubscriber(subscriber.id, "rejected")}
-                            >
-                              <XCircle aria-hidden="true" />
-                              <span>{subscriberAction === "rejected" ? "Rejecting..." : "Reject"}</span>
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : null}
+                    <span role="cell">{subscriber.platoon || "—"}</span>
+                    <div role="cell"><span className={`status-pill ${subscriber.status}`}>{subscriber.status === "active" ? "approved" : subscriber.status}</span></div>
+                    <span role="cell">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
+                    <div role="cell">
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => setSelectedSubscriberId(subscriber.id)}>
+                        <Users aria-hidden="true" />
+                        <span>View details</span>
+                      </button>
                     </div>
-                  </article>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             ) : (
               <EmptyPanel
@@ -6382,6 +6396,135 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             )}
           </section>
           ) : null}
+
+          {newsletterLoadState === "ready" && activeSection === "analytics" ? (
+            <div className="newsletter-analytics-layout">
+              <section className="platform-stat-grid newsletter-stat-grid" aria-label="Delivery totals">
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon blue"><Send aria-hidden="true" /></span>
+                  <div><strong>{deliveries.length}</strong><span>Delivery records</span></div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon green"><CheckCircle2 aria-hidden="true" /></span>
+                  <div><strong>{deliveries.filter(delivery => delivery.status === "sent").length}</strong><span>Delivered</span></div>
+                </div>
+                <div className="platform-stat-card">
+                  <span className="platform-stat-icon amber"><AlertCircle aria-hidden="true" /></span>
+                  <div><strong>{deliveries.filter(delivery => delivery.status !== "sent").length}</strong><span>Skipped or failed</span></div>
+                </div>
+              </section>
+
+              <section className="platform-table-card newsletter-delivery-analytics-card">
+                <div className="newsletter-subscriber-heading">
+                  <div>
+                    <h2>Delivery records</h2>
+                    <p>Each attempted recipient delivery is kept here for audit and troubleshooting.</p>
+                  </div>
+                  <button className="btn btn-secondary btn-small" type="button" onClick={exportDeliveries} disabled={!deliveries.length}>
+                    <Download aria-hidden="true" />
+                    <span>Export CSV</span>
+                  </button>
+                </div>
+                {deliveries.length ? (
+                  <div className="newsletter-management-table newsletter-delivery-table" role="table" aria-label="Newsletter delivery records">
+                    <div className="newsletter-management-table-head newsletter-delivery-table-row" role="row">
+                      <span role="columnheader">Issue</span>
+                      <span role="columnheader">Subscriber</span>
+                      <span role="columnheader">Status</span>
+                      <span role="columnheader">Recorded</span>
+                    </div>
+                    {deliveries.map(delivery => (
+                      <div className="newsletter-management-table-row newsletter-delivery-table-row" role="row" key={delivery.id}>
+                        <div role="cell"><strong>{delivery.issueTitle || "Newsletter issue"}</strong></div>
+                        <div role="cell">
+                          <strong>{delivery.subscriberName || "Subscriber"}</strong>
+                          {delivery.error ? <small>{delivery.error}</small> : null}
+                        </div>
+                        <div role="cell"><span className={`status-pill ${delivery.status}`}>{deliveryStatusLabel(delivery.status)}</span></div>
+                        <span role="cell">{delivery.sentAt ? formatDate(delivery.sentAt) : formatDate(delivery.createdAt)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyPanel title="No delivery records yet" body="Delivery records will appear here after an issue is published." />
+                )}
+              </section>
+            </div>
+          ) : null}
+
+          {selectedSubscriber ? (
+            <div className="modal-backdrop newsletter-modal-backdrop" role="presentation" onMouseDown={event => {
+              if (event.target === event.currentTarget) closeSubscriberDetails();
+            }}>
+              <div className="modal-panel newsletter-subscriber-modal" role="dialog" aria-modal="true" aria-labelledby="subscriberDetailsTitle">
+                <div className="newsletter-modal-heading">
+                  <div>
+                    <p className="eyebrow">Subscriber details</p>
+                    <h2 id="subscriberDetailsTitle">{selectedSubscriber.displayName || "Subscriber request"}</h2>
+                  </div>
+                  <button className="icon-button" type="button" aria-label="Close subscriber details" disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))} onClick={closeSubscriberDetails}>
+                    <X aria-hidden="true" />
+                  </button>
+                </div>
+
+                <StatusLine status={actionStatus.scope === "subscribers" ? actionStatus : { text: "", isError: false }} />
+
+                <dl className="newsletter-subscriber-detail-list">
+                  <div><dt>Status</dt><dd><span className={`status-pill ${selectedSubscriber.status}`}>{selectedSubscriber.status === "active" ? "approved" : selectedSubscriber.status}</span></dd></div>
+                  <div><dt>Email</dt><dd>{selectedSubscriber.email}</dd></div>
+                  {selectedSubscriber.platoon ? <div><dt>Platoon</dt><dd>{selectedSubscriber.platoon}</dd></div> : null}
+                  {selectedSubscriber.supervisorName ? <div><dt>Unit contact</dt><dd>{selectedSubscriber.supervisorName}</dd></div> : null}
+                  <div><dt>Requested</dt><dd>{formatDate(selectedSubscriber.lastSubscribedAt || selectedSubscriber.createdAt)}</dd></div>
+                  {selectedSubscriber.reviewedAt ? <div><dt>Reviewed</dt><dd>{formatDate(selectedSubscriber.reviewedAt)}</dd></div> : null}
+                  {selectedSubscriber.reviewNote ? <div><dt>Review note</dt><dd>{selectedSubscriber.reviewNote}</dd></div> : null}
+                  {selectedSubscriber.lastDeliveryAt ? (
+                    <div><dt>Last delivery</dt><dd>{deliveryStatusLabel(selectedSubscriber.lastDeliveryStatus)}{selectedSubscriber.lastDeliveryIssueTitle ? ` · ${selectedSubscriber.lastDeliveryIssueTitle}` : ""} · {formatDate(selectedSubscriber.lastDeliveryAt)}</dd></div>
+                  ) : null}
+                  {selectedSubscriber.lastDeliveryError ? <div><dt>Delivery note</dt><dd>{selectedSubscriber.lastDeliveryError}</dd></div> : null}
+                </dl>
+
+                {selectedSubscriber.status !== "active" || selectedSubscriber.status === "pending" ? (
+                  <label className="newsletter-review-note">
+                    <span>Optional private review note</span>
+                    <textarea
+                      className="input"
+                      value={reviewNotes[selectedSubscriber.id] ?? ""}
+                      disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))}
+                      placeholder="Add context for this review..."
+                      maxLength={600}
+                      onChange={event => updateReviewNote(selectedSubscriber.id, event.target.value)}
+                    />
+                  </label>
+                ) : null}
+
+                <div className="modal-actions newsletter-subscriber-modal-actions">
+                  {selectedSubscriber.status === "pending" || selectedSubscriber.status === "rejected" || selectedSubscriber.status === "unsubscribed" ? (
+                    <button className="btn btn-primary" type="button" disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))} onClick={() => reviewSubscriber(selectedSubscriber.id, "approved")}>
+                      <CheckCircle2 aria-hidden="true" />
+                      <span>{newsletterActions.get(`subscriber:${selectedSubscriber.id}`) === "approved" ? "Approving..." : "Approve subscriber"}</span>
+                    </button>
+                  ) : null}
+                  {selectedSubscriber.status === "pending" ? (
+                    <button className="btn btn-danger-soft" type="button" disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))} onClick={() => reviewSubscriber(selectedSubscriber.id, "rejected")}>
+                      <XCircle aria-hidden="true" />
+                      <span>{newsletterActions.get(`subscriber:${selectedSubscriber.id}`) === "rejected" ? "Rejecting..." : "Reject request"}</span>
+                    </button>
+                  ) : null}
+                  {selectedSubscriber.status === "active" ? (
+                    <button className="btn btn-danger-soft" type="button" disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))} onClick={() => {
+                      if (window.confirm(`Remove ${selectedSubscriber.displayName || "this subscriber"} from the approved newsletter list? Their audit history will be kept.`)) {
+                        removeSubscriber(selectedSubscriber.id);
+                      }
+                    }}>
+                      <Trash2 aria-hidden="true" />
+                      <span>{newsletterActions.get(`subscriber:${selectedSubscriber.id}`) === "remove" ? "Removing..." : "Remove subscriber"}</span>
+                    </button>
+                  ) : null}
+                  <button className="btn btn-secondary" type="button" disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))} onClick={closeSubscriberDetails}>Close</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </main>
     </div>
@@ -6391,6 +6534,13 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [tenants, setTenants] = useState([]);
+  const [platformUsers, setPlatformUsers] = useState([]);
+  const [pendingRoleChange, setPendingRoleChange] = useState(null);
+  const [pendingStatusChange, setPendingStatusChange] = useState(null);
+  const [isAddUserOpen, setIsAddUserOpen] = useState(false);
+  const [platformMemberForm, setPlatformMemberForm] = useState({ tenantSlug: "", email: "", displayName: "", role: "contributor" });
+  const [platformMemberIdentityCheck, setPlatformMemberIdentityCheck] = useState(null);
+  const [addUserStatus, setAddUserStatus] = useState({ text: "", isError: false });
   const [form, setForm] = useState({ name: "", slug: "", adminEmail: "", adminDisplayName: "" });
   const [createIdentityCheck, setCreateIdentityCheck] = useState(null);
   const [query, setQuery] = useState("");
@@ -6422,10 +6572,11 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const visibleCreateIdentityCheck = createIdentityCheck?.email === normalizedCreateAdminEmail
     ? createIdentityCheck
     : null;
+  const normalizedPlatformMemberEmail = String(platformMemberForm.email || "").trim().toLowerCase();
+  const visiblePlatformMemberIdentityCheck = platformMemberIdentityCheck?.email === normalizedPlatformMemberEmail
+    ? platformMemberIdentityCheck
+    : null;
   const activeTenants = tenants.filter(tenant => tenant.status === "active");
-  const recentlyCreatedTenants = [...tenants]
-    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-    .slice(0, isMobileViewport ? 2 : 4);
   const setupTenant = tenants.find(tenant => tenant.id === setupTenantId) || tenants[0] || null;
   const tenantSetup = setupTenant ? platformSetup?.tenants?.[setupTenant.id] || null : null;
   const searchMatchedTenants = tenants.filter(tenant => {
@@ -6442,6 +6593,12 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     const matchesStatus = statusFilter === "all" || tenant.status === statusFilter;
     return matchesStatus;
   });
+  const visiblePlatformUsers = platformUsers.filter(user => matchesSearch([
+    user.displayName,
+    user.email,
+    user.accountType,
+    ...(user.memberships || []).flatMap(membership => [membership.tenantName, membership.tenantSlug, membership.role])
+  ], query));
   const createAction = platformActions.get("create") || "";
   const refreshAction = platformActions.get("refresh") || "";
   const hasPlatformAction = platformActions.size > 0;
@@ -6470,27 +6627,19 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   const pageMeta = {
     dashboard: {
       title: "Dashboard",
-      copy: "Monitor platform setup, active workspaces, and admin access."
-    },
-    platoons: {
-      title: "Platoons",
-      copy: "Create, manage, and organize platoon workspaces."
+      copy: "Open a platoon and see where today’s inventories need attention."
     },
     users: {
       title: "Users",
-      copy: "Review account coverage across active workspaces."
+      copy: "Manage permanent accounts, platoon access, and roles."
     },
-    roles: {
-      title: "Roles",
-      copy: "Confirm which groups unlock platform, platoon, and public-site access."
-    },
-    organizations: {
-      title: "Organizations",
-      copy: "Review the organization container and workspace totals."
+    settings: {
+      title: "Platform settings",
+      copy: "Create platoons and review technical workspace setup when needed."
     },
     support: {
       title: "Support",
-      copy: "Check safe deploy details before troubleshooting."
+      copy: "Get help with Shadow Tracer or open technical diagnostics."
     }
   }[activeView] || {
     title: "Dashboard",
@@ -6498,33 +6647,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
   };
   const platformNavItems = [
     { id: "dashboard", label: "Dashboard", icon: Home },
-    { id: "platoons", label: "Platoons", icon: Users },
     { id: "users", label: "Users", icon: UserPlus },
-    { id: "roles", label: "Roles", icon: ShieldCheck },
-    { id: "organizations", label: "Organizations", icon: Building2 },
+    { id: "settings", label: "Settings", icon: Settings },
     { id: "support", label: "Support", icon: RefreshCw }
-  ];
-  const roleCards = [
-    {
-      label: "Platform admin",
-      group: "876en-admins",
-      detail: "Full platform access and tenant support override."
-    },
-    {
-      label: "FRG admin",
-      group: "876en-frg-admins",
-      detail: "Public content and newsletter administration."
-    },
-    {
-      label: "Platoon admin",
-      group: "876en-platoon-admin",
-      detail: "Workspace administration when paired with a platoon group."
-    },
-    {
-      label: "Platoon member",
-      group: "876en-{platoon}",
-      detail: "Inventory access for the matching platoon workspace."
-    }
   ];
 
   function beginPlatformAction(scope, action) {
@@ -6558,9 +6683,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     const isLocal = appConfig.baseDomain === "localhost" || window.location.hostname.endsWith(".localhost") || window.location.hostname === "localhost";
     if (isLocal) {
       const port = window.location.port ? `:${window.location.port}` : "";
-      return `${window.location.protocol}//${host}${port}/`;
+      return `${window.location.protocol}//${host}${port}/#/launch`;
     }
-    return `https://${host}/`;
+    return `https://${host}/#/launch`;
   }
 
   async function copyTenantLink(tenant) {
@@ -6578,9 +6703,13 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     try {
       if (!quiet) setStatus({ text: "Loading platoons...", isError: false });
       setTenantLoadError(false);
-      const data = await apiRequest("/platform/tenants", { token });
+      const [data, userData] = await Promise.all([
+        apiRequest("/platform/tenants", { token }),
+        apiRequest("/platform/users", { token }).catch(() => ({ users: [], management: { mutationsAvailable: false, reason: "User management is temporarily unavailable." } }))
+      ]);
       if (requestId !== platformLoadRequestRef.current) return { ok: false, stale: true };
       setTenants(data.tenants || []);
+      setPlatformUsers(userData.users || []);
       setHasLoadedTenants(true);
       setPlatformSetup(data.setup || { unavailable: true, tenants: {} });
       const accountSetupAvailable = data.provisioningAvailable === true;
@@ -6854,6 +6983,137 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     );
   }
 
+  async function confirmPlatformRoleChange() {
+    if (!pendingRoleChange) return;
+    const { membership, nextRole, user } = pendingRoleChange;
+    const scope = `role-${membership.id}`;
+    const action = "role";
+    if (!beginPlatformAction(scope, action)) return;
+    try {
+      await apiRequest(`/tenant/members/${membership.id}`, {
+        method: "PATCH",
+        token,
+        tenantSlug: membership.tenantSlug,
+        body: { role: nextRole }
+      });
+      setPendingRoleChange(null);
+      await loadTenants({ quiet: true });
+      setStatus({ text: `${user.displayName || user.email} is now ${formatTeamRole(nextRole)} in ${membership.tenantName}.`, isError: false });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      finishPlatformAction(scope, action);
+    }
+  }
+
+  async function confirmPlatformStatusChange() {
+    if (!pendingStatusChange) return;
+    const { membership, nextStatus, user } = pendingStatusChange;
+    const scope = `status-${membership.id}`;
+    const action = "status";
+    if (!beginPlatformAction(scope, action)) return;
+    try {
+      await apiRequest(`/tenant/members/${membership.id}`, {
+        method: "PATCH",
+        token,
+        tenantSlug: membership.tenantSlug,
+        body: { status: nextStatus }
+      });
+      setPendingStatusChange(null);
+      await loadTenants({ quiet: true });
+      setStatus({
+        text: `${user.displayName || user.email} is now ${nextStatus === "active" ? "active" : "disabled"} in ${membership.tenantName}.`,
+        isError: false
+      });
+    } catch (error) {
+      setStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      finishPlatformAction(scope, action);
+    }
+  }
+
+  function openAddPlatformUser() {
+    if (platformActionRef.current.size || !platformProvisioningAvailable) return;
+    setPlatformMemberForm(current => ({
+      ...current,
+      tenantSlug: activeTenants.some(tenant => tenant.slug === current.tenantSlug)
+        ? current.tenantSlug
+        : activeTenants[0]?.slug || ""
+    }));
+    setPlatformMemberIdentityCheck(null);
+    setAddUserStatus({ text: "", isError: false });
+    setIsAddUserOpen(true);
+  }
+
+  function closeAddPlatformUser() {
+    if (platformActionRef.current.has("add-user")) return;
+    setIsAddUserOpen(false);
+    setPlatformMemberIdentityCheck(null);
+    setAddUserStatus({ text: "", isError: false });
+  }
+
+  function updatePlatformMemberForm(key, value) {
+    if (key === "email") setPlatformMemberIdentityCheck(null);
+    setPlatformMemberForm(current => ({ ...current, [key]: value }));
+  }
+
+  async function createPlatformMember(event) {
+    event.preventDefault();
+    const scope = "add-user";
+    const action = "create-user";
+    if (!beginPlatformAction(scope, action)) return;
+    const tenantSlug = platformMemberForm.tenantSlug || activeTenants[0]?.slug || "";
+    const email = normalizedPlatformMemberEmail;
+    try {
+      setAddUserStatus({ text: "Checking the sign-in account...", isError: false });
+      const identityData = await apiRequest("/tenant/members/identity-check", {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: { email }
+      });
+      let selectedIdentityId = "";
+      if (identityData.status === "ambiguous") {
+        const candidates = identityData.candidates || [];
+        const previousSelection = platformMemberIdentityCheck?.email === email
+          ? platformMemberIdentityCheck.selectedId
+          : "";
+        selectedIdentityId = candidates.some(candidate => candidate.id === previousSelection && candidate.eligible)
+          ? previousSelection
+          : "";
+        setPlatformMemberIdentityCheck({ email, status: "ambiguous", candidates, selectedId: selectedIdentityId });
+        if (!selectedIdentityId) {
+          setAddUserStatus({ text: "Choose the correct existing sign-in account, then add the user.", isError: false });
+          return;
+        }
+      } else {
+        setPlatformMemberIdentityCheck(null);
+      }
+
+      setAddUserStatus({ text: "Adding the user...", isError: false });
+      await apiRequest("/tenant/members", {
+        method: "POST",
+        token,
+        tenantSlug,
+        body: {
+          email,
+          role: platformMemberForm.role,
+          ...(platformMemberForm.displayName.trim() ? { displayName: platformMemberForm.displayName.trim() } : {}),
+          ...(selectedIdentityId ? { authentikUserUuid: selectedIdentityId } : {})
+        }
+      });
+      setPlatformMemberForm({ tenantSlug, email: "", displayName: "", role: "contributor" });
+      setPlatformMemberIdentityCheck(null);
+      setIsAddUserOpen(false);
+      await loadTenants({ quiet: true });
+      setStatus({ text: `${email} was added to ${tenants.find(tenant => tenant.slug === tenantSlug)?.name || tenantSlug}. Account setup will continue automatically.`, isError: false });
+    } catch (error) {
+      setAddUserStatus({ text: getApiErrorMessage(error), isError: true });
+    } finally {
+      finishPlatformAction(scope, action);
+    }
+  }
+
   function renderSetupChecklist() {
     if (!hasLoadedTenants) {
       return <EmptyPanel title="Checking setup" body="Verifying workspace access, imports, and storage." />;
@@ -6984,7 +7244,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
     );
   }
 
-  function renderTenantTable(rows, { compact = false, filtered = false } = {}) {
+  function renderPlatoonCards(rows = tenants) {
     if (!rows.length) {
       if (!hasLoadedTenants) {
         return <EmptyPanel title="Loading platoons" body="Checking the latest workspaces and access counts." />;
@@ -7000,67 +7260,73 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           />
         );
       }
-      const hasFilters = filtered && (Boolean(query.trim()) || statusFilter !== "all");
       return (
         <EmptyPanel
-          title={hasFilters ? "No matching platoons" : "No platoons yet"}
-          body={hasFilters ? "Clear the search and status filter to see every workspace." : "Create the first platoon workspace to begin inventory."}
-          action={hasFilters ? (
-            <button className="btn btn-secondary btn-small" type="button" onClick={clearPlatformFilters}>Clear filters</button>
-          ) : (
+          title="No platoons yet"
+          body="Create the first platoon workspace from Platform settings."
+          action={activeView === "settings" ? (
             <button className="btn btn-primary btn-small" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>Create platoon</button>
-          )}
+          ) : null}
         />
       );
     }
 
     return (
-      <div className={`platform-table ${compact ? "platform-table-compact" : ""}`} role="table" aria-label="Platoon workspaces">
-        <div className="platform-table-head" role="row">
-          <span>Platoon name</span>
-          {!compact ? <span>Subdomain</span> : null}
-          {!compact ? <span>Admins</span> : null}
-          {!compact ? <span>Members</span> : null}
-          <span>Status</span>
-          {!compact ? <span>Created</span> : null}
-          <span>Actions</span>
-        </div>
+      <section className="platform-platoon-grid" aria-label="Platoon workspaces">
         {rows.map(tenant => {
           const host = tenantHost(tenant);
+          const activeSession = tenant.latestActiveSession || null;
+          const activeSessionCount = Number(tenant.activeSessionCount || 0);
+          const crewCount = Number(tenant.activeTemporaryCrewCount || 0);
+          const progress = Math.max(0, Math.min(100, Number(activeSession?.progressPercent || 0)));
           return (
-            <article className="platform-table-row" role="row" key={tenant.id}>
-              <div className="platform-row-main">
+            <article className="platform-platoon-card" key={tenant.id}>
+              <div className="platform-platoon-card-heading">
                 <span className="tenant-avatar" aria-hidden="true">{tenantInitials(tenant)}</span>
                 <div>
                   <strong>{tenantDisplayName(tenant)}</strong>
-                  <span>{host}</span>
+                  <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
                 </div>
               </div>
-              {!compact ? <span className="platform-domain" data-label="Subdomain"><span className="mobile-field-label">Subdomain</span><span>{host}</span></span> : null}
-              {!compact ? <span className="platform-table-number" data-label="Admins"><span className="mobile-field-label">Admins</span><span>{tenant.adminCount || 0}</span></span> : null}
-              {!compact ? <span className="platform-table-number" data-label="Members"><span className="mobile-field-label">Members</span><span>{tenant.memberCount || 0}</span></span> : null}
-              <span className="platform-status-field" data-label="Status"><span className="mobile-field-label">Status</span><span className={`status-pill ${tenant.status}`}>{tenant.status}</span></span>
-              {!compact ? <span className="platform-table-date" data-label="Created"><span className="mobile-field-label">Created</span><span>{formatShortDate(tenant.createdAt)}</span></span> : null}
-              <div className="platform-actions" data-label="Actions">
-                <span className="mobile-field-label">Actions</span>
-                <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${host} workspace`}>
-                  <span>Open workspace</span>
-                </a>
-                <button className="btn btn-secondary btn-small platform-copy-link desktop-secondary-action" type="button" onClick={() => copyTenantLink(tenant)}>
-                  <Copy aria-hidden="true" />
-                  <span>Copy link</span>
-                </button>
-                <ResponsiveActionMenu label="More" ariaLabel={`More actions for ${tenantDisplayName(tenant)}`} className="mobile-secondary-actions platform-row-action-menu">
-                  <button type="button" onClick={() => copyTenantLink(tenant)}>
-                    <Copy aria-hidden="true" />
-                    <span>Copy link</span>
-                  </button>
-                </ResponsiveActionMenu>
+
+              <div className="platform-platoon-facts">
+                <span><strong>{activeSessionCount}</strong>{countLabel(activeSessionCount, "active inventory").replace(/^\d+\s*/, "")}</span>
+                <span><strong>{crewCount}</strong>{countLabel(crewCount, "active crew member").replace(/^\d+\s*/, "")}</span>
+                <span><strong>{tenant.memberCount || 0}</strong>invited users</span>
               </div>
+
+              {activeSession ? (
+                <div className="platform-active-session">
+                  <div>
+                    <span>Current inventory</span>
+                    <strong>{activeSession.name}</strong>
+                  </div>
+                  <div className="platform-session-progress-label">
+                    <span>{activeSession.completedCount || 0} of {activeSession.itemCount || 0} resolved</span>
+                    <strong>{progress}%</strong>
+                  </div>
+                  <div className="platform-session-progress" role="progressbar" aria-label={`${activeSession.name} progress`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>
+                    <span style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
+              ) : (
+                <p className="platform-no-session">No active inventory session.</p>
+              )}
+
+              <div className="platform-link-row">
+                <span><small>Link</small><strong>{host}</strong></span>
+                <button className="icon-button" type="button" onClick={() => copyTenantLink(tenant)} aria-label={`Copy link for ${tenantDisplayName(tenant)}`}>
+                  <Copy aria-hidden="true" />
+                </button>
+              </div>
+              <a className="btn btn-primary platform-open-workspace" href={tenantWorkspaceHref(tenant)} aria-label={`Enter ${host} workspace`}>
+                <span>Enter workspace</span>
+                <ArrowRight aria-hidden="true" />
+              </a>
             </article>
           );
         })}
-      </div>
+      </section>
     );
   }
 
@@ -7189,25 +7455,17 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               <p>{pageMeta.copy}</p>
             </div>
             <div className="platform-heading-actions">
-              {activeView === "dashboard" ? (
-                <button className="btn btn-secondary desktop-secondary-action" type="button" onClick={openNewsletter}>
-                  <MailPlus aria-hidden="true" />
-                  <span>Newsletter</span>
+              {activeView === "users" ? (
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  disabled={hasPlatformAction || !platformProvisioningAvailable || !activeTenants.length}
+                  title={!platformProvisioningAvailable ? "Permanent account setup is not connected." : undefined}
+                  onClick={openAddPlatformUser}
+                >
+                  <UserPlus aria-hidden="true" />
+                  <span>Add user</span>
                 </button>
-              ) : null}
-              {["dashboard", "platoons", "organizations"].includes(activeView) ? (
-                <button className="btn btn-primary" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>
-                  <Plus aria-hidden="true" />
-                  <span>Create platoon</span>
-                </button>
-              ) : null}
-              {activeView === "dashboard" ? (
-                <ResponsiveActionMenu className="mobile-secondary-actions">
-                  <button type="button" onClick={openNewsletter}>
-                    <MailPlus aria-hidden="true" />
-                    <span>Newsletter</span>
-                  </button>
-                </ResponsiveActionMenu>
               ) : null}
             </div>
           </div>
@@ -7215,61 +7473,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           <StatusLine status={status} />
 
           {activeView === "dashboard" ? (
-            <>
-              {renderStats()}
-              <div className="platform-dashboard-grid">
-                <section className="platform-table-card platform-dashboard-card platform-setup-card">
-                  <div className="platform-card-header">
-                    <div>
-                      <h2>Workspace setup</h2>
-                      <p>Finish the essentials before field work starts.</p>
-                    </div>
-                  </div>
-                  {renderSetupChecklist()}
-                </section>
-                <section className="platform-table-card platform-dashboard-card">
-                  <div className="platform-card-header">
-                    <div>
-                      <h2>Recent platoons</h2>
-                      <p>{tenants.length ? `${countLabel(tenants.length, "workspace")} configured.` : "No workspaces configured."}</p>
-                    </div>
-                    <button className="btn btn-secondary btn-small" type="button" onClick={() => setActiveView("platoons")}>
-                      <span>Open platoons</span>
-                    </button>
-                  </div>
-                  {renderTenantTable(recentlyCreatedTenants, { compact: true })}
-                </section>
-              </div>
-            </>
-          ) : null}
-
-          {activeView === "platoons" ? (
-            <>
-              {renderStats()}
-              <section className="platform-table-card">
-                <div className="platform-table-toolbar">
-                  <div className="platform-search" role="search">
-                    <Search aria-hidden="true" />
-                    <input
-                      type="search"
-                      aria-label="Search platoons"
-                      value={query}
-                      placeholder="Search platoons by name or subdomain..."
-                      onChange={event => setQuery(event.target.value)}
-                    />
-                    {query ? (
-                      <button type="button" aria-label="Clear search" onClick={() => setQuery("")}><X aria-hidden="true" /></button>
-                    ) : null}
-                  </div>
-                  <select className="select platform-filter" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}>
-                    <option value="all">All statuses</option>
-                    <option value="active">Active</option>
-                    <option value="archived">Archived</option>
-                  </select>
-                </div>
-                {renderTenantTable(visibleTenants, { filtered: true })}
-              </section>
-            </>
+            renderPlatoonCards()
           ) : null}
 
           {activeView === "users" ? (
@@ -7279,9 +7483,9 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   <Search aria-hidden="true" />
                   <input
                     type="search"
-                    aria-label="Search workspace access"
+                    aria-label="Search users"
                     value={query}
-                    placeholder="Search access by platoon or subdomain..."
+                    placeholder="Search users, platoons, or roles..."
                     onChange={event => setQuery(event.target.value)}
                   />
                   {query ? (
@@ -7289,123 +7493,300 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                   ) : null}
                 </div>
               </div>
-              <div className="platform-table platform-user-table" role="table" aria-label="Workspace access">
+              <div className="platform-table platform-user-table" role="table" aria-label="Platform users">
                 <div className="platform-table-head" role="row">
-                  <span>Workspace</span>
-                  <span>Admin group</span>
-                  <span>Members</span>
-                  <span>Admins</span>
+                  <span>User</span>
+                  <span>Platoon</span>
+                  <span>Role</span>
                   <span>Status</span>
                   <span>Actions</span>
                 </div>
-                {searchMatchedTenants.map(tenant => (
-                  <article className="platform-table-row" role="row" key={tenant.id}>
-                    <div className="platform-row-main">
-                      <span className="tenant-avatar" aria-hidden="true">{tenantInitials(tenant)}</span>
-                      <div>
-                        <strong>{tenantDisplayName(tenant)}</strong>
-                        <span>{tenantHost(tenant)}</span>
+                {visiblePlatformUsers.flatMap(user => {
+                  const memberships = user.memberships?.length ? user.memberships : [null];
+                  return memberships.map((membership, index) => (
+                    <article className="platform-table-row" role="row" key={`${user.id}-${membership?.id || index}`}>
+                      <div className="platform-row-main">
+                        <span className="tenant-avatar" aria-hidden="true">{String(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span>
+                        <div>
+                          <strong>{user.displayName || "Unnamed user"}</strong>
+                          <span>{user.email}</span>
+                        </div>
                       </div>
-                    </div>
-                    <span className="platform-domain" data-label="Admin group"><span className="mobile-field-label">Admin group</span><span>876en-platoon-admin</span></span>
-                    <span className="platform-table-number" data-label="Members"><span className="mobile-field-label">Members</span><span>{tenant.memberCount || 0}</span></span>
-                    <span className="platform-table-number" data-label="Admins"><span className="mobile-field-label">Admins</span><span>{tenant.adminCount || 0}</span></span>
-                    <span className="platform-status-field" data-label="Status"><span className="mobile-field-label">Status</span><span className={`status-pill ${tenant.status}`}>{tenant.status}</span></span>
-                    <div className="platform-actions" data-label="Actions">
-                      <span className="mobile-field-label">Actions</span>
-                      <a className="btn btn-secondary btn-small platform-open-link" href={tenantWorkspaceHref(tenant)} aria-label={`Open ${tenantHost(tenant)} workspace`}>
-                        <span>Open workspace</span>
-                      </a>
-                      <button className="btn btn-secondary btn-small platform-copy-link desktop-secondary-action" type="button" onClick={() => copyTenantLink(tenant)}>
-                        <Copy aria-hidden="true" />
-                        <span>Copy link</span>
-                      </button>
-                      <ResponsiveActionMenu label="More" ariaLabel={`More actions for ${tenantDisplayName(tenant)}`} className="mobile-secondary-actions platform-row-action-menu">
-                        <button type="button" onClick={() => copyTenantLink(tenant)}>
-                          <Copy aria-hidden="true" />
-                          <span>Copy link</span>
-                        </button>
-                      </ResponsiveActionMenu>
-                    </div>
-                  </article>
-                ))}
+                      <span data-label="Platoon"><span className="mobile-field-label">Platoon</span><span>{membership?.tenantName || (user.isPlatformAdmin ? "All platoons" : "—")}</span></span>
+                      <span data-label="Role">
+                        <span className="mobile-field-label">Role</span>
+                        {membership ? (
+                          <select
+                            className="select platform-role-select"
+                            aria-label={`Role for ${user.displayName || user.email} in ${membership.tenantName}`}
+                            value={membership.role}
+                            disabled={hasPlatformAction}
+                            onChange={event => setPendingRoleChange({ user, membership, nextRole: event.target.value })}
+                          >
+                            <option value="tenant_admin">Platoon admin</option>
+                            <option value="contributor">Member</option>
+                            <option value="viewer">Viewer</option>
+                          </select>
+                        ) : (
+                          <span>{user.isPlatformAdmin ? "Super admin" : formatTeamRole(user.accountType)}</span>
+                        )}
+                      </span>
+                      <span className="platform-status-field" data-label="Status">
+                        <span className="mobile-field-label">Status</span>
+                        {membership ? (
+                          <select
+                            className="select platform-status-select"
+                            aria-label={`Status for ${user.displayName || user.email} in ${membership.tenantName}`}
+                            value={membership.status}
+                            disabled={hasPlatformAction}
+                            onChange={event => setPendingStatusChange({ user, membership, nextStatus: event.target.value })}
+                          >
+                            {membership.status === "invited" ? <option value="invited">Invited</option> : null}
+                            <option value="active">Active</option>
+                            <option value="disabled">Disabled</option>
+                          </select>
+                        ) : (
+                          <span className={`status-pill ${user.hasSignedIn ? "active" : "pending"}`}>{user.hasSignedIn ? "active" : "invited"}</span>
+                        )}
+                      </span>
+                      <div className="platform-actions" data-label="Actions">
+                        <span className="mobile-field-label">Actions</span>
+                        {membership ? (
+                          <a className="btn btn-secondary btn-small" href={tenantWorkspaceHref({ slug: membership.tenantSlug })}>Open platoon</a>
+                        ) : <span>—</span>}
+                      </div>
+                    </article>
+                  ));
+                })}
               </div>
-              {!searchMatchedTenants.length ? (
+              {!visiblePlatformUsers.length ? (
                 <EmptyPanel
-                  title={query.trim() ? "No matching workspace access" : "No workspace access yet"}
-                  body={query.trim() ? "Clear the search to see every workspace." : "Create a platoon workspace before assigning members."}
+                  title={query.trim() ? "No matching users" : "No permanent users yet"}
+                  body={query.trim() ? "Clear the search to see every user." : "Invite permanent users from a platoon workspace."}
                   action={query.trim() ? (
                     <button className="btn btn-secondary btn-small" type="button" onClick={() => setQuery("")}>Clear search</button>
-                  ) : (
-                    <button className="btn btn-primary btn-small" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>Create platoon</button>
-                  )}
+                  ) : null}
                 />
               ) : null}
             </section>
           ) : null}
 
-          {activeView === "roles" ? (
-            <section className="platform-role-grid" aria-label="Role groups">
-              {roleCards.map(role => (
-                <article className="platform-role-card" key={role.group}>
-                  <span className="platform-stat-icon green">
-                    <ShieldCheck aria-hidden="true" />
-                  </span>
+          {activeView === "settings" ? (
+            <div className="platform-settings-grid">
+              <section className="platform-table-card">
+                <div className="platform-card-header">
                   <div>
-                    <h2>{role.label}</h2>
-                    <code>{role.group}</code>
-                    <p>{role.detail}</p>
+                    <h2>Platoon management</h2>
+                    <p>Create a workspace only when the unit structure changes.</p>
                   </div>
-                </article>
-              ))}
-            </section>
-          ) : null}
-
-          {activeView === "organizations" ? (
-            <>
-              {renderStats()}
-              <section className="platform-table-card platform-org-card">
-                <div className="platform-section-heading">
-                  <h2>Organization overview</h2>
+                  <button className="btn btn-secondary btn-small" type="button" disabled={hasPlatformAction} onClick={openCreateTenant}>
+                    <Plus aria-hidden="true" />
+                    <span>Create platoon</span>
+                  </button>
                 </div>
-                <div className="platform-org-row">
-                  <span>876 EN</span>
-                  <span>{countLabel(tenants.length, "platoon")}</span>
-                  <span>{countLabel(totalMembers, "user")}</span>
-                  <span className="status-pill active">Active</span>
+                <div className="platform-summary-table" role="table" aria-label="Platform totals">
+                  <div role="row"><span>Total platoons</span><strong>{tenants.length}</strong></div>
+                  <div role="row"><span>Active platoons</span><strong>{activeTenants.length}</strong></div>
+                  <div role="row"><span>Permanent users</span><strong>{totalMembers}</strong></div>
+                  <div role="row"><span>Platoon admins</span><strong>{totalAdmins}</strong></div>
                 </div>
               </section>
-            </>
+              <details className="platform-table-card platform-setup-details">
+                <summary>
+                  <span><strong>Technical workspace checks</strong><small>DNS, account groups, storage, and packet readiness</small></span>
+                  <ChevronDown aria-hidden="true" />
+                </summary>
+                {renderSetupChecklist()}
+              </details>
+            </div>
           ) : null}
 
           {activeView === "support" ? (
-            <section className="platform-table-card platform-support-card">
-              <div className="platform-card-header">
+            <div className="platform-settings-grid">
+              <section className="platform-table-card platform-support-contact">
+                <span className="platform-stat-icon blue"><MessageSquare aria-hidden="true" /></span>
                 <div>
-                  <h2>Deployment details</h2>
-                  <p>Safe values for routing and client configuration.</p>
+                  <h2>Need help with Shadow Tracer?</h2>
+                  <p>For any issues with Shadow Tracer, contact Lewis Benson.</p>
+                  <a className="btn btn-primary" href="mailto:tm.lewisbenson@gmail.com">tm.lewisbenson@gmail.com</a>
                 </div>
+              </section>
+              <details className="platform-table-card platform-setup-details">
+                <summary>
+                  <span><strong>Technical diagnostics</strong><small>Include these details when troubleshooting.</small></span>
+                  <ChevronDown aria-hidden="true" />
+                </summary>
                 <button className="btn btn-secondary btn-small" type="button" onClick={copyDiagnostics}>
                   <Copy aria-hidden="true" />
                   <span>Copy diagnostics</span>
                 </button>
-              </div>
-              <div className="platform-diagnostics-grid">
-                {diagnostics.map(([label, value]) => (
-                  <div className="platform-diagnostic" key={label}>
-                    <span>{label}</span>
-                    {label === "API health" ? (
-                      <a className="platform-health-link" href={value} target="_blank" rel="noreferrer">{value}</a>
-                    ) : (
-                      <strong>{value}</strong>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
+                <div className="platform-diagnostics-grid">
+                  {diagnostics.map(([label, value]) => (
+                    <div className="platform-diagnostic" key={label}>
+                      <span>{label}</span>
+                      {label === "API health" ? (
+                        <a className="platform-health-link" href={value} target="_blank" rel="noreferrer">{value}</a>
+                      ) : (
+                        <strong>{value}</strong>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </div>
           ) : null}
         </div>
       </main>
+
+      {pendingRoleChange ? (
+        <div className="modal-backdrop platform-modal-backdrop" role="presentation" onMouseDown={event => {
+          if (event.target === event.currentTarget && !hasPlatformAction) setPendingRoleChange(null);
+        }}>
+          <section className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="confirmRoleTitle">
+            <div className="platform-modal-heading">
+              <div>
+                <p className="eyebrow">Confirm role change</p>
+                <h2 id="confirmRoleTitle">Change this user’s access?</h2>
+              </div>
+              <button className="icon-button" type="button" disabled={hasPlatformAction} onClick={() => setPendingRoleChange(null)} aria-label="Cancel role change"><X aria-hidden="true" /></button>
+            </div>
+            <p>
+              <strong>{pendingRoleChange.user.displayName || pendingRoleChange.user.email}</strong> will become {formatTeamRole(pendingRoleChange.nextRole)} in {pendingRoleChange.membership.tenantName}.
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" type="button" disabled={hasPlatformAction} onClick={() => setPendingRoleChange(null)}>Cancel</button>
+              <button className="btn btn-primary" type="button" disabled={hasPlatformAction} onClick={confirmPlatformRoleChange}>Confirm role change</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pendingStatusChange ? (
+        <div className="modal-backdrop platform-modal-backdrop" role="presentation" onMouseDown={event => {
+          if (event.target === event.currentTarget && !hasPlatformAction) setPendingStatusChange(null);
+        }}>
+          <section className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="confirmUserStatusTitle">
+            <div className="platform-modal-heading">
+              <div>
+                <p className="eyebrow">Confirm access change</p>
+                <h2 id="confirmUserStatusTitle">{pendingStatusChange.nextStatus === "active" ? "Enable this account?" : "Disable this account?"}</h2>
+              </div>
+              <button className="icon-button" type="button" disabled={hasPlatformAction} onClick={() => setPendingStatusChange(null)} aria-label="Cancel status change"><X aria-hidden="true" /></button>
+            </div>
+            <p>
+              <strong>{pendingStatusChange.user.displayName || pendingStatusChange.user.email}</strong> will be {pendingStatusChange.nextStatus === "active" ? "enabled" : "disabled"} in {pendingStatusChange.membership.tenantName}. Authentik access will be reconciled automatically.
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" type="button" disabled={hasPlatformAction} onClick={() => setPendingStatusChange(null)}>Cancel</button>
+              <button className={pendingStatusChange.nextStatus === "active" ? "btn btn-primary" : "btn btn-danger-soft"} type="button" disabled={hasPlatformAction} onClick={confirmPlatformStatusChange}>
+                {pendingStatusChange.nextStatus === "active" ? "Enable account" : "Disable account"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isAddUserOpen ? (
+        <div className="modal-backdrop platform-modal-backdrop" role="presentation" onMouseDown={event => {
+          if (event.target === event.currentTarget) closeAddPlatformUser();
+        }}>
+          <aside className="platform-create-modal" role="dialog" aria-modal="true" aria-labelledby="addPlatformUserTitle">
+            <div className="platform-modal-heading">
+              <div>
+                <p className="eyebrow">Permanent account</p>
+                <h2 id="addPlatformUserTitle">Add a user</h2>
+              </div>
+              <button className="icon-button" type="button" disabled={platformActionRef.current.has("add-user")} onClick={closeAddPlatformUser} aria-label="Close add user"><X aria-hidden="true" /></button>
+            </div>
+
+            <StatusLine status={addUserStatus} />
+
+            <form className="admin-form" onSubmit={createPlatformMember}>
+              <label className="field-label" htmlFor="platformMemberTenant">Platoon</label>
+              <select
+                id="platformMemberTenant"
+                className="select"
+                required
+                autoFocus
+                disabled={platformActionRef.current.has("add-user")}
+                value={platformMemberForm.tenantSlug}
+                onChange={event => updatePlatformMemberForm("tenantSlug", event.target.value)}
+              >
+                {activeTenants.map(tenant => <option key={tenant.id} value={tenant.slug}>{tenantDisplayName(tenant)}</option>)}
+              </select>
+
+              <label className="field-label" htmlFor="platformMemberEmail">Email</label>
+              <input
+                id="platformMemberEmail"
+                className="input"
+                type="email"
+                required
+                disabled={platformActionRef.current.has("add-user")}
+                value={platformMemberForm.email}
+                placeholder="user@example.com"
+                onChange={event => updatePlatformMemberForm("email", event.target.value)}
+              />
+
+              <label className="field-label" htmlFor="platformMemberName">Name</label>
+              <input
+                id="platformMemberName"
+                className="input"
+                disabled={platformActionRef.current.has("add-user")}
+                value={platformMemberForm.displayName}
+                placeholder="SGT Smith"
+                onChange={event => updatePlatformMemberForm("displayName", event.target.value)}
+              />
+
+              <label className="field-label" htmlFor="platformMemberRole">Role</label>
+              <select
+                id="platformMemberRole"
+                className="select"
+                disabled={platformActionRef.current.has("add-user")}
+                value={platformMemberForm.role}
+                onChange={event => updatePlatformMemberForm("role", event.target.value)}
+              >
+                <option value="tenant_admin">Platoon admin</option>
+                <option value="contributor">Member</option>
+                <option value="viewer">Viewer</option>
+              </select>
+
+              {visiblePlatformMemberIdentityCheck?.status === "ambiguous" ? (
+                <fieldset className="identity-choice-fieldset">
+                  <legend>Choose the correct sign-in account</legend>
+                  <p>Multiple existing accounts use this email.</p>
+                  <div className="identity-choice-list">
+                    {visiblePlatformMemberIdentityCheck.candidates.map(candidate => (
+                      <label className={`identity-choice${candidate.eligible ? "" : " blocked"}`} key={candidate.id}>
+                        <input
+                          type="radio"
+                          name="platformMemberIdentity"
+                          value={candidate.id}
+                          checked={visiblePlatformMemberIdentityCheck.selectedId === candidate.id}
+                          disabled={platformActionRef.current.has("add-user") || !candidate.eligible}
+                          onChange={() => setPlatformMemberIdentityCheck(current => current ? { ...current, selectedId: candidate.id } : current)}
+                        />
+                        <span>
+                          <strong>{candidate.displayName}</strong>
+                          <small>@{candidate.username}</small>
+                          {candidate.blockedReason ? <small className="identity-blocked-reason">{candidate.blockedReason}</small> : null}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              ) : null}
+
+              <div className="button-row platform-modal-actions">
+                <button className="btn btn-primary btn-full" type="submit" disabled={platformActionRef.current.has("add-user") || (visiblePlatformMemberIdentityCheck?.status === "ambiguous" && !visiblePlatformMemberIdentityCheck.selectedId)}>
+                  <UserPlus aria-hidden="true" />
+                  <span>{platformActionRef.current.has("add-user") ? "Adding user..." : "Add user"}</span>
+                </button>
+                <button className="btn btn-secondary btn-full" type="button" disabled={platformActionRef.current.has("add-user")} onClick={closeAddPlatformUser}>Cancel</button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      ) : null}
 
       {isCreateOpen ? (
         <div
@@ -7441,7 +7822,7 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
                 onChange={e => updateForm("name", e.target.value)}
               />
 
-              <label className="field-label" htmlFor="tenantSlug">Subdomain</label>
+              <label className="field-label" htmlFor="tenantSlug">Workspace link</label>
               <div className="input-suffix-row">
                 <input
                   id="tenantSlug"
@@ -7545,7 +7926,8 @@ function LeaderOverviewPanel({
   onOpenSession,
   onOpenUpload,
   onInviteCrew,
-  onOpenReview
+  onOpenReview,
+  showWorkQueue = true
 }) {
   const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [sessions, setSessions] = useState([]);
@@ -7581,8 +7963,8 @@ function LeaderOverviewPanel({
   const selectedSession = activeSessions.find(session => session.id === preferredSessionId) || activeSessions[0] || null;
   const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
   const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
-  const foundRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
-  const overallProgress = totalRows ? Math.round((foundRows / totalRows) * 100) : 0;
+  const resolvedRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
+  const overallProgress = totalRows ? Math.round((resolvedRows / totalRows) * 100) : 0;
 
   useEffect(() => {
     const sessionId = selectedSession?.id || "";
@@ -7724,7 +8106,7 @@ function LeaderOverviewPanel({
         ) : null}
         <div>
           <strong>{overallProgress}%</strong>
-          <span>Found</span>
+          <span>Resolved</span>
         </div>
       </div>
 
@@ -7775,7 +8157,7 @@ function LeaderOverviewPanel({
       </section>
 
       <div className={`leader-dashboard-grid ${canManage ? "" : "single"}`}>
-        <section className="leader-card" aria-label="Pending inventory results">
+        <section className="leader-card" aria-label="Pending inventory results" hidden={!showWorkQueue}>
           <div className="leader-card-header">
             <span className="leader-card-icon">
               <Search aria-hidden="true" />
@@ -7931,7 +8313,7 @@ const tenantNotificationOptions = [
 
 function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
   const [settingsData, setSettingsData] = useState(null);
-  const [draft, setDraft] = useState({ displayName: "", notificationPreferences: {} });
+  const [draft, setDraft] = useState({ displayName: "", alertRecipientEmail: "", notificationPreferences: {} });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
@@ -7944,6 +8326,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
     setSettingsData(loaded);
     setDraft({
       displayName: loaded.displayName || "",
+      alertRecipientEmail: loaded.alertRecipientEmail || "",
       notificationPreferences: { ...(loaded.notificationPreferences || {}) }
     });
   }
@@ -7986,6 +8369,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
         tenantSlug,
         body: {
           displayName: draft.displayName.trim(),
+          alertRecipientEmail: draft.alertRecipientEmail.trim(),
           notificationPreferences: draft.notificationPreferences
         }
       });
@@ -8096,6 +8480,19 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
               <h2>Notification preferences</h2>
               <p>These tenant-wide defaults apply to every member in this workspace.</p>
             </div>
+          </div>
+          <div className="settings-alert-recipient">
+            <label className="field-label" htmlFor="alertRecipientEmail">Proof alert recipient</label>
+            <input
+              id="alertRecipientEmail"
+              className="input"
+              type="email"
+              value={draft.alertRecipientEmail}
+              disabled={isLoading || isSaving}
+              placeholder="Use active platoon admins"
+              onChange={event => setDraft(current => ({ ...current, alertRecipientEmail: event.target.value }))}
+            />
+            <small>Set one address to route proof-submitted alerts there. Leave blank to email active platoon admins.</small>
           </div>
           <div className="settings-preference-grid">
             {renderPreferenceGroup("inApp", "In-app alerts", "Choose which workflow events appear under the bell.")}
@@ -8224,6 +8621,23 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
     }, 0);
   }
 
+  function formatReportDuration(seconds) {
+    const totalSeconds = Number(seconds);
+    if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return "In progress";
+    const totalMinutes = Math.round(totalSeconds / 60);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+    return [days ? `${days}d` : "", hours ? `${hours}h` : "", (!days && minutes) || (!days && !hours) ? `${minutes}m` : ""].filter(Boolean).join(" ");
+  }
+
+  const visibleReportSessions = sessions.filter(session => {
+    if (sessionFilter !== "all" && session.id !== sessionFilter) return false;
+    if (lifecycleFilter === "open" && session.status === "closed") return false;
+    if (lifecycleFilter === "closed" && session.status !== "closed") return false;
+    return true;
+  });
+
   return (
     <div className={`leader-dashboard reports-page ${isPrintTarget ? "reports-print-target" : ""}`}>
       <div className="leader-page-heading reports-screen-only">
@@ -8289,6 +8703,24 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
         </div>
       </section>
 
+      <section className="leader-card reports-session-timing reports-screen-only" aria-label="Session timing">
+        <div className="leader-card-header">
+          <span className="leader-card-icon"><CalendarDays aria-hidden="true" /></span>
+          <div><h2>Session timing</h2><p>When each inventory started and how long it took to reach 100%.</p></div>
+        </div>
+        <div className="reports-session-timing-table" role="table">
+          <div className="reports-session-timing-head" role="row"><span>Session</span><span>Started</span><span>Completed</span><span>Time to 100%</span></div>
+          {visibleReportSessions.map(session => (
+            <div className="reports-session-timing-row" role="row" key={session.id}>
+              <strong>{session.name}</strong>
+              <span>{formatDate(session.startedAt || session.createdAt)}</span>
+              <span>{session.completedAt ? formatDate(session.completedAt) : session.status === "closed" ? "Closed before 100%" : "In progress"}</span>
+              <span>{formatReportDuration(session.durationToCompletionSeconds)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="reports-print-header">
         <strong>Shadow Tracer inventory report</strong>
         <span>{sessions.find(session => session.id === sessionFilter)?.name || "All sessions"}</span>
@@ -8309,12 +8741,14 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
 
       <section className="leader-card reports-results" aria-label="Report results">
         <div className="reports-table reports-table-header">
-          <span>Session</span><span>Item</span><span>Outcome</span><span>Proof status</span><span>Location / serial</span>
+          <span>Session</span><span>Item</span><span>Outcome</span><span>Reported by</span><span>Proof status</span><span>Location / serial</span>
         </div>
         {visibleRows.length ? renderedRows.map(item => {
-          const latest = latestSubmission(item);
+          const wasDirectlyVerified = Boolean(item.directVerifiedBy || item.directVerifiedByName || item.directVerifiedByEmail);
+          const latest = wasDirectlyVerified ? null : latestSubmission(item);
           const location = latest?.locationText || item.inventoryItem?.currentLocation || item.locationHint || "No location";
           const displayName = itemDisplayName(item);
+          const reportedBy = item.directVerifiedByName || item.directVerifiedByEmail || latest?.submittedByName || latest?.submittedByEmail || "—";
           return (
             <article className="reports-table reports-table-row" key={item.id}>
               <div data-label="Session"><span className="mobile-field-label">Session</span><span className="reports-field-value"><strong>{item.sessionName}</strong><small>{formatItemStatus(item.sessionStatus)}</small></span></div>
@@ -8323,7 +8757,8 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
                 <span className="reports-field-value"><strong>{displayName}</strong>{item.packetLine && item.packetLine !== displayName ? <small>{item.packetLine}</small> : null}</span>
               </div>
               <div data-label="Outcome"><span className="mobile-field-label">Outcome</span><span className={`status-pill ${reportItemOutcome(item)}`}>{formatItemStatus(reportItemOutcome(item))}</span></div>
-              <div data-label="Proof status"><span className="mobile-field-label">Proof status</span><span className={`status-pill ${latest?.reviewState || "unchecked"}`}>{latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof"}</span></div>
+              <div data-label="Reported by"><span className="mobile-field-label">Reported by</span><span className="reports-field-value"><span>{reportedBy}</span></span></div>
+              <div data-label="Proof status"><span className="mobile-field-label">Proof status</span><span className={`status-pill ${wasDirectlyVerified ? "approved" : latest?.reviewState || "unchecked"}`}>{wasDirectlyVerified ? "Direct check" : latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof"}</span></div>
               <div data-label="Location / serial"><span className="mobile-field-label">Location / serial</span><span className="reports-field-value"><span>{location}</span>{hasMeaningfulSerial(latest?.serialNumber) ? <small>Serial: {latest.serialNumber}</small> : null}</span></div>
             </article>
           );
@@ -9256,14 +9691,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const canSubmitProof = Boolean(isCrew || isTenantAdmin || me?.membership?.role === "contributor");
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: Home },
-    { id: "tasks", label: isCrew ? "Inventory" : "Inventory Sessions", icon: CalendarDays },
     ...(isTenantAdmin ? [{ id: "reports", label: "Reports", icon: BarChart3 }] : []),
-    ...(isTenantAdmin ? [{ id: "review", label: "Review Queue", icon: ClipboardList }] : []),
     ...(isTenantAdmin ? [{ id: "people", label: "Team", icon: Users }] : []),
     ...(isTenantAdmin ? [{ id: "activity", label: "Activity Log", icon: History }] : []),
     ...(isTenantAdmin ? [{ id: "settings", label: "Workspace Settings", icon: Settings }] : [])
   ];
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [isSessionWorkspaceOpen, setIsSessionWorkspaceOpen] = useState(() => isCrew);
+  const [isReviewWorkspaceOpen, setIsReviewWorkspaceOpen] = useState(false);
   const [sessionIntent, setSessionIntent] = useState("");
   const [preferredSessionId, setPreferredSessionId] = useState(() => me?.crew?.sessionId || "");
   const [preferredSessionItemId, setPreferredSessionItemId] = useState("");
@@ -9317,17 +9752,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       label: "Search dashboard",
       placeholder: "Search dashboard items, sessions, locations..."
     },
-    tasks: {
-      label: "Search current session rows",
-      placeholder: "Search rows, serials, locations, packet text..."
-    },
     reports: {
       label: "Search reports",
       placeholder: "Search reports by item, serial, location..."
-    },
-    review: {
-      label: "Search review queue",
-      placeholder: "Search proof, serials, submitters, notes..."
     },
     people: {
       label: "Search teammates",
@@ -9366,8 +9793,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     const port = window.location.port ? `:${window.location.port}` : "";
     const isLocalhost = window.location.hostname.endsWith("localhost");
     window.location.assign(isLocalhost
-      ? `${window.location.protocol}//admin.localhost${port}/#/admin`
-      : `https://admin.${appConfig.baseDomain}/#/admin`);
+      ? `${window.location.protocol}//admin.localhost${port}/#/launch`
+      : `https://admin.${appConfig.baseDomain}/#/launch`);
   }
 
   async function handleLogout() {
@@ -9462,7 +9889,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   async function loadNotifications() {
-    if (isCrew || !tenantSlug || !token) return true;
+    if (!tenantSlug || !token) return true;
     if (notificationActionRef.current) return null;
 
     notificationActionRef.current = true;
@@ -9490,6 +9917,19 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       loadNotifications();
     }
   }, [tenantSlug, token, isTenantAdmin, isCrew, me?.tenant?.id]);
+
+  useEffect(() => {
+    if (!tenantSlug || !token) return undefined;
+    const refreshVisibleNotifications = () => {
+      if (document.visibilityState === "visible") loadNotifications();
+    };
+    const intervalId = window.setInterval(refreshVisibleNotifications, 15_000);
+    document.addEventListener("visibilitychange", refreshVisibleNotifications);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshVisibleNotifications);
+    };
+  }, [tenantSlug, token]);
 
   const provisioningBasePollDelay = provisioningAvailable
     ? members.reduce((shortestDelay, member) => {
@@ -9871,14 +10311,20 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   function openSessions(intent = "") {
     setPreferredSessionItemId("");
     setSessionIntent(intent);
-    selectTenantTab("tasks");
+    setIsSessionWorkspaceOpen(true);
+    setActiveTab("dashboard");
+    setIsReviewWorkspaceOpen(false);
+    closeTenantSidebar(false);
   }
 
   function openActivitySession(sessionId, sessionItemId = "") {
     setPreferredSessionId(sessionId || "");
     setPreferredSessionItemId(sessionItemId || "");
     setSessionIntent("");
-    selectTenantTab("tasks");
+    setIsSessionWorkspaceOpen(true);
+    setActiveTab("dashboard");
+    setIsReviewWorkspaceOpen(false);
+    closeTenantSidebar(false);
   }
 
   function openStartInventoryWizard(source = "packet") {
@@ -9924,7 +10370,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setSessionIntent(startInventoryForm.source === "packet" ? "packet" : "");
       setStartInventoryForm({ name: defaultInventorySessionName(), source: startInventoryForm.source });
       setIsStartInventoryOpen(false);
-      selectTenantTab("tasks");
+      setIsSessionWorkspaceOpen(true);
+      setIsReviewWorkspaceOpen(false);
+      setActiveTab("dashboard");
       setStatus({ text: `Started ${data.session?.name || name}`, isError: false });
     } catch (error) {
       setStartInventoryStatus({ text: getApiErrorMessage(error), isError: true });
@@ -9938,7 +10386,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     const action = notification?.action || {};
     const tab = action.tab;
     if (tab === "review" && isTenantAdmin) {
-      selectTenantTab("review");
+      setActiveTab("dashboard");
+      setIsReviewWorkspaceOpen(true);
+      setIsSessionWorkspaceOpen(false);
       return;
     }
 
@@ -9949,7 +10399,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       return;
     }
 
-    selectTenantTab("tasks");
+    setActiveTab("dashboard");
+    setIsSessionWorkspaceOpen(true);
+    setIsReviewWorkspaceOpen(false);
   }
 
   async function refreshTenantWorkspace() {
@@ -10088,7 +10540,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             >
               <RefreshCw aria-hidden="true" />
             </button>
-            {!isCrew ? <div className="leader-popover-anchor" ref={notificationsRef}>
+            <div className="leader-popover-anchor" ref={notificationsRef}>
               <button
                 className="icon-button leader-notification-button"
                 type="button"
@@ -10155,12 +10607,17 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                       <RefreshCw aria-hidden="true" />
                       <span>{isLoadingNotifications ? "Refreshing alerts..." : "Refresh alerts"}</span>
                     </button>
-                    <button type="button" onClick={() => selectTenantTab("tasks")}>
+                    <button type="button" onClick={() => openSessions()}>
                       <CalendarDays aria-hidden="true" />
                       <span>Open sessions</span>
                     </button>
                     {isTenantAdmin ? (
-                      <button type="button" onClick={() => selectTenantTab("review")}>
+                      <button type="button" onClick={() => {
+                        setActiveTab("dashboard");
+                        setIsReviewWorkspaceOpen(true);
+                        setIsSessionWorkspaceOpen(false);
+                        setIsNotificationsOpen(false);
+                      }}>
                         <ClipboardList aria-hidden="true" />
                         <span>Open review queue</span>
                       </button>
@@ -10168,7 +10625,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                   </div>
                 </section>
               ) : null}
-            </div> : null}
+            </div>
             <div className="leader-popover-anchor" ref={userMenuRef}>
               <button
                 className="leader-user-card leader-user-trigger"
@@ -10252,59 +10709,83 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           <StatusLine status={status} />
 
           {activeTab === "dashboard" ? (
-            <LeaderOverviewPanel
-              token={token}
-              tenantSlug={tenantSlug}
-              me={me}
-              query={leaderQuery}
-              onQueryChange={setLeaderQuery}
-              canManage={isTenantAdmin}
-              preferredSessionId={preferredSessionId}
-              onSessionChange={setPreferredSessionId}
-              onCreateSession={() => openStartInventoryWizard("packet")}
-              onOpenSessions={() => openSessions()}
-              onOpenSession={openActivitySession}
-              onOpenUpload={() => openSessions("packet")}
-              onInviteCrew={session => setCrewDialogSession(session)}
-              onOpenReview={() => selectTenantTab("review")}
-            />
-          ) : null}
+            <>
+              <LeaderOverviewPanel
+                token={token}
+                tenantSlug={tenantSlug}
+                me={me}
+                query={leaderQuery}
+                onQueryChange={setLeaderQuery}
+                canManage={isTenantAdmin}
+                preferredSessionId={preferredSessionId}
+                onSessionChange={setPreferredSessionId}
+                onCreateSession={() => openStartInventoryWizard("packet")}
+                onOpenSessions={() => openSessions()}
+                onOpenSession={openActivitySession}
+                onOpenUpload={() => openSessions("packet")}
+                onInviteCrew={session => setCrewDialogSession(session)}
+                onOpenReview={() => {
+                  setIsReviewWorkspaceOpen(true);
+                  setIsSessionWorkspaceOpen(false);
+                }}
+                showWorkQueue={false}
+              />
 
-          {activeTab === "tasks" ? (
-            <SessionPanel
-              token={token}
-              tenantSlug={tenantSlug}
-              me={me}
-              members={members}
-              canManage={isTenantAdmin}
-              canSubmit={canSubmitProof}
-              query={leaderQuery}
-              onQueryChange={setLeaderQuery}
-              uploadIntent={sessionIntent}
-              preferredSessionId={preferredSessionId}
-              preferredSessionItemId={preferredSessionItemId}
-              onUploadIntentHandled={() => setSessionIntent("")}
-              onPreferredSessionItemHandled={() => setPreferredSessionItemId("")}
-              onSessionChange={setPreferredSessionId}
-              onInviteCrew={session => setCrewDialogSession(session)}
-              onOpenReview={() => selectTenantTab("review")}
-            />
+              {isSessionWorkspaceOpen ? (
+                <section className="embedded-workspace-panel" aria-label="Inventory workspace">
+                  {!isCrew ? (
+                    <div className="embedded-workspace-heading">
+                      <div><p className="eyebrow">Current inventory</p><h2>Work queue</h2></div>
+                      <button className="btn btn-secondary btn-small" type="button" onClick={() => setIsSessionWorkspaceOpen(false)}>Close work queue</button>
+                    </div>
+                  ) : null}
+                  <SessionPanel
+                    token={token}
+                    tenantSlug={tenantSlug}
+                    me={me}
+                    members={members}
+                    canManage={isTenantAdmin}
+                    canSubmit={canSubmitProof}
+                    query={leaderQuery}
+                    onQueryChange={setLeaderQuery}
+                    uploadIntent={sessionIntent}
+                    preferredSessionId={preferredSessionId}
+                    preferredSessionItemId={preferredSessionItemId}
+                    onUploadIntentHandled={() => setSessionIntent("")}
+                    onPreferredSessionItemHandled={() => setPreferredSessionItemId("")}
+                    onSessionChange={setPreferredSessionId}
+                    onInviteCrew={session => setCrewDialogSession(session)}
+                    onOpenReview={() => {
+                      setIsReviewWorkspaceOpen(true);
+                      setIsSessionWorkspaceOpen(false);
+                    }}
+                  />
+                </section>
+              ) : null}
+
+              {isReviewWorkspaceOpen && isTenantAdmin ? (
+                <section className="embedded-workspace-panel" aria-label="Review queue">
+                  <div className="embedded-workspace-heading">
+                    <div><p className="eyebrow">Leader review</p><h2>Review queue</h2></div>
+                    <button className="btn btn-secondary btn-small" type="button" onClick={() => setIsReviewWorkspaceOpen(false)}>Close review queue</button>
+                  </div>
+                  <ReviewPanel
+                    token={token}
+                    tenantSlug={tenantSlug}
+                    query={leaderQuery}
+                    onQueryChange={setLeaderQuery}
+                    onClearSearch={clearLeaderSearch}
+                    onOpenSessions={() => openSessions()}
+                  />
+                </section>
+              ) : null}
+            </>
           ) : null}
 
           {activeTab === "reports" && isTenantAdmin ? (
             <ReportsPanel token={token} tenantSlug={tenantSlug} query={leaderQuery} onQueryChange={setLeaderQuery} />
           ) : null}
 
-          {activeTab === "review" && isTenantAdmin ? (
-            <ReviewPanel
-              token={token}
-              tenantSlug={tenantSlug}
-              query={leaderQuery}
-              onQueryChange={setLeaderQuery}
-              onClearSearch={clearLeaderSearch}
-              onOpenSessions={() => openSessions()}
-            />
-          ) : null}
 
           {activeTab === "people" && isTenantAdmin ? (
             <TenantPeoplePanel
@@ -10590,6 +11071,24 @@ export default function AdminConsole() {
         }
       }
 
+      if (!callbackFailed) {
+        try {
+          if (!ignore) setStatus({ text: "Restoring your sign-in...", isError: false });
+          const refreshedSession = await refreshAuthSession(null, { force: true });
+          const refreshedToken = getSessionAccessToken(refreshedSession);
+          if (refreshedToken && !ignore) {
+            setSession(refreshedSession);
+            await loadMe(refreshedToken);
+            return;
+          }
+        } catch (refreshError) {
+          if (![400, 401].includes(Number(refreshError?.details?.status))) {
+            if (!ignore) setStatus({ text: getProtectedAuthErrorMessage(refreshError), isError: true });
+            return;
+          }
+        }
+      }
+
       if (!callbackFailed && !appConfig.enableQaAuth) {
         try {
           setStatus({ text: "Redirecting to Authentik...", isError: false });
@@ -10615,6 +11114,8 @@ export default function AdminConsole() {
       const wasCrew = me?.authKind === "crew";
       if (wasCrew) {
         await apiRequest("/crew/logout", { method: "POST", tenantSlug });
+      } else {
+        await endOidcSession();
       }
       clearAuthSession();
       clearQaIdentity();

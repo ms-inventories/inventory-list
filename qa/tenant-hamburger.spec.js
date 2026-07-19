@@ -56,8 +56,8 @@ test.describe("Tenant hamburger menu", () => {
     await page.getByRole("button", { name: "Open workspace menu" }).click();
     await expect(shell).toHaveClass(/sidebar-open/);
 
-    await page.getByRole("button", { name: "Inventory Sessions" }).click();
+    await page.getByRole("button", { name: "Reports", exact: true }).click();
     await expect(shell).not.toHaveClass(/sidebar-open/);
-    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
   });
 });

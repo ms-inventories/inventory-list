@@ -5,7 +5,7 @@ const API_ORIGIN = process.env.MVP_API_ORIGIN || "https://api.876en.org";
 const TENANT_ORIGIN = process.env.MVP_TENANT_ORIGIN || "https://ms.876en.org";
 const TENANT_SLUG = process.env.MVP_TENANT_SLUG || "ms";
 const CLIENT_ID = process.env.MVP_OIDC_CLIENT_ID || "kqEeiCB9UgmaDlU5dUi3YziORFIIGxbAxz7S9mLC";
-const OIDC_SCOPE = process.env.MVP_OIDC_SCOPE || "openid profile email groups ak_user_uuid";
+const OIDC_SCOPE = process.env.MVP_OIDC_SCOPE || "openid profile email groups offline_access ak_user_uuid";
 const ADMIN_USERNAME = requiredEnv("MVP_ADMIN_USERNAME");
 const ADMIN_PASSWORD = requiredEnv("MVP_ADMIN_PASSWORD");
 const AUTHENTIK_ADMIN_USERNAME = requiredEnv("MVP_AUTHENTIK_ADMIN_USERNAME");
@@ -227,6 +227,9 @@ async function oidcAccessToken(username, password) {
       const tokenData = await responseData(tokenResponse);
       if (!tokenResponse.ok || !tokenData?.access_token) {
         throw new Error(`OIDC token exchange failed (${tokenResponse.status})`);
+      }
+      if (OIDC_SCOPE.split(/\s+/).includes("offline_access") && !tokenData.refresh_token) {
+        throw new Error("OIDC token exchange omitted refresh_token; attach offline_access and enable the refresh-token grant in Authentik");
       }
       return tokenData.access_token;
     }

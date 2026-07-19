@@ -394,14 +394,14 @@ test("an invite is retired after its lifetime PIN attempt limit", async ({ reque
   }
 });
 
-test("expired crew access releases untouched claims on detection and leader session refresh", async ({ request, playwright }, testInfo) => {
+test("expired or 36-hour-inactive crew access releases untouched claims", async ({ request, playwright }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Expiry lifecycle coverage only needs one API project.");
   const suffix = `expiry-${testInfo.workerIndex}-${Date.now()}`;
   const database = new Client({ connectionString: QA_DATABASE_URL });
   const crewClients = [];
   const sessionIds = [];
 
-  async function createClaimedCrew(label) {
+  async function createClaimedCrew(label, { inactive = false } = {}) {
     const session = await json(await request.post(`${API_URL}/inventory/sessions`, {
       headers: adminHeaders(),
       data: { name: `QA crew ${label} ${suffix}`, status: "active" }
@@ -428,18 +428,21 @@ test("expired crew access releases untouched claims on detection and leader sess
     await database.query(
       `
         UPDATE session_crew_grants
-        SET created_at = now() - interval '2 hours', expires_at = now() - interval '1 hour'
+        SET created_at = CASE WHEN $2 THEN now() - interval '38 hours' ELSE now() - interval '2 hours' END,
+          expires_at = CASE WHEN $2 THEN now() + interval '1 day' ELSE now() - interval '1 hour' END
         WHERE id = $1
       `,
-      [access.access.id]
+      [access.access.id, inactive]
     );
     await database.query(
       `
         UPDATE session_crew_auth_sessions
-        SET created_at = now() - interval '2 hours', expires_at = now() - interval '1 hour'
+        SET created_at = CASE WHEN $2 THEN now() - interval '38 hours' ELSE now() - interval '2 hours' END,
+          expires_at = CASE WHEN $2 THEN now() + interval '1 day' ELSE now() - interval '1 hour' END,
+          last_seen_at = CASE WHEN $2 THEN now() - interval '37 hours' ELSE last_seen_at END
         WHERE grant_id = $1
       `,
-      [access.access.id]
+      [access.access.id, inactive]
     );
     return { session, item, access, crew };
   }
@@ -476,6 +479,12 @@ test("expired crew access releases untouched claims on detection and leader sess
       [detected.access.access.id]
     );
     expect(expiryAudit.rows).toHaveLength(1);
+
+    const inactive = await createClaimedCrew("inactive", { inactive: true });
+    const inactiveEnded = await inactive.crew.get(`${API_URL}/me`, { headers: crewHeaders() });
+    expect(inactiveEnded.status()).toBe(401);
+    expect(await inactiveEnded.json()).toMatchObject({ code: "crew_access_ended" });
+    await expectRetired(inactive);
 
     const swept = await createClaimedCrew("leader-refresh");
     await json(await request.get(`${API_URL}/inventory/sessions`, { headers: adminHeaders() }));

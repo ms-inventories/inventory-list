@@ -95,6 +95,31 @@ test("crew staging quota always leaves room for a ten-photo evidence submission"
   assert.equal(result.stdout, "12");
 });
 
+test("temporary crew inactivity defaults to 36 hours and remains bounded", () => {
+  const script = `
+    import { config } from ${JSON.stringify(configUrl)};
+    process.stdout.write(String(config.crewAccess.inactivityTtlHours));
+  `;
+  const baseEnvironment = { ...process.env, NODE_ENV: "test" };
+  delete baseEnvironment.CREW_INACTIVITY_TTL_HOURS;
+
+  const defaultResult = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: path.resolve("."),
+    env: baseEnvironment,
+    encoding: "utf8"
+  });
+  assert.equal(defaultResult.status, 0, defaultResult.stderr);
+  assert.equal(defaultResult.stdout, "36");
+
+  const boundedResult = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: path.resolve("."),
+    env: { ...baseEnvironment, CREW_INACTIVITY_TTL_HOURS: "999" },
+    encoding: "utf8"
+  });
+  assert.equal(boundedResult.status, 0, boundedResult.stderr);
+  assert.equal(boundedResult.stdout, "168");
+});
+
 test("Authentik provisioning is inert by default and validates every required setting when enabled", () => {
   const disabled = checkProductionConfig({
     AUTHENTIK_PROVISIONING_ENABLED: "false",

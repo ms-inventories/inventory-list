@@ -80,14 +80,18 @@ async function submitProof(request, sessionItemId, note) {
 }
 
 test.describe("proof review reliability", () => {
-  test("a response replaces older proof and one approval clears the review queue", async ({ request }, testInfo) => {
+  test("a response follows a rejection kept with its submitter and one approval clears the review queue", async ({ request }, testInfo) => {
     const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
     const scenario = await createScenario(request, suffix);
 
     const first = await submitProof(request, scenario.sessionItemId, "Initial proof");
-    await responseJson(await request.post(`${API_URL}/submissions/${first.submission.id}/evidence-requests`, {
+    await responseJson(await request.patch(`${API_URL}/submissions/${first.submission.id}/review`, {
       headers: qaHeaders(qaAdmin),
-      data: { message: "Need a clearer serial number.", requestedFields: ["serial_number"] }
+      data: {
+        decision: "rejected",
+        note: "Need a clearer serial number.",
+        returnAssignment: "submitter"
+      }
     }));
     const response = await submitProof(request, scenario.sessionItemId, "Clear serial number response");
 
@@ -95,9 +99,9 @@ test.describe("proof review reliability", () => {
       headers: qaHeaders(qaAdmin)
     }));
     const submissions = detail.items.find(item => item.id === scenario.sessionItemId).submissions;
-    expect(submissions.find(item => item.id === first.submission.id)?.reviewState).toBe("superseded");
+    expect(submissions.find(item => item.id === first.submission.id)?.reviewState).toBe("rejected");
     expect(submissions.find(item => item.id === response.submission.id)?.reviewState).toBe("pending");
-    expect(submissions.filter(item => ["pending", "request_more_info"].includes(item.reviewState))).toHaveLength(1);
+    expect(submissions.filter(item => item.reviewState === "pending")).toHaveLength(1);
 
     const queueBeforeApproval = await responseJson(await request.get(`${API_URL}/inventory/review-queue`, {
       headers: qaHeaders(qaAdmin)
@@ -116,12 +120,16 @@ test.describe("proof review reliability", () => {
       error: "This proof has already been reviewed or replaced."
     });
 
-    const staleRequest = await request.post(`${API_URL}/submissions/${first.submission.id}/evidence-requests`, {
+    const staleRejection = await request.patch(`${API_URL}/submissions/${first.submission.id}/review`, {
       headers: qaHeaders(qaAdmin),
-      data: { message: "This older proof should no longer be actionable.", requestedFields: [] }
+      data: {
+        decision: "rejected",
+        note: "This older proof should no longer be actionable.",
+        returnAssignment: "unassigned"
+      }
     });
-    expect(staleRequest.status()).toBe(409);
-    expect(await staleRequest.json()).toMatchObject({ code: "conflict" });
+    expect(staleRejection.status()).toBe(409);
+    expect(await staleRejection.json()).toMatchObject({ code: "conflict" });
 
     await responseJson(await request.patch(`${API_URL}/submissions/${response.submission.id}/review`, {
       headers: qaHeaders(qaAdmin),

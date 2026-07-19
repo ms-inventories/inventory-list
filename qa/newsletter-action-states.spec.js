@@ -74,7 +74,7 @@ async function signInAsNewsletterAdmin(page) {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.locator("summary").filter({ hasText: "QA users" }).click();
   await page.getByRole("button", { name: "Newsletter admin" }).click();
-  await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
 }
 
 async function openNewsletterSection(page, name) {
@@ -130,9 +130,11 @@ test.describe("newsletter async action states", () => {
 
     await signInAsNewsletterAdmin(page);
     await openNewsletterSection(page, "Issues");
-    await page.getByRole("button", { name: new RegExp(`^${uiIssue.title}`) }).click();
+    const issueRow = page.getByRole("table", { name: "Newsletter issues" }).getByRole("row").filter({ hasText: uiIssue.title });
+    await issueRow.getByRole("button", { name: "Edit" }).click();
 
-    const editor = page.locator(".newsletter-editor-form");
+    const issueDialog = page.getByRole("dialog", { name: "Edit issue" });
+    const editor = issueDialog.locator(".newsletter-editor-form");
     const publishButton = editor.getByRole("button", { name: "Publish", exact: true });
     await publishButton.evaluate(button => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -143,7 +145,7 @@ test.describe("newsletter async action states", () => {
     await expect(editor.getByRole("button", { name: "Publishing..." })).toBeDisabled();
     await expect(editor.getByLabel("Title")).toBeDisabled();
     await expect(editor.getByRole("button", { name: "Send test" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Write newsletter" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Create issue", exact: true }).first()).toBeDisabled();
     await expect(editor.getByText(/Published\. Delivered \d+, skipped \d+, failed \d+\./)).toBeVisible();
     await expect(editor.getByRole("button", { name: "Published", exact: true })).toBeDisabled();
     await expect(editor.getByRole("button", { name: "Save issue" })).toBeDisabled();
@@ -175,8 +177,10 @@ test.describe("newsletter async action states", () => {
       });
 
       await signInAsNewsletterAdmin(page);
-      await page.getByRole("button", { name: new RegExp(`^${block.title}`) }).click();
-      const contentEditor = page.locator(".newsletter-editor-form");
+      await page.getByRole("button", { name: "Update homepage" }).click();
+      const homepageDialog = page.getByRole("dialog", { name: "Manage homepage updates" });
+      await homepageDialog.locator(".frg-content-list .newsletter-issue-button").filter({ hasText: block.title }).click();
+      const contentEditor = homepageDialog.locator(".newsletter-editor-form");
       await contentEditor.getByLabel("Summary").fill("Saved exactly once");
       await contentEditor.evaluate(form => {
         form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -187,27 +191,34 @@ test.describe("newsletter async action states", () => {
       await expect(contentEditor.getByRole("button", { name: "Saving homepage update..." })).toBeDisabled();
       await expect(contentEditor.getByLabel("Title")).toBeDisabled();
       await expect(contentEditor.getByRole("button", { name: "Remove" })).toBeDisabled();
-      await expect(page.getByRole("button", { name: "Add homepage update" })).toBeDisabled();
+      await expect(homepageDialog.getByRole("button", { name: "Add homepage update" })).toBeDisabled();
       await expect(contentEditor.getByText("Public content saved.")).toBeVisible();
       expect(saveAttempts).toBe(1);
+      await homepageDialog.getByRole("button", { name: "Close homepage editor" }).click();
 
       await openNewsletterSection(page, "Subscribers");
       await page.getByLabel("Search subscribers").fill(`QA Guard`);
-      const firstRow = page.locator(".admin-list-row", { hasText: firstSubscriber.displayName });
-      const secondRow = page.locator(".admin-list-row", { hasText: secondSubscriber.displayName });
-      const approveButton = firstRow.getByRole("button", { name: "Approve", exact: true });
+      const subscriberTable = page.getByRole("table", { name: "Newsletter subscribers" });
+      const firstRow = subscriberTable.getByRole("row").filter({ hasText: firstSubscriber.displayName });
+      const secondRow = subscriberTable.getByRole("row").filter({ hasText: secondSubscriber.displayName });
+      await firstRow.getByRole("button", { name: "View details" }).click();
+      const subscriberDialog = page.getByRole("dialog", { name: firstSubscriber.displayName });
+      const approveButton = subscriberDialog.getByRole("button", { name: "Approve subscriber" });
       await approveButton.evaluate(button => {
         button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
         button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
 
       await expect.poll(() => reviewAttempts).toBe(1);
-      await expect(firstRow.getByRole("button", { name: "Approving..." })).toBeDisabled();
-      await expect(firstRow.getByPlaceholder("Private note for this request...")).toBeDisabled();
-      await expect(secondRow.getByRole("button", { name: "Approve", exact: true })).toBeEnabled();
-      await expect(page.getByText(new RegExp(`${firstSubscriber.displayName} was approved`))).toBeVisible();
-      await expect(firstRow).toHaveCount(0);
+      await expect(subscriberDialog.getByRole("button", { name: "Approving..." })).toBeDisabled();
+      await expect(subscriberDialog.getByPlaceholder("Add context for this review...")).toBeDisabled();
+      await expect(subscriberDialog.getByRole("button", { name: "Close subscriber details" })).toBeDisabled();
+      await expect(subscriberDialog.getByText(new RegExp(`${firstSubscriber.displayName} was approved`))).toBeVisible();
+      await expect(subscriberDialog.getByRole("button", { name: "Remove subscriber" })).toBeVisible();
       expect(reviewAttempts).toBe(1);
+      await subscriberDialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(firstRow).toHaveCount(0);
+      await expect(secondRow).toBeVisible();
 
       let refreshAttempts = 0;
       await page.route("**/api/newsletter/admin", async route => {

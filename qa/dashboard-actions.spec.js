@@ -74,8 +74,12 @@ function createSessionDialog(page) {
 
 async function expectSessionsPageWithoutCreateDialog(page) {
   await expect(
+    page.getByRole("region", { name: "Inventory workspace" }),
+    "the dashboard action should expand the inventory workspace"
+  ).toBeVisible();
+  await expect(
     page.getByRole("heading", { name: "Sessions", exact: true }),
-    "the dashboard action should navigate to Inventory Sessions"
+    "the expanded inventory workspace should show the session controls"
   ).toBeVisible();
   await expect(
     createSessionDialog(page),
@@ -136,13 +140,19 @@ test.describe("dashboard action destinations", () => {
     await signInAsRoot(page, testInfo);
 
     const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
-    const pendingRow = pendingResults.locator(".leader-table-row").filter({
-      has: page.getByText("Field Radio", { exact: true })
-    });
-    await expect(pendingRow).toBeVisible();
-    await pendingRow.getByRole("button", { name: "Open item", exact: true }).click();
-
+    await expect(pendingResults, "the work queue stays hidden until a session is opened").toBeHidden();
+    const activeInventory = page.getByRole("region", { name: "Active inventory" });
+    const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+    if (await selector.isVisible()) {
+      await selector.selectOption({ label: "Search behavior fixture" });
+    }
+    await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
     await expectSessionsPageWithoutCreateDialog(page);
+
+    const pendingRow = page.locator(".session-item", { hasText: "Field Radio" });
+    await expect(pendingRow).toBeVisible();
+    await pendingRow.getByRole("button", { name: /Open details for/ }).click();
+
     await expect(
       page.locator(".session-summary").getByText("Search behavior fixture", { exact: true }),
       "the row action should preserve and select the row's session id"
@@ -154,12 +164,16 @@ test.describe("dashboard action destinations", () => {
     expect(sessionCreateRequests, "opening pending work must not create an inventory session").toHaveLength(0);
   });
 
-  test("Open sessions navigates from the pending card to the sessions page", async ({ page }, testInfo) => {
+  test("session work remains hidden until explicitly opened and can be collapsed again", async ({ page }, testInfo) => {
     await signInAsRoot(page, testInfo);
 
-    const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
-    await pendingResults.getByRole("button", { name: "Open session" }).click();
-
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toHaveCount(0);
+    await page.getByRole("region", { name: "Active inventory" })
+      .getByRole("button", { name: "Open session", exact: true })
+      .click();
     await expectSessionsPageWithoutCreateDialog(page);
+    await page.getByRole("button", { name: "Close work queue", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
   });
 });

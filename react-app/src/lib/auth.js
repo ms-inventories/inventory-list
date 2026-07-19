@@ -7,6 +7,8 @@ const OIDC_VERIFIER_KEY = "inventory.oidc.verifier";
 export const AUTH_SESSION_INVALIDATED_EVENT = "inventory:auth-session-invalidated";
 
 let currentRedirectCompletion = null;
+let currentSessionRefresh = null;
+let authSessionGeneration = 0;
 
 export class AuthFlowError extends Error {
   constructor(code, message, details = {}) {
@@ -93,6 +95,10 @@ function cleanRedirectUrl(returnTo) {
   window.history.replaceState({}, "", returnTo || `${window.location.pathname}${window.location.hash || ""}`);
 }
 
+function notifyRouteChanged() {
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
 async function parseTokenResponse(response) {
   const text = await response.text();
   if (!text) return {};
@@ -124,6 +130,28 @@ export function clearAuthSession() {
   localStorage.removeItem(AUTH_SESSION_KEY);
 }
 
+export async function endOidcSession() {
+  authSessionGeneration += 1;
+  const pendingRefresh = currentSessionRefresh?.promise || null;
+  clearAuthSession();
+  try {
+    if (pendingRefresh) await pendingRefresh.catch(() => null);
+    const response = await fetch(buildApiUrl("/auth/oidc/logout"), {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      credentials: "include"
+    });
+    if (!response.ok) {
+      throw new AuthFlowError("logout_failed", "The app could not finish signing out. Try again.", {
+        status: response.status
+      });
+    }
+  } finally {
+    clearAuthSession();
+  }
+}
+
 export function invalidateAuthSession(accessToken, reason = "unauthorized") {
   const session = readAuthSession();
   if (!session?.accessToken || (accessToken && session.accessToken !== accessToken)) return false;
@@ -139,8 +167,84 @@ export function invalidateAuthSession(accessToken, reason = "unauthorized") {
 
 export function getSessionAccessToken(session) {
   if (!session?.accessToken) return "";
-  if (session.expiresAt && Date.now() > session.expiresAt - 30000) return "";
+  if (session.expiresAt && Date.now() > session.expiresAt - 30000 && !authSessionCanRefresh(session)) return "";
   return session.accessToken;
+}
+
+export function authSessionCanRefresh(session) {
+  return Boolean(session?.refreshToken || session?.refreshAvailable);
+}
+
+export function authSessionNeedsRefresh(session, now = Date.now()) {
+  if (!session?.accessToken || !authSessionCanRefresh(session)) return false;
+  return !session.expiresAt || now >= Number(session.expiresAt) - 60_000;
+}
+
+async function refreshAuthSessionOnce(session) {
+  const generation = authSessionGeneration;
+  let response;
+  try {
+    response = await fetch(buildApiUrl("/auth/oidc/refresh"), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(session?.refreshToken ? { refreshToken: session.refreshToken } : {}),
+      cache: "no-store",
+      credentials: "include"
+    });
+  } catch (error) {
+    throw new AuthFlowError("token_refresh_network", "Could not renew the sign-in session.", {
+      cause: error?.message || String(error),
+      apiBaseUrl: appConfig.apiBaseUrl
+    });
+  }
+
+  const tokenSet = await parseTokenResponse(response);
+  if (!response.ok || !tokenSet?.access_token) {
+    if ((response.status === 401 || tokenSet?.code === "oidc_refresh_rejected") && session?.accessToken) {
+      invalidateAuthSession(session.accessToken, "refresh_rejected");
+    }
+    throw new AuthFlowError(
+      "token_refresh_failed",
+      tokenSet?.error_description || tokenSet?.error || "The sign-in session could not be renewed.",
+      { status: response.status }
+    );
+  }
+
+  const expiresIn = Number(tokenSet.expires_in || 3600);
+  const refreshedSession = {
+    ...(session || {}),
+    accessToken: tokenSet.access_token,
+    idToken: tokenSet.id_token || session?.idToken || "",
+    refreshToken: tokenSet.refresh_token || session?.refreshToken || "",
+    refreshAvailable: Boolean(tokenSet.refresh_available || tokenSet.refresh_token || session?.refreshAvailable),
+    expiresAt: Date.now() + expiresIn * 1000,
+    createdAt: session?.createdAt || Date.now(),
+    refreshedAt: Date.now()
+  };
+  if (generation !== authSessionGeneration) {
+    throw new AuthFlowError("token_refresh_cancelled", "Sign-in renewal was cancelled because you signed out.");
+  }
+  saveAuthSession(refreshedSession);
+  return refreshedSession;
+}
+
+export async function refreshAuthSession(session = readAuthSession(), { force = false } = {}) {
+  if (!force && (!session?.accessToken || !authSessionCanRefresh(session))) return session;
+  if (!force && !authSessionNeedsRefresh(session)) return session;
+
+  const refreshKey = session?.refreshToken || "oidc-cookie";
+  if (currentSessionRefresh?.refreshKey === refreshKey) {
+    return currentSessionRefresh.promise;
+  }
+
+  const promise = refreshAuthSessionOnce(session).finally(() => {
+    if (currentSessionRefresh?.promise === promise) currentSessionRefresh = null;
+  });
+  currentSessionRefresh = { refreshKey, promise };
+  return promise;
 }
 
 export async function beginOidcLogin(returnTo = `${window.location.pathname}${window.location.hash || ""}`) {
@@ -162,7 +266,7 @@ export async function beginOidcLogin(returnTo = `${window.location.pathname}${wi
     state
   });
 
-  window.location.assign(`${discovery.authorization_endpoint}?${params.toString()}`);
+  window.location.replace(`${discovery.authorization_endpoint}?${params.toString()}`);
 }
 
 async function completeOidcRedirectOnce(code, returnedState) {
@@ -174,7 +278,10 @@ async function completeOidcRedirectOnce(code, returnedState) {
   if (!storedState?.state || storedState.state !== returnedState || !verifier) {
     const existingSession = readAuthSession();
     cleanRedirectUrl();
-    if (getSessionAccessToken(existingSession)) return existingSession;
+    if (getSessionAccessToken(existingSession)) {
+      notifyRouteChanged();
+      return existingSession;
+    }
     throw new AuthFlowError("state_mismatch", "The sign-in session expired. Try signing in again.");
   }
 
@@ -191,7 +298,8 @@ async function completeOidcRedirectOnce(code, returnedState) {
         codeVerifier: verifier,
         redirectUri: getRedirectUri()
       }),
-      cache: "no-store"
+      cache: "no-store",
+      credentials: "include"
     });
   } catch (error) {
     cleanRedirectUrl(storedState.returnTo);
@@ -220,12 +328,14 @@ async function completeOidcRedirectOnce(code, returnedState) {
     accessToken: tokenSet.access_token,
     idToken: tokenSet.id_token || "",
     refreshToken: tokenSet.refresh_token || "",
+    refreshAvailable: Boolean(tokenSet.refresh_available || tokenSet.refresh_token),
     expiresAt: Date.now() + expiresIn * 1000,
     createdAt: Date.now()
   };
 
   saveAuthSession(session);
   cleanRedirectUrl(storedState.returnTo);
+  notifyRouteChanged();
   return session;
 }
 

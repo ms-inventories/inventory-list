@@ -1,5 +1,11 @@
 import { appConfig } from "../config.js";
-import { getSessionAccessToken, invalidateAuthSession, readAuthSession } from "./auth.js";
+import {
+  authSessionNeedsRefresh,
+  getSessionAccessToken,
+  invalidateAuthSession,
+  readAuthSession,
+  refreshAuthSession
+} from "./auth.js";
 
 const QA_IDENTITY_KEY = "inventory.qa.identity";
 const LAST_API_REQUEST_ID_KEY = "inventory.lastApiRequestId";
@@ -70,14 +76,19 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
     Accept: "application/json"
   };
 
-  const session = token ? readAuthSession() : null;
-  if (session?.accessToken === token && !getSessionAccessToken(session)) {
-    invalidateAuthSession(token, "expired");
+  let requestToken = token;
+  let session = token ? readAuthSession() : null;
+  if (session?.accessToken) {
+    if (authSessionNeedsRefresh(session)) session = await refreshAuthSession(session);
+    requestToken = session?.accessToken || token;
+  }
+  if (session?.accessToken === requestToken && !getSessionAccessToken(session)) {
+    invalidateAuthSession(requestToken, "expired");
     throw new ApiError("Your sign-in expired. Try again.", 401, { code: "auth_session_expired" });
   }
 
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (session?.accessToken === token && session.idToken) headers["X-ID-Token"] = session.idToken;
+  if (requestToken) headers.Authorization = `Bearer ${requestToken}`;
+  if (session?.accessToken === requestToken && session.idToken) headers["X-ID-Token"] = session.idToken;
   if (tenantSlug) headers["X-Tenant-Slug"] = tenantSlug;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
@@ -127,7 +138,7 @@ export async function apiRequest(path, { method = "GET", token = "", tenantSlug 
     const details = data && typeof data === "object" ? { ...data } : { url };
     if (!details.requestId && responseRequestId) details.requestId = responseRequestId;
     rememberApiRequestId(details.requestId);
-    if (response.status === 401 && token) invalidateAuthSession(token, "unauthorized");
+    if (response.status === 401 && requestToken) invalidateAuthSession(requestToken, "unauthorized");
     if (response.status === 401 && details.code === "crew_access_ended" && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(CREW_ACCESS_ENDED_EVENT));
     }

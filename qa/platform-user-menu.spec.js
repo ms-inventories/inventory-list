@@ -42,7 +42,9 @@ test.describe("Platform user menu", () => {
     await menu.getByRole("button", { name: "Diagnostics", exact: true }).click();
 
     await expect(page.getByRole("heading", { name: "Support", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Deployment details" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Need help with Shadow Tracer?" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "tm.lewisbenson@gmail.com" })).toBeVisible();
+    await expect(page.getByText("Technical diagnostics", { exact: true })).toBeVisible();
     await expect(menu).toBeHidden();
   });
 });

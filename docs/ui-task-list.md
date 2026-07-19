@@ -71,7 +71,7 @@ Use this as the working backlog before turning individual items into implementat
 
 - [x] **UI-001: Fix Authentik launch routing**
   - Current issue: Authentik can land users on the admin route, which makes regular users hit a platform admin sign-in or access-denied path.
-  - Desired behavior: the public login and any optional Authentik app tile launch `https://876en.org/#/launch`; the app routes platform admins, platoon admins, FRG admins, and regular platoon members to the correct workspace.
+  - Desired behavior: the public login and any optional Authentik app tile launch `https://admin.876en.org/#/launch`; the app routes platform admins, platoon admins, FRG admins, and regular platoon members to the correct workspace without a second Authentik round trip.
   - Controls affected: public `Login`, optional Authentik app tile, launch screen.
 
 - [x] **UI-002: Make token/group diagnostics useful but not user-facing**

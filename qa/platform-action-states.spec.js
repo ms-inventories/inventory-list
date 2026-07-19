@@ -93,11 +93,12 @@ test.describe("platform async action states", () => {
     await page.goto(ADMIN_URL);
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Create platoon", exact: true }).first().click();
+    await openPlatformView(page, "Settings", isMobileProject);
+    await page.getByRole("button", { name: "Create platoon", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Create platoon" });
     const form = dialog.locator("form");
     await dialog.getByLabel("Platoon name").fill(name);
-    await dialog.getByLabel("Subdomain").fill(slug);
+    await dialog.getByLabel("Workspace link").fill(slug);
 
     await form.evaluate(element => {
       element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -109,10 +110,10 @@ test.describe("platform async action states", () => {
     await expect(dialog.getByRole("button", { name: "Close create platoon" })).toBeDisabled();
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeDisabled();
     await expect(dialog.getByLabel("Platoon name")).toBeDisabled();
-    await expect(dialog.getByLabel("Subdomain")).toBeDisabled();
+    await expect(dialog.getByLabel("Workspace link")).toBeDisabled();
     await expect(dialog.getByRole("alert")).toContainText("Temporary platoon creation failure");
     await expect(dialog.getByLabel("Platoon name")).toHaveValue(name);
-    await expect(dialog.getByLabel("Subdomain")).toHaveValue(slug);
+    await expect(dialog.getByLabel("Workspace link")).toHaveValue(slug);
     expect(createAttempts).toBe(1);
 
     await dialog.getByRole("button", { name: "Create platoon", exact: true }).click();
@@ -120,12 +121,8 @@ test.describe("platform async action states", () => {
     await expect(page.getByRole("status")).toContainText(`Created ${slug}.localhost.`);
     expect(createAttempts).toBe(2);
 
-    await openPlatformView(page, "Platoons", isMobileProject);
-    await expect(page.getByRole("row").filter({ hasText: name })).toBeVisible();
-    await page.getByPlaceholder("Search platoons by name or subdomain...").fill("no-such-platoon");
-    await expect(page.getByText("No matching platoons", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Clear filters" }).click();
-    await expect(page.getByRole("row").filter({ hasText: name })).toBeVisible();
+    await openPlatformView(page, "Dashboard", isMobileProject);
+    await expect(page.locator(".platform-platoon-card").filter({ hasText: name })).toBeVisible();
 
     trackRefresh = true;
     if (isMobileProject) await page.getByRole("button", { name: "Open account actions" }).click();
@@ -141,7 +138,8 @@ test.describe("platform async action states", () => {
     expect(refreshAttempts).toBe(1);
   });
 
-  test("duplicate admin email requires an eligible identity choice before creating a platoon", async ({ page }) => {
+  test("duplicate admin email requires an eligible identity choice before creating a platoon", async ({ page }, testInfo) => {
+    const isMobileProject = Boolean(testInfo.project.use.isMobile);
     const blockedIdentityId = "91111111-1111-4111-8111-111111111111";
     const selectedIdentityId = "92222222-2222-4222-8222-222222222222";
     const slug = `qa-identity-${Date.now()}`.slice(0, 63);
@@ -205,11 +203,12 @@ test.describe("platform async action states", () => {
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Create platoon", exact: true }).first().click();
+    await openPlatformView(page, "Settings", isMobileProject);
+    await page.getByRole("button", { name: "Create platoon", exact: true }).click();
 
     const dialog = page.getByRole("dialog", { name: "Create platoon" });
     await dialog.getByLabel("Platoon name").fill(name);
-    await dialog.getByLabel("Subdomain").fill(slug);
+    await dialog.getByLabel("Workspace link").fill(slug);
     await dialog.getByLabel("Platoon admin email").fill("Duplicate-Admin@Example.Test");
     await dialog.getByLabel("Platoon admin name").fill(adminDisplayName);
 

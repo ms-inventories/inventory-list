@@ -10,11 +10,11 @@ async function signInAsPlatoonAdmin(page) {
 }
 
 async function openSessions(page) {
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) {
-    await mobileMenu.click();
-  }
-  await page.getByRole("button", { name: "Inventory Sessions", exact: true }).click();
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open sessions", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
 }
 

@@ -63,12 +63,6 @@ async function seedAdminBrowserSession(page) {
   }, qaAdmin);
 }
 
-async function openWorkspaceView(page, name) {
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) await mobileMenu.click();
-  await page.getByRole("button", { name, exact: true }).click();
-}
-
 test.describe("temporary crew access", () => {
   test("one-time code opens only its inventory and logout returns to join", async ({ page, request }, testInfo) => {
     if (testInfo.project.name === "mobile-chrome") await page.setViewportSize({ width: 320, height: 640 });
@@ -113,7 +107,7 @@ test.describe("temporary crew access", () => {
       const mobileNavigation = await workspaceMenu.isVisible();
       if (mobileNavigation) await workspaceMenu.click();
       await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toHaveCount(1);
-      await expect(page.getByRole("button", { name: "Inventory", exact: true })).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Inventory", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Team", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Workspace Settings", exact: true })).toHaveCount(0);
@@ -128,7 +122,7 @@ test.describe("temporary crew access", () => {
       const proofDrawer = page.getByRole("dialog", { name: packetLine });
       await expect(proofDrawer.getByRole("status")).toContainText("Item claimed.");
       const proofForm = proofDrawer.locator(".proof-form");
-      await proofForm.getByRole("button", { name: "Not found", exact: true }).click();
+      await proofForm.getByRole("combobox", { name: "Inventory result" }).selectOption("not_found");
       await proofForm.getByRole("textbox", { name: "Location" }).fill("Temporary crew QA location");
       await proofForm.getByRole("textbox", { name: "Note" }).fill("Checked the assigned area; the item was not present.");
       await proofForm.getByRole("button", { name: "Submit proof", exact: true }).click();
@@ -159,7 +153,11 @@ test.describe("temporary crew access", () => {
     try {
       await page.goto(TENANT_URL);
       await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-      await openWorkspaceView(page, "Inventory Sessions");
+      const activeInventory = page.getByRole("region", { name: "Active inventory" });
+      const activeInventorySelector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+      if (await activeInventorySelector.isVisible()) await activeInventorySelector.selectOption(session.id);
+      await activeInventory.getByRole("button", { name: "Open session" }).click();
+      await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
       await page.locator(".session-row", { hasText: session.name }).click();
       const summary = page.locator(".session-summary").filter({ hasText: session.name });
       await summary.getByRole("button", { name: "Invite crew" }).click();

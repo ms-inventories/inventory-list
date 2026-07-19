@@ -97,11 +97,10 @@ async function seedBrowserIdentity(page, identity) {
 }
 
 async function openReviewQueue(page) {
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) {
-    await mobileMenu.click();
-  }
-  await page.getByRole("button", { name: "Review Queue", exact: true }).click();
+  await page.getByRole("region", { name: "Dashboard review results" })
+    .getByRole("button", { name: "Open review queue", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
 }
 
@@ -228,12 +227,10 @@ test.describe("session claim API", () => {
       await expect(row.locator(".proof-form")).toHaveCount(0);
       const proofForm = drawer.locator(".proof-form");
       await expect(proofForm).toBeVisible();
-      const foundOutcome = proofForm.getByRole("button", { name: "Found / accounted for", exact: true });
-      const missingOutcome = proofForm.getByRole("button", { name: "Not found", exact: true });
-      await expect(foundOutcome).toHaveAttribute("aria-pressed", "true");
-      await missingOutcome.click();
-      await expect(missingOutcome).toHaveAttribute("aria-pressed", "true");
-      await expect(foundOutcome).toHaveAttribute("aria-pressed", "false");
+      const outcome = proofForm.getByRole("combobox", { name: "Inventory result" });
+      await expect(outcome).toHaveValue("found");
+      await outcome.selectOption("not_found");
+      await expect(outcome).toHaveValue("not_found");
       await expect(proofForm.getByRole("textbox", { name: "Location" })).toBeVisible();
       await expect(proofForm.getByRole("textbox", { name: "Serial number (if serialized)" })).toBeVisible();
       await expect(proofForm.getByRole("textbox", { name: "Note" })).toBeVisible();

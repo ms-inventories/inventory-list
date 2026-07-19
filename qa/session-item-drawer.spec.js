@@ -131,9 +131,9 @@ async function createDrawerScenario(request, projectName) {
     photos: [{ uploadId: widePhoto.uploadId, caption: widePhoto.caption, kind: widePhoto.kind }]
   });
   const requestMessage = `Need a clear item photo for ${suffix}.`;
-  await responseJson(await request.post(`${API_URL}/submissions/${initial.submission.id}/evidence-requests`, {
+  await responseJson(await request.patch(`${API_URL}/submissions/${initial.submission.id}/review`, {
     headers: qaHeaders(qaAdmin),
-    data: { message: requestMessage, requestedFields: ["serial_photo"] }
+    data: { decision: "rejected", note: requestMessage, returnAssignment: "submitter" }
   }));
 
   const serialPhoto = await uploadPhoto(request, `serial-${suffix}`, "Readable serial plate", "serial");
@@ -181,9 +181,11 @@ async function signInAsContributor(page) {
 }
 
 async function openSessions(page) {
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) await mobileMenu.click();
-  await page.getByRole("button", { name: "Inventory Sessions", exact: true }).click();
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open sessions", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
 }
 
@@ -199,7 +201,7 @@ async function selectSession(page, scenario, { closed = false } = {}) {
 }
 
 test.describe("session item details", () => {
-  test("contributors see a single awaiting-review state after submitting proof", async ({ page, request }, testInfo) => {
+  test("contributors see one awaiting-review state and can withdraw before review", async ({ page, request }, testInfo) => {
     test.setTimeout(90_000);
     const scenario = await createDrawerScenario(request, `pending-${testInfo.project.name}`);
 
@@ -210,6 +212,7 @@ test.describe("session item details", () => {
 
     const row = page.locator(".session-item", { hasText: scenario.title });
     await expect(row.getByText("Awaiting review", { exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Withdraw submission", exact: true })).toBeVisible();
     await expect(row.getByRole("button", { name: "Review proof" })).toHaveCount(0);
     await expect(row.getByRole("button", { name: /Add proof|Respond with proof/ })).toHaveCount(0);
     await expect(row.locator(".proof-form")).toHaveCount(0);
@@ -221,10 +224,18 @@ test.describe("session item details", () => {
     await expect(drawer.getByRole("button", { name: /Add proof|Respond with proof/ })).toHaveCount(0);
     await expect(drawer.locator(".proof-form")).toHaveCount(0);
 
-    await responseJson(await request.patch(`${API_URL}/submissions/${scenario.submissionId}/review`, {
-      headers: qaHeaders(qaAdmin),
-      data: { decision: "approved", saveItem: false }
+    await drawer.getByRole("button", { name: "Close item details" }).click();
+    await row.getByRole("button", { name: "Withdraw submission", exact: true }).click();
+    await expect(page.locator(".session-panel").getByRole("status")).toContainText("Submission withdrawn. You can update the proof and submit it again.");
+    await expect(row.getByRole("button", { name: "Add proof", exact: true })).toBeVisible();
+
+    const withdrawnDetail = await responseJson(await request.get(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
+      headers: qaHeaders(qaAdmin)
     }));
+    const withdrawnSubmission = withdrawnDetail.items
+      .find(item => item.id === scenario.sessionItemId)
+      ?.submissions.find(submission => submission.id === scenario.submissionId);
+    expect(withdrawnSubmission?.reviewState).toBe("withdrawn");
     await responseJson(await request.patch(`${API_URL}/inventory/sessions/${scenario.sessionId}`, {
       headers: qaHeaders(qaAdmin),
       data: { status: "closed" }
@@ -249,30 +260,26 @@ test.describe("session item details", () => {
     await expect(drawer).toBeVisible();
     await expect(drawer.getByText(scenario.packetLine, { exact: true }).first()).toBeVisible();
 
-    const inventoryDetails = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Inventory details" });
-    await expect(inventoryDetails).not.toHaveAttribute("open", "");
-    await inventoryDetails.locator("summary").click();
+    const inventoryDetails = drawer.locator(".session-detail-visible-section").filter({ hasText: "Inventory details" });
+    await expect(inventoryDetails.getByRole("heading", { name: "Inventory details" })).toBeVisible();
     await expect(inventoryDetails.getByText(scenario.packetLine, { exact: true })).toBeVisible();
     await expect(inventoryDetails.getByText("QA NCO", { exact: true })).toBeVisible();
 
-    const knownItem = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Saved record" });
-    await expect(knownItem).not.toHaveAttribute("open", "");
-    await knownItem.locator("summary").click();
+    const knownItem = drawer.locator(".session-detail-visible-section").filter({ hasText: "Saved record" });
+    await expect(knownItem.getByRole("heading", { name: "Saved record" })).toBeVisible();
     await expect(knownItem.getByText(scenario.armyName, { exact: true })).toBeVisible();
     await expect(knownItem.getByText(scenario.lin, { exact: true })).toBeVisible();
     await expect(drawer.getByText("Cage 9, radio shelf", { exact: true }).first()).toBeVisible();
     await expect(drawer.getByText("QA NCO", { exact: true }).first()).toBeVisible();
 
-    const packetSource = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Packet source" });
-    await expect(packetSource).not.toHaveAttribute("open", "");
-    await packetSource.locator("summary").click();
+    const packetSource = drawer.locator(".session-detail-visible-section").filter({ hasText: "Packet source" });
+    await expect(packetSource.getByRole("heading", { name: "Packet source" })).toBeVisible();
     await expect(drawer.getByText(scenario.sourceName, { exact: true })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "Open source" })).toHaveAttribute("href", /\/media\//);
 
-    const proofHistory = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Proof history" });
+    const proofHistory = drawer.locator(".session-detail-visible-section").filter({ hasText: "Proof history" });
     await expect(drawer.getByText("2 submissions", { exact: true })).toBeVisible();
-    await expect(proofHistory).not.toHaveAttribute("open", "");
-    await proofHistory.locator("summary").click();
+    await expect(proofHistory.getByRole("heading", { name: "Proof history" })).toBeVisible();
     await expect(drawer.getByText(scenario.note, { exact: true })).toBeVisible();
     await expect(drawer.getByText(`Serial: ${scenario.serialNumber}`, { exact: true })).toBeVisible();
     await expect(proofHistory.getByText(scenario.requestMessage, { exact: false })).toBeVisible();
@@ -292,10 +299,9 @@ test.describe("session item details", () => {
 
     await expect(drawer.getByRole("button", { name: /Add proof|Respond with proof/ })).toHaveCount(0);
 
-    const leaderTools = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Manage item" });
-    await expect(leaderTools).not.toHaveAttribute("open", "");
-    await leaderTools.locator("summary").click();
-    const assignment = leaderTools.getByRole("combobox");
+    const leaderTools = drawer.locator(".session-item-manage-disclosure");
+    await expect(leaderTools.getByRole("heading", { name: "Manage item" })).toBeVisible();
+    const assignment = leaderTools.getByRole("combobox", { name: "Assign to" });
     await expect(assignment).toHaveValue(scenario.ncoMemberId);
     await assignment.selectOption("");
     await expect(drawer.getByRole("status")).toContainText("Row assignment cleared.");
@@ -364,11 +370,10 @@ test.describe("session item details", () => {
     await completedItems.getByRole("button", { name: `Open details for completed item ${scenario.title}` }).click();
     drawer = page.getByRole("dialog", { name: scenario.title });
     await expect(drawer).toBeVisible();
-    const closedLeaderTools = drawer.locator("details.session-detail-disclosure").filter({ hasText: "Manage item" });
-    await closedLeaderTools.locator("summary").click();
-    await expect(closedLeaderTools.getByRole("combobox")).toBeDisabled();
-    await expect(drawer.getByRole("button", { name: "Found" })).toHaveCount(0);
-    await expect(drawer.getByRole("button", { name: "Not found" })).toHaveCount(0);
+    const closedLeaderTools = drawer.locator(".session-item-manage-disclosure");
+    await expect(closedLeaderTools.getByRole("heading", { name: "Manage item" })).toBeVisible();
+    await expect(closedLeaderTools.getByRole("combobox", { name: "Assign to" })).toBeDisabled();
+    await expect(closedLeaderTools.getByRole("combobox", { name: "Set result" })).toHaveCount(0);
     await expect(drawer.getByRole("button", { name: "Review proof" })).toHaveCount(0);
     await expect(drawer.getByRole("button", { name: /Add proof|Respond with proof/ })).toHaveCount(0);
   });

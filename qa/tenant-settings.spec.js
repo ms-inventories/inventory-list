@@ -51,6 +51,38 @@ async function signIn(page, tenantSlug, persona) {
 }
 
 test.describe("tenant settings", () => {
+  test("platoon admins can override and clear the proof-alert recipient", async ({ request }) => {
+    const tenantSlug = "qa-settings-desktop";
+    const headers = qaHeaders(qaRoot, tenantSlug);
+    const baseline = (await responseJson(await request.get(`${API_URL}/tenant/settings`, { headers }))).settings;
+
+    try {
+      const saved = (await responseJson(await request.patch(`${API_URL}/tenant/settings`, {
+        headers,
+        data: { alertRecipientEmail: "Supply.Alerts@876en.test" }
+      }))).settings;
+      expect(saved.alertRecipientEmail).toBe("supply.alerts@876en.test");
+
+      const invalid = await request.patch(`${API_URL}/tenant/settings`, {
+        headers,
+        data: { alertRecipientEmail: "not-an-email" }
+      });
+      expect(invalid.status()).toBe(400);
+      expect((await invalid.json()).code).toBe("validation_failed");
+
+      const cleared = (await responseJson(await request.patch(`${API_URL}/tenant/settings`, {
+        headers,
+        data: { alertRecipientEmail: "" }
+      }))).settings;
+      expect(cleared.alertRecipientEmail).toBe("");
+    } finally {
+      await request.patch(`${API_URL}/tenant/settings`, {
+        headers,
+        data: { alertRecipientEmail: baseline.alertRecipientEmail || "" }
+      });
+    }
+  });
+
   test("platoon admins persist workspace identity and notification behavior without exposing routing internals", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     const mobile = testInfo.project.name === "mobile-chrome";

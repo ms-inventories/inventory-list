@@ -27,50 +27,47 @@ async function activatePlatformNav(page, name, isMobileProject) {
 }
 
 test.describe("Platform dashboard", () => {
-  test("dashboard navigation opens a focused platform overview", async ({ page }, testInfo) => {
+  test("dashboard is the platoon overview instead of a second management page", async ({ page }, testInfo) => {
     const isMobileProject = Boolean(testInfo.project.use.isMobile);
 
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);
 
     await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
-    await expect(page.getByText("Total platoons", { exact: true })).toBeVisible();
-    const setup = page.locator(".platform-setup-card");
-    await expect(setup.getByRole("heading", { name: "Workspace setup" })).toBeVisible();
-    await expect(setup.getByRole("combobox", { name: "Platoon setup" })).toBeVisible();
-    await expect(setup.getByRole("listitem")).toHaveCount(5);
-    await expect(setup.getByText("Workspace address", { exact: true })).toBeVisible();
-    await expect(setup.getByText("Account group", { exact: true })).toBeVisible();
-    await expect(setup.getByText("Leader access", { exact: true })).toBeVisible();
-    await expect(setup.getByText("First packet", { exact: true })).toBeVisible();
-    await expect(setup.getByText("Photo storage", { exact: true })).toBeVisible();
-    await expect(setup.getByText("Permanent account setup is not connected.", { exact: true })).toBeVisible();
-    await expect(setup.getByRole("button", { name: "Open setup details" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Recent platoons" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Admin actions" })).toHaveCount(0);
+    await expect(page.getByText("Open a platoon and see where today’s inventories need attention.")).toBeVisible();
 
-    await activatePlatformNav(page, "Platoons", isMobileProject);
-    await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
-    await expect(page.getByPlaceholder("Search platoons by name or subdomain...")).toBeVisible();
+    const cards = page.locator(".platform-platoon-card");
+    await expect(cards.first()).toBeVisible();
+    const msCard = cards.filter({ hasText: "MS Platoon" }).first();
+    await expect(msCard).toBeVisible();
+    await expect(msCard.getByText(/active inventor(?:y|ies)/)).toBeVisible();
+    await expect(msCard.getByText(/active crew member/)).toBeVisible();
+    await expect(msCard.getByText(/invited users/)).toBeVisible();
+    const progress = msCard.getByRole("progressbar");
+    if (await progress.count()) {
+      await expect(progress).toHaveAttribute("aria-valuenow", /^\d+(?:\.\d+)?$/);
+    } else {
+      await expect(msCard.getByText("No active inventory session.", { exact: true })).toBeVisible();
+    }
+    await expect(msCard.getByText("Link", { exact: true })).toBeVisible();
+    await expect(msCard.getByRole("button", { name: /Copy link for MS Platoon/i })).toBeVisible();
+    await expect(msCard.getByRole("link", { name: /Enter ms\.localhost workspace/i })).toBeVisible();
 
-    await activatePlatformNav(page, "Dashboard", isMobileProject);
-    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Platoons", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Roles", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Organizations", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create platoon", exact: true })).toHaveCount(0);
 
     await activatePlatformNav(page, "Users", isMobileProject);
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add user", exact: true })).toBeVisible();
 
-    await activatePlatformNav(page, "Dashboard", isMobileProject);
-    const openPlatoonsShortcut = page.getByRole("button", { name: "Open platoons" });
-    await expect(openPlatoonsShortcut).toBeVisible();
-    if (isMobileProject) {
-      await activatePlatformNav(page, "Platoons", true);
-    } else {
-      await openPlatoonsShortcut.click();
-    }
-    await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
+    await activatePlatformNav(page, "Settings", isMobileProject);
+    await expect(page.getByRole("heading", { name: "Platform settings", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create platoon", exact: true })).toBeVisible();
   });
 
-  test("recent platoons stays contained at desktop and docked widths", async ({ page }, testInfo) => {
+  test("platoon cards stay contained at desktop and docked widths", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Desktop containment is covered once in Chromium.");
     await seedQaRootSession(page);
 
@@ -79,24 +76,22 @@ test.describe("Platform dashboard", () => {
       await page.goto(ADMIN_URL);
 
       const main = page.locator("main");
-      const recent = page.locator(".platform-dashboard-card").filter({ hasText: "Recent platoons" });
-      const setup = page.locator(".platform-setup-card");
-      const table = recent.getByRole("table");
-      await expect(setup).toBeVisible();
-      await expect(recent).toBeVisible();
-      await expect(table).toBeVisible();
+      const grid = page.locator(".platform-platoon-grid");
+      const firstCard = grid.locator(".platform-platoon-card").first();
+      await expect(grid).toBeVisible();
+      await expect(firstCard).toBeVisible();
 
-      const [mainBox, cardBox, tableBox] = await Promise.all([
+      const [mainBox, gridBox, cardBox] = await Promise.all([
         main.boundingBox(),
-        recent.boundingBox(),
-        table.boundingBox()
+        grid.boundingBox(),
+        firstCard.boundingBox()
       ]);
+      expect(gridBox.x).toBeGreaterThanOrEqual(mainBox.x - 1);
+      expect(gridBox.x + gridBox.width).toBeLessThanOrEqual(mainBox.x + mainBox.width + 1);
       expect(cardBox.x).toBeGreaterThanOrEqual(mainBox.x - 1);
       expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(mainBox.x + mainBox.width + 1);
-      expect(tableBox.x).toBeGreaterThanOrEqual(cardBox.x - 1);
-      expect(tableBox.x + tableBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
-      expect(await recent.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
-      expect(await setup.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      expect(await grid.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      expect(await firstCard.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
       expect(await page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
       )).toBeTruthy();

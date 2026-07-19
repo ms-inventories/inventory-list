@@ -24,27 +24,26 @@ test.describe("page-scoped search", () => {
 
     const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
     const dashboardReview = page.getByRole("region", { name: "Dashboard review results" });
-    await expect(pendingResults.getByText("Field Radio", { exact: true })).toBeVisible();
-    const fieldRadioRow = pendingResults.locator(".leader-table-row", { hasText: "Field Radio" });
-    await expect(fieldRadioRow.getByText("Needs review", { exact: true })).toBeVisible();
-    await expect(fieldRadioRow.getByText("needs_review", { exact: true })).toHaveCount(0);
+    await expect(pendingResults).toBeHidden();
     await expect(dashboardReview.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
 
     const dashboardSearch = page.getByRole("searchbox", { name: "Search dashboard" });
     await dashboardSearch.fill("left R20-684 radio");
-    await expect(pendingResults.getByText("Field Radio", { exact: true })).toBeVisible();
-    await expect(pendingResults.getByText("Quiet Generator", { exact: true })).toHaveCount(0);
+    await expect(dashboardReview.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
     await dashboardSearch.fill("no-such-dashboard-row");
-    await expect(pendingResults.getByText("No matching work", { exact: true })).toBeVisible();
+    await expect(dashboardReview.getByText("No matching review work", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Clear search" }).click();
     await expect(dashboardSearch).toBeFocused();
-    await expect(pendingResults.getByText("Quiet Generator", { exact: true })).toBeVisible();
+    await expect(dashboardReview.getByText(/R20684 RADIO SET SEARCH FIXTURE/)).toBeVisible();
 
-    await openWorkspaceTab(page, "Inventory Sessions");
+    const activeInventory = page.getByRole("region", { name: "Active inventory" });
+    await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Guidance", exact: true })).toHaveCount(0);
+    await page.locator(".session-row", { hasText: "Search behavior fixture" }).click();
     await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
-    const sessionSearch = page.getByRole("searchbox", { name: "Search current session rows" });
+    const sessionSearch = page.getByRole("searchbox", { name: "Search dashboard" });
     await expect(sessionSearch).toHaveValue("");
     await sessionSearch.fill("battery SEARCH-SERIAL-20-684");
     const sessionResults = page.getByRole("region", { name: "Session row results" });
@@ -67,9 +66,13 @@ test.describe("page-scoped search", () => {
     await expect(sessionSearch).toHaveValue("");
     await expect(sessionResults.getByText("Quiet Generator", { exact: true })).toBeVisible();
 
-    await openWorkspaceTab(page, "Review Queue");
+    await page.getByRole("button", { name: "Close work queue", exact: true }).click();
+    await page.getByRole("region", { name: "Dashboard review results" })
+      .getByRole("button", { name: "Open review queue", exact: true })
+      .click();
+    await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
-    const reviewSearch = page.getByRole("searchbox", { name: "Search review queue" });
+    const reviewSearch = page.getByRole("searchbox", { name: "Search dashboard" });
     await expect(reviewSearch).toHaveValue("");
     await reviewSearch.fill("battery search-serial-20684");
     const reviewResults = page.getByRole("region", { name: "Review queue results" });

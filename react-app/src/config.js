@@ -31,7 +31,7 @@ export const appConfig = {
     discoveryUrl: import.meta.env.VITE_OIDC_DISCOVERY_URL || "https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration",
     authorizationEndpoint: import.meta.env.VITE_OIDC_AUTHORIZATION_ENDPOINT || "https://auth.876en.org/application/o/authorize/",
     tokenEndpoint: import.meta.env.VITE_OIDC_TOKEN_ENDPOINT || "https://auth.876en.org/application/o/token/",
-    scope: import.meta.env.VITE_OIDC_SCOPE || "openid profile email groups"
+    scope: import.meta.env.VITE_OIDC_SCOPE || "openid profile email groups offline_access"
   }
 };
 

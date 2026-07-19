@@ -3,6 +3,7 @@ import test from "node:test";
 import { config } from "../src/config.js";
 import {
   assertCrewRequestOrigin,
+  crewAccessIsInactive,
   crewCodeDigest,
   crewCookieValue,
   crewInviteTokenDigest,
@@ -12,6 +13,13 @@ import {
   hasPrimaryAuthCredentials,
   readCookie
 } from "../src/crew-auth.js";
+
+test("temporary crew access expires after 36 hours without activity", () => {
+  const now = Date.parse("2026-07-18T18:00:00.000Z");
+  assert.equal(crewAccessIsInactive("2026-07-17T06:00:00.001Z", { now, inactivityTtlHours: 36 }), false);
+  assert.equal(crewAccessIsInactive("2026-07-17T06:00:00.000Z", { now, inactivityTtlHours: 36 }), true);
+  assert.equal(crewAccessIsInactive("not-a-date", { now, inactivityTtlHours: 36 }), true);
+});
 
 test("crew codes are exactly four decimal digits and digests are tenant scoped", () => {
   for (let index = 0; index < 200; index += 1) {

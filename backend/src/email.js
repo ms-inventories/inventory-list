@@ -60,6 +60,12 @@ function newsletterSenderAddress() {
   return `${name} <${address}>`;
 }
 
+export function proofSenderAddress() {
+  const name = config.email.proofFromName || config.email.fromName;
+  const address = config.email.proofFromAddress || config.email.fromAddress;
+  return `${name} <${address}>`;
+}
+
 function compactLines(lines) {
   return lines.filter(line => line !== null && line !== undefined && line !== "").join("\n");
 }
@@ -273,7 +279,7 @@ export async function sendProofSubmittedEmail({
   ]);
 
   await getTransporter().sendMail({
-    from: senderAddress(),
+    from: proofSenderAddress(),
     to,
     subject,
     text
@@ -308,7 +314,7 @@ export async function sendProofRequestEmail({
   ]);
 
   await getTransporter().sendMail({
-    from: senderAddress(),
+    from: proofSenderAddress(),
     to,
     subject,
     text

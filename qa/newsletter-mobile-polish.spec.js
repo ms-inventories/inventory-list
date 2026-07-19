@@ -80,7 +80,7 @@ async function openNewsletter(page, data) {
     });
   });
   await page.goto(NEWSLETTER_URL);
-  await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
 }
 
 async function selectNewsletterSection(page, name, heading = name) {
@@ -128,8 +128,10 @@ for (const viewport of viewports) {
         contentBlocks: Array.from({ length: 12 }, (_, index) => contentBlock(index + 1))
       }));
 
-      await page.locator(".frg-content-list .newsletter-issue-button").nth(1).click();
-      await expectEditorEngaged(page, page.locator(".frg-content-admin-grid .newsletter-editor-form"));
+      await page.getByRole("button", { name: "Update homepage" }).click();
+      const dialog = page.getByRole("dialog", { name: "Manage homepage updates" });
+      await dialog.locator(".frg-content-list .newsletter-issue-button").nth(1).click();
+      await expectEditorEngaged(page, dialog.locator(".frg-content-admin-grid .newsletter-editor-form"));
     });
 
     test("selecting an issue brings its editor into context", async ({ page }) => {
@@ -138,8 +140,9 @@ for (const viewport of viewports) {
       }));
       await selectNewsletterSection(page, "Issues", "Newsletter issues");
 
-      await page.locator(".newsletter-issue-list .newsletter-issue-button").nth(1).click();
-      await expectEditorEngaged(page, page.locator(".newsletter-editor-form"));
+      const issueRow = page.getByRole("table", { name: "Newsletter issues" }).getByRole("row").filter({ hasText: "Mobile newsletter issue 2" });
+      await issueRow.getByRole("button", { name: "Edit" }).click();
+      await expectEditorEngaged(page, page.getByRole("dialog", { name: "Edit issue" }).locator(".newsletter-editor-form"));
     });
 
     test("long unbroken public-content and issue titles stay contained", async ({ page }) => {
@@ -150,19 +153,22 @@ for (const viewport of viewports) {
         issues: [issue(1, longIssueTitle)]
       }));
 
+      await page.getByRole("button", { name: "Update homepage" }).click();
+      const homepageDialog = page.getByRole("dialog", { name: "Manage homepage updates" });
       await expectContained(
-        page.locator(".frg-content-list .newsletter-issue-button").first(),
+        homepageDialog.locator(".frg-content-list .newsletter-issue-button").first(),
         `${viewport.label} public-content row`
       );
+      await homepageDialog.getByRole("button", { name: "Close homepage editor" }).click();
 
       await selectNewsletterSection(page, "Issues", "Newsletter issues");
       await expectContained(
-        page.locator(".newsletter-issue-list .newsletter-issue-button").first(),
+        page.getByRole("table", { name: "Newsletter issues" }).getByRole("row").filter({ hasText: longIssueTitle }),
         `${viewport.label} issue row`
       );
     });
 
-    test("a rejected subscriber's only action spans the action row", async ({ page }) => {
+    test("subscriber rows hide email until the details modal is opened", async ({ page }) => {
       await openNewsletter(page, newsletterData({
         subscribers: [{
           id: "mobile-rejected-subscriber",
@@ -181,15 +187,20 @@ for (const viewport of viewports) {
       await selectNewsletterSection(page, "Subscribers");
       await page.getByLabel("Filter subscribers by status").selectOption("rejected");
 
-      const actions = page.locator(".newsletter-subscriber-actions");
-      const approve = actions.getByRole("button", { name: "Approve", exact: true });
-      const [actionsBox, approveBox] = await Promise.all([actions.boundingBox(), approve.boundingBox()]);
-      expect(actionsBox).toBeTruthy();
-      expect(approveBox).toBeTruthy();
-      expect(
-        approveBox.width,
-        `Expected the sole action to fill ${Math.round(actionsBox.width)}px, but it was ${Math.round(approveBox.width)}px wide.`
-      ).toBeGreaterThanOrEqual(actionsBox.width - 1);
+      const table = page.getByRole("table", { name: "Newsletter subscribers" });
+      const row = table.getByRole("row").filter({ hasText: "Rejected Mobile Subscriber" });
+      await expect(row).toBeVisible();
+      await expect(row).not.toContainText("rejected-mobile@876en.test");
+      const pillAlignment = await row.locator(".status-pill").evaluate(element => ({
+        alignItems: getComputedStyle(element).alignItems,
+        justifyContent: getComputedStyle(element).justifyContent,
+        textAlign: getComputedStyle(element).textAlign
+      }));
+      expect(pillAlignment).toEqual({ alignItems: "center", justifyContent: "center", textAlign: "center" });
+      await row.getByRole("button", { name: "View details" }).click();
+      const dialog = page.getByRole("dialog", { name: "Rejected Mobile Subscriber" });
+      await expect(dialog).toContainText("rejected-mobile@876en.test");
+      await expect(dialog.getByRole("button", { name: "Approve subscriber" })).toBeVisible();
     });
 
     test("delivery history does not create a nested vertical scroller", async ({ page }) => {
@@ -204,11 +215,11 @@ for (const viewport of viewports) {
         createdAt: now
       }));
       await openNewsletter(page, newsletterData({ issues: [selectedIssue], deliveries }));
-      await selectNewsletterSection(page, "Issues", "Newsletter issues");
+      await selectNewsletterSection(page, "Analytics", "Delivery analytics");
 
-      const deliveryList = page.locator(".newsletter-delivery-list");
-      await expect(deliveryList).toBeVisible();
-      const scrollState = await deliveryList.evaluate(element => ({
+      const deliveryTable = page.getByRole("table", { name: "Newsletter delivery records" });
+      await expect(deliveryTable).toBeVisible();
+      const scrollState = await deliveryTable.evaluate(element => ({
         overflowY: getComputedStyle(element).overflowY,
         clientHeight: element.clientHeight,
         scrollHeight: element.scrollHeight
@@ -262,14 +273,15 @@ test("newsletter load failures do not expose false zero totals or blank editors"
   });
 
   await page.goto(NEWSLETTER_URL);
-  await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
   await expect(page.getByText("Newsletter could not load", { exact: true })).toBeVisible();
   await expect(page.locator(".newsletter-stat-grid")).toHaveCount(0);
   await expect(page.locator(".newsletter-editor-form")).toHaveCount(0);
 
   allowSuccess = true;
   await page.getByRole("button", { name: "Try again" }).click();
-  await expect(page.locator(".frg-content-list").getByText("Mobile content item 1", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Homepage updates" })).toBeVisible();
+  await expect(page.locator(".newsletter-overview-grid")).toBeVisible();
   await expect(page.locator(".newsletter-stat-grid")).toBeVisible();
   expect(attempts).toBeGreaterThanOrEqual(2);
 });

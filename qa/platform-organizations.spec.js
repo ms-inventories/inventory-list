@@ -26,24 +26,35 @@ async function activatePlatformNav(page, name, isMobileProject) {
   await page.getByRole("button", { name, exact: true }).click();
 }
 
-test.describe("Platform organizations", () => {
-  test("organizations nav opens organization overview", async ({ page }, testInfo) => {
+test.describe("Platform settings", () => {
+  test("settings holds infrequent platoon creation, totals, and technical checks", async ({ page }, testInfo) => {
     const isMobileProject = Boolean(testInfo.project.use.isMobile);
 
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);
 
-    await activatePlatformNav(page, "Organizations", isMobileProject);
+    await activatePlatformNav(page, "Settings", isMobileProject);
 
-    await expect(page.getByRole("heading", { name: "Organizations", exact: true })).toBeVisible();
-    await expect(page.getByText("Review the organization container and workspace totals.")).toBeVisible();
-    await expect(page.getByText("Total platoons", { exact: true })).toBeVisible();
-    await expect(page.getByText("Active platoons", { exact: true })).toBeVisible();
-    await expect(page.getByText("Total users", { exact: true })).toBeVisible();
-    await expect(page.getByText("Admins assigned", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Platform settings", exact: true })).toBeVisible();
+    await expect(page.getByText("Create platoons and review technical workspace setup when needed.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Platoon management" })).toBeVisible();
+    const totals = page.getByRole("table", { name: "Platform totals" });
+    await expect(totals.getByRole("row")).toHaveCount(4);
+    await expect(totals).toContainText("Total platoons");
+    await expect(totals).toContainText("Active platoons");
+    await expect(totals).toContainText("Permanent users");
+    await expect(totals).toContainText("Platoon admins");
 
-    await expect(page.getByRole("heading", { name: "Organization overview" })).toBeVisible();
-    await expect(page.getByText("876 EN", { exact: true })).toBeVisible();
-    await expect(page.getByText("Active", { exact: true })).toBeVisible();
+    const setup = page.getByText("Technical workspace checks", { exact: true });
+    await expect(setup).toBeVisible();
+    await setup.click();
+    await expect(page.getByRole("combobox", { name: "Platoon setup" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Create platoon", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Create platoon" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel("Platoon name")).toBeVisible();
+    await expect(dialog.getByLabel("Workspace link")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeVisible();
   });
 });

@@ -21,11 +21,6 @@ async function seedQaRootSession(page) {
   }, qaRootAdmin);
 }
 
-async function activatePlatformNav(page, name, isMobileProject) {
-  if (isMobileProject) await page.getByRole("button", { name: "Open platform menu" }).click();
-  await page.getByRole("button", { name, exact: true }).click();
-}
-
 function expectedTenantUrls(slug) {
   const adminUrl = new URL(ADMIN_URL);
   const baseHost = adminUrl.hostname.replace(/^admin\./, "");
@@ -34,31 +29,29 @@ function expectedTenantUrls(slug) {
   const workspace = `${adminUrl.protocol}//${host}${port}/`;
   return {
     host,
-    workspace
+    workspace: `${workspace}#/launch`
   };
 }
 
-test.describe("Platform tenant row actions", () => {
-  test("platoon rows expose one workspace destination and a copy action", async ({ page }, testInfo) => {
-    const isMobileProject = Boolean(testInfo.project.use.isMobile);
+test.describe("Platform platoon card actions", () => {
+  test("dashboard cards expose one workspace destination and a visible copy action", async ({ page }) => {
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);
 
-    await activatePlatformNav(page, "Platoons", isMobileProject);
-    await expect(page.getByRole("heading", { name: "Platoons", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
 
     const tenantUrls = expectedTenantUrls("ms");
-    const row = page.getByRole("row").filter({ hasText: tenantUrls.host }).first();
-    await expect(row).toBeVisible();
+    const card = page.locator(".platform-platoon-card").filter({ hasText: tenantUrls.host }).first();
+    await expect(card).toBeVisible();
 
-    const workspaceLink = row.getByRole("link", { name: `Open ${tenantUrls.host} workspace` });
+    const workspaceLink = card.getByRole("link", { name: `Enter ${tenantUrls.host} workspace` });
     await expect(workspaceLink).toHaveCount(1);
     await expect(workspaceLink).toHaveAttribute("href", tenantUrls.workspace);
-    await expect(workspaceLink).toContainText("Open workspace");
-    await expect(row.getByRole("link", { name: /admin view/i })).toHaveCount(0);
-    await expect(row.getByText("Admin view", { exact: true })).toHaveCount(0);
+    await expect(workspaceLink).toContainText("Enter workspace");
+    await expect(card.getByRole("link", { name: /admin view/i })).toHaveCount(0);
+    await expect(card.getByText("Admin view", { exact: true })).toHaveCount(0);
 
-    if (isMobileProject) await row.getByRole("button", { name: "More actions for MS Platoon" }).click();
-    await expect(row.getByRole("button", { name: "Copy link" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Copy link for MS Platoon" })).toBeVisible();
+    await expect(card.getByRole("button", { name: /More actions/i })).toHaveCount(0);
   });
 });

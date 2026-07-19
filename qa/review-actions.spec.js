@@ -99,11 +99,10 @@ async function signInAsPlatoonAdmin(page) {
 }
 
 async function openReviewQueue(page) {
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) {
-    await mobileMenu.click();
-  }
-  await page.getByRole("button", { name: "Review Queue", exact: true }).click();
+  await page.getByRole("region", { name: "Dashboard review results" })
+    .getByRole("button", { name: "Open review queue", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
 }
 
@@ -114,7 +113,7 @@ async function loadSessionDetail(request, record) {
 }
 
 test.describe("review queue decisions", () => {
-  test("approve, reject, and more-proof actions update every dependent state", async ({ page, request }, testInfo) => {
+  test("approve and both rejection return routes update every dependent state", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     const suffix = testInfo.project.name.replace(/[^a-z0-9]+/gi, "-");
     const approved = await createPendingSubmission(request, `approve-${suffix}`);
@@ -133,17 +132,22 @@ test.describe("review queue decisions", () => {
     const rejectedCard = page.locator(".review-card", { hasText: rejected.packetLine });
     await expect(rejectedCard).toBeVisible();
     await rejectedCard.getByRole("button", { name: "Reject" }).click();
+    await expect(rejectedCard.getByLabel("Reason for rejection")).toHaveValue("");
+    await rejectedCard.getByLabel("Reason for rejection").fill(`Wrong item for ${suffix}.`);
+    await rejectedCard.getByRole("checkbox", { name: /Keep assigned to the submitter/ }).uncheck();
+    await rejectedCard.getByRole("button", { name: "Reject with reason" }).click();
     await expect(page.getByText(`Rejected proof for ${rejected.packetLine}.`)).toBeVisible();
     await expect(rejectedCard).toHaveCount(0);
 
-    const requestMessage = `Need a closer item photo for ${suffix}.`;
-    const requestedCard = page.locator(".review-card", { hasText: requested.packetLine });
-    await expect(requestedCard).toBeVisible();
-    await requestedCard.getByRole("button", { name: "More proof" }).click();
-    await requestedCard.getByLabel("Request note").fill(requestMessage);
-    await requestedCard.getByRole("button", { name: "Send request" }).click();
-    await expect(page.getByText(`Proof request sent for ${requested.packetLine}.`)).toBeVisible();
-    await expect(requestedCard.getByText(`Requested: ${requestMessage}`)).toBeVisible();
+    const returnMessage = `Need a closer item photo for ${suffix}.`;
+    const returnedCard = page.locator(".review-card", { hasText: returned.packetLine });
+    await expect(returnedCard).toBeVisible();
+    await returnedCard.getByRole("button", { name: "Reject" }).click();
+    await returnedCard.getByLabel("Reason for rejection").fill(returnMessage);
+    await expect(returnedCard.getByRole("checkbox", { name: /Keep assigned to the submitter/ })).toBeChecked();
+    await returnedCard.getByRole("button", { name: "Reject with reason" }).click();
+    await expect(page.getByText(`Rejected proof for ${returned.packetLine}.`)).toBeVisible();
+    await expect(returnedCard).toHaveCount(0);
 
     const approvedDetail = await loadSessionDetail(request, approved);
     const approvedItem = approvedDetail.items.find(item => item.id === approved.sessionItemId);
@@ -156,14 +160,16 @@ test.describe("review queue decisions", () => {
 
     const rejectedDetail = await loadSessionDetail(request, rejected);
     const rejectedItem = rejectedDetail.items.find(item => item.id === rejected.sessionItemId);
-    expect(rejectedItem.status).toBe("needs_review");
+    expect(rejectedItem.status).toBe("unchecked");
+    expect(rejectedItem.assignedToEmail).toBeFalsy();
     expect(rejectedItem.submissions.find(item => item.id === rejected.submissionId)?.reviewState).toBe("rejected");
 
-    const requestedDetail = await loadSessionDetail(request, requested);
-    const requestedItem = requestedDetail.items.find(item => item.id === requested.sessionItemId);
-    expect(requestedItem.status).toBe("needs_review");
-    expect(requestedItem.submissions.find(item => item.id === requested.submissionId)?.reviewState).toBe("request_more_info");
-    expect(requestedItem.submissions.find(item => item.id === requested.submissionId)?.reviewNote).toBe(requestMessage);
+    const returnedDetail = await loadSessionDetail(request, returned);
+    const returnedItem = returnedDetail.items.find(item => item.id === returned.sessionItemId);
+    expect(returnedItem.status).toBe("unchecked");
+    expect(returnedItem.assignedToEmail).toBe(qaNco.email);
+    expect(returnedItem.submissions.find(item => item.id === returned.submissionId)?.reviewState).toBe("rejected");
+    expect(returnedItem.submissions.find(item => item.id === returned.submissionId)?.reviewNote).toBe(returnMessage);
 
     const queue = await responseJson(await request.get(`${API_URL}/inventory/review-queue`, {
       headers: qaHeaders(qaAdmin)
@@ -171,28 +177,28 @@ test.describe("review queue decisions", () => {
     const queuedIds = queue.submissions.map(item => item.id);
     expect(queuedIds).not.toContain(approved.submissionId);
     expect(queuedIds).not.toContain(rejected.submissionId);
-    expect(queuedIds).toContain(requested.submissionId);
+    expect(queuedIds).not.toContain(returned.submissionId);
 
     const sessions = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
       headers: qaHeaders(qaAdmin)
     }));
     expect(sessions.sessions.find(item => item.id === approved.sessionId)?.needsReviewCount).toBe(0);
-    expect(sessions.sessions.find(item => item.id === rejected.sessionId)?.needsReviewCount).toBe(1);
-    expect(sessions.sessions.find(item => item.id === requested.sessionId)?.needsReviewCount).toBe(1);
+    expect(sessions.sessions.find(item => item.id === rejected.sessionId)?.needsReviewCount).toBe(0);
+    expect(sessions.sessions.find(item => item.id === returned.sessionId)?.needsReviewCount).toBe(0);
 
     const notifications = await responseJson(await request.get(`${API_URL}/tenant/notifications`, {
       headers: qaHeaders(qaNco)
     }));
     expect(notifications.notifications.some(item => (
-      item.type === "proof_request" && item.submissionId === requested.submissionId
+      item.type === "proof_rejected" && item.submissionId === returned.submissionId
     ))).toBeTruthy();
   });
 
-  test("review decisions and proof requests reject duplicate taps without freezing other rows", async ({ page, request }, testInfo) => {
+  test("review decisions and rejection returns reject duplicate taps without freezing other rows", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     const suffix = `states-${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}`;
     const approved = await createPendingSubmission(request, `approve-${suffix}`);
-    const requested = await createPendingSubmission(request, `request-${suffix}`);
+    const returned = await createPendingSubmission(request, `return-${suffix}`);
     let approvalAttempts = 0;
     let requestAttempts = 0;
 
@@ -202,8 +208,8 @@ test.describe("review queue decisions", () => {
       await new Promise(resolve => setTimeout(resolve, 1_500));
       await route.continue();
     });
-    await page.route(`**/api/submissions/${requested.submissionId}/evidence-requests`, async route => {
-      if (route.request().method() !== "POST") return route.continue();
+    await page.route(`**/api/submissions/${requested.submissionId}/review`, async route => {
+      if (route.request().method() !== "PATCH") return route.continue();
       requestAttempts += 1;
       await new Promise(resolve => setTimeout(resolve, 1_500));
       await route.continue();
@@ -222,30 +228,27 @@ test.describe("review queue decisions", () => {
 
     await expect.poll(() => approvalAttempts).toBe(1);
     await expect(approvedCard.getByRole("button", { name: "Approving..." })).toBeDisabled();
-    await expect(approvedCard.getByRole("button", { name: "More proof" })).toBeDisabled();
     await expect(approvedCard.getByRole("button", { name: "Reject" })).toBeDisabled();
     await expect(requestedCard.getByRole("button", { name: "Approve" })).toBeEnabled();
     await expect(approvedCard).toHaveCount(0);
     expect(approvalAttempts).toBe(1);
 
-    await requestedCard.getByRole("button", { name: "More proof" }).click();
-    const requestNote = requestedCard.getByLabel("Request note");
-    await expect(requestedCard.getByRole("button", { name: "Request open" })).toBeDisabled();
+    await requestedCard.getByRole("button", { name: "Reject" }).click();
+    const requestNote = requestedCard.getByLabel("Reason for rejection");
+    await expect(requestNote).toHaveValue("");
+    await expect(requestedCard.getByRole("button", { name: "Reason open" })).toBeDisabled();
     await expect(requestedCard.getByRole("button", { name: "Approve" })).toBeDisabled();
-    await expect(requestedCard.getByRole("button", { name: "Reject" })).toBeDisabled();
     await requestNote.fill(`Need another photo for ${suffix}.`);
-    const sendButton = requestedCard.getByRole("button", { name: "Send request" });
+    const sendButton = requestedCard.getByRole("button", { name: "Reject with reason" });
     await sendButton.evaluate(button => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     await expect.poll(() => requestAttempts).toBe(1);
-    await expect(requestedCard.getByRole("button", { name: "Sending request..." })).toBeDisabled();
-    await expect(requestNote).toBeDisabled();
-    await expect(requestedCard.getByRole("button", { name: "Item photo", exact: true })).toBeDisabled();
-    await expect(requestedCard.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    await expect(requestedCard.getByText(/Requested: Need another photo/)).toBeVisible();
+    await expect(requestedCard.getByRole("button", { name: "Approve" })).toBeDisabled();
+    await expect(requestedCard.getByRole("button", { name: "Reject" })).toBeDisabled();
+    await expect(requestedCard).toHaveCount(0);
     expect(requestAttempts).toBe(1);
   });
 });

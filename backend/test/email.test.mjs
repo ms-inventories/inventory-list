@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildNewsletterIssueMessage,
-  buildNewsletterSubscriberReviewMessage
+  buildNewsletterSubscriberReviewMessage,
+  proofSenderAddress
 } from "../src/email.js";
+import { config } from "../src/config.js";
+
+test("proof alerts use the dedicated 876 EN proof sender", () => {
+  assert.equal(proofSenderAddress(), `${config.email.proofFromName} <${config.email.proofFromAddress}>`);
+  assert.equal(config.email.proofFromAddress, process.env.PROOF_EMAIL_FROM_ADDRESS || "proof@876en.org");
+});
 
 test("approved newsletter review message includes branded HTML and a text fallback", () => {
   const message = buildNewsletterSubscriberReviewMessage({

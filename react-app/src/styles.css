@@ -2159,6 +2159,27 @@ button {
   color: #fff;
 }
 
+.embedded-workspace-panel {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.embedded-workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.embedded-workspace-heading h2,
+.embedded-workspace-heading p {
+  margin: 0;
+}
+
 .platform-nav button:disabled,
 .platform-sidebar-foot button:disabled {
   cursor: wait;
@@ -2729,7 +2750,209 @@ button {
 
 .platform-user-table .platform-table-head,
 .platform-user-table .platform-table-row {
-  grid-template-columns: minmax(260px, 1.5fr) minmax(180px, 1fr) 90px 80px 108px minmax(220px, 0.7fr);
+  grid-template-columns: minmax(250px, 1.4fr) minmax(150px, 0.85fr) minmax(150px, 0.7fr) 108px minmax(130px, 0.5fr);
+}
+
+.platform-role-select,
+.platform-status-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.platform-platoon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
+}
+
+.platform-platoon-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 16px;
+  border: 1px solid var(--platform-line-soft);
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.06);
+  padding: 18px;
+}
+
+.platform-platoon-card-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.platform-platoon-card-heading > div {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.platform-platoon-card-heading strong {
+  overflow-wrap: anywhere;
+}
+
+.platform-platoon-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.platform-platoon-facts span {
+  display: grid;
+  gap: 2px;
+  color: #64748b;
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.platform-platoon-facts strong {
+  color: #172033;
+  font-size: 1.15rem;
+}
+
+.platform-active-session {
+  display: grid;
+  gap: 8px;
+  border-radius: var(--radius);
+  background: #f6f8fb;
+  padding: 12px;
+}
+
+.platform-active-session > div:first-child,
+.platform-session-progress-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.platform-active-session span,
+.platform-no-session {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.platform-no-session {
+  margin: 0;
+  border-radius: var(--radius);
+  background: #f6f8fb;
+  padding: 16px 12px;
+}
+
+.platform-session-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dfe6ee;
+}
+
+.platform-session-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
+.platform-link-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.platform-link-row > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.platform-link-row small {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.platform-link-row strong {
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+}
+
+.platform-open-workspace {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.platform-settings-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.platform-summary-table {
+  display: grid;
+  margin-top: 14px;
+  border-top: 1px solid var(--platform-line-soft);
+}
+
+.platform-summary-table > div {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--platform-line-soft);
+}
+
+.platform-setup-details > summary {
+  display: flex;
+  cursor: pointer;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+}
+
+.platform-setup-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.platform-setup-details > summary > span {
+  display: grid;
+  gap: 3px;
+}
+
+.platform-setup-details > summary small {
+  color: #64748b;
+  font-weight: 650;
+}
+
+.platform-setup-details[open] > summary {
+  margin-bottom: 16px;
+}
+
+.platform-setup-details[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.platform-support-contact {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.platform-support-contact h2 {
+  margin: 0;
+}
+
+.platform-support-contact p {
+  margin: 6px 0 14px;
 }
 
 .platform-table-head {
@@ -3128,6 +3351,8 @@ button {
 }
 
 .newsletter-preview {
+  max-width: 100%;
+  overflow: hidden;
   border: 1px solid #dfe5ee;
   border-radius: var(--radius);
   background: #f8fafc;
@@ -3294,6 +3519,19 @@ button {
   gap: 8px;
 }
 
+.newsletter-preview *,
+.newsletter-preview-body,
+.newsletter-preview-summary {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.newsletter-preview img,
+.newsletter-preview table {
+  max-width: 100%;
+}
+
 .newsletter-subscriber-meta {
   display: grid;
   justify-items: end;
@@ -3400,6 +3638,371 @@ button {
 .newsletter-review-note textarea {
   min-height: 72px;
   resize: vertical;
+}
+
+.newsletter-content,
+.newsletter-overview-grid,
+.newsletter-issues-management,
+.newsletter-analytics-layout,
+.newsletter-management-table,
+.newsletter-management-table-row,
+.newsletter-management-table-row > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.newsletter-shell .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.newsletter-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.newsletter-overview-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+  gap: 16px;
+  padding: 20px;
+}
+
+.newsletter-overview-card-wide {
+  grid-column: 1 / -1;
+}
+
+.newsletter-overview-card > :not(.newsletter-overview-icon) {
+  grid-column: 2;
+}
+
+.newsletter-overview-card h2 {
+  margin: 3px 0 8px;
+  color: var(--platform-ink);
+  font-size: 1.25rem;
+  line-height: 1.15;
+}
+
+.newsletter-overview-card p:not(.eyebrow) {
+  margin: 0;
+  color: var(--platform-muted);
+  font-size: 0.92rem;
+  font-weight: 680;
+  line-height: 1.5;
+}
+
+.newsletter-overview-icon {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+}
+
+.newsletter-overview-icon svg {
+  width: 21px;
+  height: 21px;
+}
+
+.newsletter-overview-icon.blue {
+  background: #eaf2ff;
+  color: #2f63bb;
+}
+
+.newsletter-overview-icon.green {
+  background: #eaf8ef;
+  color: #2b7444;
+}
+
+.newsletter-overview-icon.purple {
+  background: #f3edff;
+  color: #7251ad;
+}
+
+.newsletter-overview-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+}
+
+.newsletter-overview-facts div {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--platform-line-soft);
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 5px 11px;
+}
+
+.newsletter-overview-facts dt,
+.newsletter-overview-facts dd {
+  margin: 0;
+  color: var(--platform-muted);
+  font-size: 0.8rem;
+  font-weight: 780;
+}
+
+.newsletter-overview-facts dd {
+  color: var(--platform-ink);
+  font-weight: 950;
+}
+
+.newsletter-subscriber-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.newsletter-stat-link {
+  width: 100%;
+  border: 1px solid var(--platform-line);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.newsletter-stat-link:hover {
+  border-color: #9db6e8;
+  box-shadow: 0 16px 34px rgba(40, 75, 130, 0.1);
+  transform: translateY(-1px);
+}
+
+.newsletter-stat-link > svg {
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  color: #6b7b91;
+}
+
+.newsletter-issues-management,
+.newsletter-analytics-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.newsletter-management-table {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--platform-line-soft);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.newsletter-management-table-head,
+.newsletter-management-table-row {
+  display: grid;
+  align-items: center;
+  gap: 14px;
+}
+
+.newsletter-management-table-head {
+  min-height: 44px;
+  border-bottom: 1px solid var(--platform-line-soft);
+  background: #f8fafc;
+  color: #526175;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  padding: 8px 16px;
+  text-transform: uppercase;
+}
+
+.newsletter-management-table-row {
+  min-height: 68px;
+  border-bottom: 1px solid var(--platform-line-soft);
+  color: #334155;
+  font-size: 0.86rem;
+  font-weight: 720;
+  padding: 11px 16px;
+}
+
+.newsletter-management-table-row:last-child {
+  border-bottom: 0;
+}
+
+.newsletter-management-table-row > div {
+  display: grid;
+  gap: 3px;
+}
+
+.newsletter-management-table-row strong,
+.newsletter-management-table-row small,
+.newsletter-management-table-row span {
+  overflow-wrap: anywhere;
+}
+
+.newsletter-management-table-row strong {
+  color: var(--platform-ink);
+}
+
+.newsletter-management-table-row small {
+  color: var(--platform-muted);
+  font-size: 0.76rem;
+  font-weight: 720;
+  line-height: 1.35;
+}
+
+.newsletter-management-table-row > div:last-child {
+  justify-items: end;
+}
+
+.newsletter-issue-table-row {
+  grid-template-columns: minmax(220px, 1.3fr) minmax(90px, 0.55fr) minmax(130px, 0.75fr) minmax(110px, 0.65fr) auto;
+}
+
+.newsletter-subscriber-table-row {
+  grid-template-columns: minmax(200px, 1.2fr) minmax(120px, 0.75fr) minmax(90px, 0.55fr) minmax(110px, 0.65fr) auto;
+}
+
+.newsletter-delivery-table-row {
+  grid-template-columns: minmax(200px, 1.1fr) minmax(180px, 1fr) minmax(100px, 0.55fr) minmax(150px, 0.8fr);
+}
+
+.newsletter-delivery-analytics-card {
+  min-width: 0;
+  padding: 16px;
+}
+
+.newsletter-modal-backdrop {
+  z-index: 80;
+  align-items: center;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.56);
+  padding: 16px;
+}
+
+.newsletter-management-modal,
+.newsletter-subscriber-modal {
+  display: grid;
+  width: min(1180px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+  border: 1px solid #dfe5ee;
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
+  padding: 0;
+}
+
+.newsletter-subscriber-modal {
+  width: min(620px, calc(100vw - 32px));
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.newsletter-modal-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--platform-line-soft);
+  padding: 16px 18px;
+}
+
+.newsletter-subscriber-modal > .newsletter-modal-heading {
+  margin: -20px -20px 16px;
+}
+
+.newsletter-modal-heading h2 {
+  margin: 3px 0 0;
+  color: var(--platform-ink);
+  font-size: 1.35rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.newsletter-management-modal > .newsletter-admin-grid,
+.newsletter-management-modal > .newsletter-editor-card {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.newsletter-management-modal > .newsletter-admin-grid {
+  grid-template-columns: minmax(250px, 0.34fr) minmax(0, 1fr);
+}
+
+.newsletter-management-modal .newsletter-editor-card,
+.newsletter-management-modal .newsletter-issue-list-card {
+  align-self: start;
+}
+
+.newsletter-management-modal .newsletter-editor-layout {
+  padding: 0;
+}
+
+.newsletter-subscriber-detail-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border: 1px solid var(--platform-line-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.newsletter-subscriber-detail-list div {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.38fr) minmax(0, 1fr);
+  gap: 14px;
+  border-bottom: 1px solid var(--platform-line-soft);
+  padding: 11px 12px;
+}
+
+.newsletter-subscriber-detail-list div:last-child {
+  border-bottom: 0;
+}
+
+.newsletter-subscriber-detail-list dt,
+.newsletter-subscriber-detail-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.newsletter-subscriber-detail-list dt {
+  color: var(--platform-muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.newsletter-subscriber-detail-list dd {
+  color: var(--platform-ink);
+  font-size: 0.88rem;
+  font-weight: 720;
+  line-height: 1.4;
+}
+
+.newsletter-subscriber-modal-actions {
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.newsletter-shell .status-pill {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.newsletter-preview,
+.newsletter-preview *,
+.newsletter-management-modal,
+.newsletter-management-modal * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .admin-grid {
@@ -4711,6 +5314,10 @@ button {
   min-width: 0;
   min-height: 46px;
   justify-content: center;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
   padding: 6px 10px;
   text-align: center;
   white-space: normal;
@@ -4944,6 +5551,12 @@ button {
   font-weight: 760;
   line-height: 1.35;
   margin-top: 2px;
+}
+
+.session-filter-strip.session-assignment-tabs button.active,
+.session-filter-strip.leader-work-tabs button.active {
+  border-bottom-color: var(--primary);
+  background: transparent;
 }
 
 .prior-match-banner {
@@ -5242,7 +5855,7 @@ button {
 .session-item-main {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
 }
 
@@ -5251,7 +5864,7 @@ button {
   width: 20px;
   height: 20px;
   color: var(--muted);
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .session-item-main strong,
@@ -6016,6 +6629,7 @@ button {
   display: inline-flex;
   min-height: 28px;
   align-items: center;
+  justify-content: center;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #fff;
@@ -6057,6 +6671,7 @@ button {
 .status-pill.disabled,
 .status-pill.expired,
 .status-pill.revoked,
+.status-pill.withdrawn,
 .status-pill.failed {
   border-color: #e4b3ae;
   background: #fff0ed;
@@ -6389,7 +7004,6 @@ button {
   gap: 8px;
 }
 
-.packet-row-number,
 .packet-confidence {
   display: inline-flex;
   min-height: 26px;
@@ -6402,15 +7016,23 @@ button {
 }
 
 .packet-row-number {
-  border: 1px solid var(--line);
-  background: var(--surface-muted);
+  min-width: 1.4rem;
   color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
 }
 
 .packet-confidence {
+  gap: 5px;
   border: 1px solid #d8c5a0;
   background: #fff8e9;
   color: #735018;
+}
+
+.packet-confidence svg {
+  width: 13px;
+  height: 13px;
 }
 
 .packet-confidence.high {
@@ -6478,6 +7100,49 @@ button {
   font-size: 0.76rem;
   font-weight: 700;
   line-height: 1.4;
+}
+
+.proof-result-select {
+  width: 100%;
+}
+
+.proof-requirement-help {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--muted);
+  padding: 9px 10px;
+}
+
+.proof-requirement-help.satisfied {
+  border-color: #b8c7b2;
+  background: #eef7ed;
+}
+
+.proof-requirement-help summary {
+  display: flex;
+  width: fit-content;
+  cursor: pointer;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+.proof-requirement-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.proof-requirement-help summary svg {
+  width: 16px;
+  height: 16px;
+}
+
+.proof-requirement-help p {
+  margin: 8px 0 0 23px;
+  font-size: 0.8rem;
+  line-height: 1.45;
 }
 
 .proof-evidence-requirement {
@@ -7069,6 +7734,7 @@ button {
   font-size: 0.7rem;
   font-weight: 900;
   padding: 0 9px;
+  text-align: center;
 }
 
 .saved-evidence-picker-body {
@@ -8279,6 +8945,82 @@ button {
   .newsletter-form-row,
   .newsletter-subscriber-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .newsletter-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .newsletter-overview-card-wide {
+    grid-column: auto;
+  }
+
+  .newsletter-modal-backdrop {
+    align-items: stretch;
+    padding: 8px;
+  }
+
+  .newsletter-management-modal,
+  .newsletter-subscriber-modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+  }
+
+  .newsletter-management-modal > .newsletter-admin-grid {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .newsletter-management-modal > .newsletter-editor-card {
+    overflow-y: auto;
+  }
+
+  .newsletter-management-table {
+    display: grid;
+    gap: 10px;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .newsletter-management-table-head {
+    display: none;
+  }
+
+  .newsletter-issue-table-row,
+  .newsletter-subscriber-table-row,
+  .newsletter-delivery-table-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .newsletter-management-table-row {
+    gap: 8px;
+    border: 1px solid var(--platform-line-soft);
+    border-radius: var(--radius);
+    background: #fff;
+    padding: 14px;
+  }
+
+  .newsletter-management-table-row > div:last-child {
+    justify-items: stretch;
+  }
+
+  .newsletter-management-table-row > div:last-child .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .newsletter-subscriber-detail-list div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .newsletter-preview,
+  .newsletter-preview-body,
+  .newsletter-preview-summary {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
   }
 
   .newsletter-heading-actions,
@@ -9761,7 +10503,7 @@ button {
 
 .reports-table {
   display: grid;
-  grid-template-columns: minmax(135px, 0.8fr) minmax(240px, 1.7fr) minmax(105px, 0.65fr) minmax(125px, 0.75fr) minmax(180px, 1fr);
+  grid-template-columns: minmax(130px, 0.75fr) minmax(220px, 1.5fr) minmax(100px, 0.6fr) minmax(130px, 0.75fr) minmax(120px, 0.7fr) minmax(170px, 1fr);
   gap: 14px;
   align-items: center;
 }
@@ -10542,6 +11284,82 @@ button {
   gap: 16px;
 }
 
+.reports-session-timing {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.reports-session-timing-table {
+  display: grid;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.reports-session-timing-head,
+.reports-session-timing-row {
+  display: grid;
+  min-width: 700px;
+  grid-template-columns: minmax(190px, 1.2fr) repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: center;
+  padding: 11px 12px;
+}
+
+.reports-session-timing-head {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.reports-session-timing-row {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.reports-session-timing-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-alert-recipient {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.settings-alert-recipient small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.proof-return-assignment {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  padding: 10px;
+}
+
+.proof-return-assignment input {
+  margin-top: 3px;
+}
+
+.proof-return-assignment span {
+  display: grid;
+  gap: 2px;
+}
+
+.proof-return-assignment small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .session-item-main .session-prior-chip {
   display: inline-flex;
   width: fit-content;
@@ -10959,6 +11777,30 @@ button {
     letter-spacing: 0.2em;
     padding-left: 0.2em;
   }
+
+  .newsletter-overview-card {
+    grid-template-columns: 1fr;
+  }
+
+  .newsletter-overview-card > :not(.newsletter-overview-icon) {
+    grid-column: 1;
+  }
+
+  .newsletter-overview-card .button-row,
+  .newsletter-subscriber-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .newsletter-overview-card .btn,
+  .newsletter-subscriber-modal-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .newsletter-test-send-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Keep compact admin pages focused on the next action. The public-site link
@@ -10972,7 +11814,7 @@ button {
 
 @media (min-width: 600px) and (max-width: 860px) {
   .newsletter-stat-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .reports-summary-grid {

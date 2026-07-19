@@ -119,11 +119,15 @@ test.describe("PDF packet import", () => {
     await expect(parserSummary.getByText("PDF", { exact: true })).toBeVisible();
     await expect(parserSummary.getByText("army-packet-clean.pdf")).toBeVisible();
     await expect(parserSummary.getByText("Rows ready")).toBeVisible();
-    await expect(parserSummary.getByText("Ignored")).toBeVisible();
+    await expect(parserSummary.getByText("Skipped page text")).toBeVisible();
     await expect(dialog.getByText("Ignored text")).toBeVisible();
+    await expect(dialog.getByRole("status")).toContainText(/item rows ready.*headers or page text were skipped/i);
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
     await expect(dialog.getByText(/27 ready to import/)).toBeVisible();
     await expect(dialog.getByText(/27 rows found/)).toBeVisible();
     await expect(dialog.locator(".packet-confidence.low")).toHaveCount(0);
+    await expect(dialog.locator(".packet-confidence").first()).toHaveAttribute("title", /parser confidence/i);
+    await expect(dialog.locator(".packet-row-number").first()).toHaveText("1");
     await expect(dialog.locator("textarea").first()).toHaveValue(/COMBAT LIFESAVER|RADIAC SET|ARMAMENT SUBSYS/);
     await expect(dialog.getByRole("button", { name: "Import 27 rows" })).toBeVisible();
   });

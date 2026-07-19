@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { errors } from "jose";
-import { authenticate, ensureUser } from "../src/auth.js";
+import {
+  authenticate,
+  classifyOidcRefreshFailure,
+  ensureUser,
+  oidcRefreshCookieName,
+  oidcRefreshCookieValue,
+  refreshOidcTokens
+} from "../src/auth.js";
+import { config } from "../src/config.js";
 
 const bearerRequest = {
   headers: {
@@ -9,6 +17,20 @@ const bearerRequest = {
     "x-id-token": "test-id-token"
   }
 };
+
+test("OIDC renewal cookie is API-scoped, HttpOnly, same-site, and host-only", () => {
+  const cookie = oidcRefreshCookieValue("rotating refresh token", {
+    production: true,
+    maxAgeDays: 30
+  });
+  assert.match(cookie, new RegExp(`^${oidcRefreshCookieName}=rotating%20refresh%20token;`));
+  assert.match(cookie, /Path=\/api\/auth\/oidc\/refresh/);
+  assert.match(cookie, /Max-Age=2592000/);
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Strict/);
+  assert.match(cookie, /Secure/);
+  assert.doesNotMatch(cookie, /Domain=/i);
+});
 
 const rejectedTokenErrors = [
   new errors.JOSEAlgNotAllowed("algorithm not allowed"),
@@ -68,6 +90,69 @@ test("JWKS, discovery, and network failures remain server errors", async () => {
       error => error === providerError,
       providerError.code || providerError.message
     );
+  }
+});
+
+test("OIDC refresh exchanges the rotating token without a browser redirect", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDiscoveryUrl = config.oidc.discoveryUrl;
+  const originalClientId = config.oidc.clientId;
+  const calls = [];
+  config.oidc.discoveryUrl = "https://auth.example.test/application/o/inventory/.well-known/openid-configuration";
+  config.oidc.clientId = "inventory-web";
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({
+        jwks_uri: "https://auth.example.test/application/o/inventory/jwks/",
+        token_endpoint: "https://auth.example.test/application/o/token/"
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({
+      access_token: "renewed-access",
+      refresh_token: "rotated-refresh",
+      expires_in: 3600
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const [tokenSet, concurrentTokenSet] = await Promise.all([
+      refreshOidcTokens({ refreshToken: "original-refresh" }),
+      refreshOidcTokens({ refreshToken: "original-refresh" })
+    ]);
+    assert.equal(tokenSet.access_token, "renewed-access");
+    assert.equal(concurrentTokenSet.refresh_token, "rotated-refresh");
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].url, "https://auth.example.test/application/o/token/");
+    const body = new URLSearchParams(String(calls[1].options.body));
+    assert.equal(body.get("client_id"), "inventory-web");
+    assert.equal(body.get("grant_type"), "refresh_token");
+    assert.equal(body.get("refresh_token"), "original-refresh");
+  } finally {
+    globalThis.fetch = originalFetch;
+    config.oidc.discoveryUrl = originalDiscoveryUrl;
+    config.oidc.clientId = originalClientId;
+  }
+});
+
+test("OIDC refresh failures preserve renewable sessions during provider outages", () => {
+  assert.deepEqual(classifyOidcRefreshFailure(400, "invalid_grant"), {
+    statusCode: 401,
+    publicCode: "oidc_refresh_rejected",
+    message: "The renewable sign-in session is no longer valid.",
+    clearRefreshCookie: true
+  });
+  assert.deepEqual(classifyOidcRefreshFailure(401, ""), {
+    statusCode: 401,
+    publicCode: "oidc_refresh_rejected",
+    message: "The renewable sign-in session is no longer valid.",
+    clearRefreshCookie: true
+  });
+  for (const status of [429, 500, 503]) {
+    const failure = classifyOidcRefreshFailure(status, "temporarily_unavailable");
+    assert.equal(failure.publicCode, "oidc_refresh_unavailable");
+    assert.equal(failure.clearRefreshCookie, false);
+    assert.ok(failure.statusCode >= 500);
   }
 });
 

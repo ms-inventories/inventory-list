@@ -11,13 +11,13 @@ async function signInAsPlatoonAdmin(page) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 }
 
-async function openWorkspaceView(page, name, heading = name) {
-  const mobileMenu = page.getByRole("button", { name: "Open workspace menu" });
-  if (await mobileMenu.isVisible()) {
-    await mobileMenu.click();
-  }
-  await page.getByRole("button", { name, exact: true }).click();
-  await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+async function openSessionsFromNotifications(page) {
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open sessions", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
 }
 
 async function captureStep(page, testInfo, name) {
@@ -99,11 +99,13 @@ test.describe("recorded packet and session regression", () => {
     await expect(page.getByText("Internal server error")).toHaveCount(0);
     await expect(page.locator(".session-list > .session-group .session-row", { hasText: sessionName })).toHaveCount(0);
 
-    await openWorkspaceView(page, "Dashboard", "Leader Dashboard");
+    await page.getByRole("button", { name: "Close work queue", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     await expect(page.getByText("Internal server error")).toHaveCount(0);
     await captureStep(page, testInfo, "05-dashboard-after-closeout");
 
-    await openWorkspaceView(page, "Inventory Sessions", "Sessions");
+    await openSessionsFromNotifications(page);
     await expect(page.getByText("Internal server error")).toHaveCount(0);
     const archive = page.locator(".session-archive");
     await archive.locator("summary").click();

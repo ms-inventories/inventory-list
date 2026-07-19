@@ -3,7 +3,16 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { authenticate, authContext, ensureUser, exchangeOidcCode } from "./auth.js";
+import {
+  authenticate,
+  authContext,
+  clearOidcRefreshCookie,
+  ensureUser,
+  exchangeOidcCode,
+  issueOidcRefreshCookie,
+  oidcRefreshCookieName,
+  refreshOidcTokens
+} from "./auth.js";
 import { createAuthentikClient } from "./authentik.js";
 import { config } from "./config.js";
 import {
@@ -14,6 +23,7 @@ import {
   expireCrewAccess,
   hasPrimaryAuthCredentials,
   lockActiveCrewAccess,
+  readCookie,
   releaseCrewClaims,
   revokeCrewAccessForSession,
   revokeCrewAuthSession
@@ -49,6 +59,7 @@ const memberStatuses = ["active", "disabled"];
 const itemStatuses = ["unchecked", "found", "not_found", "mismatch", "needs_review", "approved"];
 const submissionStatuses = ["found", "not_found", "mismatch", "needs_review"];
 const reviewDecisions = ["approved", "request_more_info", "rejected"];
+const reviewReturnRoutes = ["submitter", "unassigned"];
 const photoKinds = ["general", "serial", "location", "damage"];
 export const evidenceSubmissionPhotoLimit = 10;
 export const savedInventoryPhotoLimit = 3;
@@ -94,6 +105,40 @@ export function normalizeEvidenceSerialNumber(value) {
 export function defaultSavedEvidenceMediaUploadIds(existingReferenceIds = []) {
   return [...new Set(existingReferenceIds)].slice(0, savedInventoryPhotoLimit);
 }
+const submissionReviewSchema = z.object({
+  decision: z.enum(reviewDecisions),
+  note: z.string().trim().max(2000).optional(),
+  returnAssignment: z.enum(reviewReturnRoutes).optional(),
+  saveItem: z.boolean().optional(),
+  savedMediaUploadIds: z.array(z.string().uuid()).max(savedInventoryPhotoLimit).optional()
+}).strict().superRefine((value, context) => {
+  if (value.decision === "rejected") {
+    if (!value.note || value.note.length < 2) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["note"],
+        message: "A rejection reason is required."
+      });
+    }
+    if (!value.returnAssignment) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["returnAssignment"],
+        message: "Choose whether to keep the row with the submitter or return it to the unclaimed queue."
+      });
+    }
+  } else if (value.returnAssignment !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["returnAssignment"],
+      message: "Return routing only applies to rejected proof."
+    });
+  }
+});
+
+export function parseSubmissionReviewBody(body) {
+  return parseBody(submissionReviewSchema, body);
+}
 const newsletterIssueSchema = z.object({
   title: z.string().min(2).max(160),
   editionLabel: z.string().max(80).optional(),
@@ -138,6 +183,7 @@ const tenantNotificationPreferencesSchema = z.object({
 const tenantSettingsSchema = z.object({
   displayName: z.string().trim().min(2).max(120).regex(/^[^\u0000-\u001f\u007f]+$/, "Display name contains unsupported characters.").optional(),
   defaultGuidance: z.string().max(12000).optional(),
+  alertRecipientEmail: z.union([z.string().trim().email().max(254), z.literal("")]).optional(),
   notificationPreferences: tenantNotificationPreferencesSchema.optional()
 }).strict().refine(value => Object.keys(value).length > 0, { message: "Provide at least one setting." });
 const tenantAuditCategoryPrefixes = Object.freeze({
@@ -934,8 +980,37 @@ function rowToInventoryItem(row, photos = []) {
   };
 }
 
+function elapsedSeconds(start, end) {
+  if (!start || !end) return null;
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return null;
+  return Math.floor((endMs - startMs) / 1000);
+}
+
+export function sessionTimingFromRow(row) {
+  const startedAt = row?.started_at || null;
+  const itemCount = Number(row?.item_count || 0);
+  const completedCount = Number(row?.found_count || 0);
+  const completedAt = row?.completed_at
+    || (itemCount > 0 && completedCount === itemCount ? row?.last_item_updated_at || null : null);
+  const closedAt = row?.closed_at || null;
+  return {
+    startedAt,
+    completedAt,
+    closedAt,
+    durationToCompletionSeconds: row?.duration_to_completion_seconds == null
+      ? elapsedSeconds(startedAt, completedAt)
+      : Number(row.duration_to_completion_seconds),
+    durationToCloseSeconds: row?.duration_to_close_seconds == null
+      ? elapsedSeconds(startedAt, closedAt)
+      : Number(row.duration_to_close_seconds)
+  };
+}
+
 function rowToSession(row) {
   if (!row) return null;
+  const timing = sessionTimingFromRow(row);
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -947,7 +1022,7 @@ function rowToSession(row) {
     needsReviewCount: row.needs_review_count ?? 0,
     createdBy: row.created_by,
     createdAt: row.created_at,
-    closedAt: row.closed_at
+    ...timing
   };
 }
 
@@ -1023,6 +1098,7 @@ function rowToReportItem(row) {
     sessionName: row.session_name,
     sessionStatus: row.session_status,
     sessionCreatedAt: row.session_created_at,
+    sessionStartedAt: row.session_started_at,
     sessionClosedAt: row.session_closed_at,
     inventoryItemId: row.inventory_item_id,
     packetLine: row.packet_line,
@@ -1032,6 +1108,9 @@ function rowToReportItem(row) {
     assignedTo: row.assigned_to,
     assignedToEmail: row.assigned_to_email,
     assignedToName: row.assigned_to_name,
+    directVerifiedBy: row.direct_verified_by,
+    directVerifiedByEmail: row.direct_verified_by_email,
+    directVerifiedByName: row.direct_verified_by_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     inventoryItem: row.inventory_item_id ? {
@@ -1061,8 +1140,11 @@ function rowToReportItem(row) {
       serialNumber: row.latest_serial_number,
       reviewState: row.latest_review_state,
       reviewNote: row.latest_review_note,
+      reviewReturnRoute: row.latest_review_return_route,
       reviewedBy: row.latest_reviewed_by,
       reviewedAt: row.latest_reviewed_at,
+      withdrawnBy: row.latest_withdrawn_by,
+      withdrawnAt: row.latest_withdrawn_at,
       createdAt: row.latest_created_at,
       photos: []
     });
@@ -1083,8 +1165,11 @@ function rowToSubmission(row) {
     serialNumber: row.serial_number,
     reviewState: row.review_state,
     reviewNote: row.review_note,
+    reviewReturnRoute: row.review_return_route,
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
+    withdrawnBy: row.withdrawn_by,
+    withdrawnAt: row.withdrawn_at,
     createdAt: row.created_at,
     photos: []
   };
@@ -1289,13 +1374,27 @@ function normalizeTenantNotificationPreferences(value) {
   );
 }
 
-async function getTenantNotificationPreferences(tenantId, client = null) {
+function normalizeTenantAlertRecipientEmail(value) {
+  const stored = value && typeof value === "object" ? value : {};
+  const email = String(stored.alert_recipient_email || "").trim().toLowerCase();
+  return z.string().email().max(254).safeParse(email).success ? email : "";
+}
+
+async function getTenantNotificationConfig(tenantId, client = null) {
   const runQuery = client ? client.query.bind(client) : query;
   const result = await runQuery(
     "SELECT notification_preferences FROM tenant_settings WHERE tenant_id = $1 LIMIT 1",
     [tenantId]
   );
-  return normalizeTenantNotificationPreferences(result.rows[0]?.notification_preferences);
+  const stored = result.rows[0]?.notification_preferences;
+  return {
+    preferences: normalizeTenantNotificationPreferences(stored),
+    alertRecipientEmail: normalizeTenantAlertRecipientEmail(stored)
+  };
+}
+
+async function getTenantNotificationPreferences(tenantId, client = null) {
+  return (await getTenantNotificationConfig(tenantId, client)).preferences;
 }
 
 function tenantSettingsResponse(context, row = {}) {
@@ -1303,6 +1402,7 @@ function tenantSettingsResponse(context, row = {}) {
   return {
     displayName: row.name || context.tenant.name,
     defaultGuidance: row.guidance_body || "",
+    alertRecipientEmail: normalizeTenantAlertRecipientEmail(row.notification_preferences),
     notificationPreferences: normalizeTenantNotificationPreferences(row.notification_preferences),
     workspace: {
       slug: context.tenant.slug,
@@ -1463,7 +1563,18 @@ function safeTenantAuditDetails(action, value) {
   if (action === "submission.reviewed") {
     return compactAuditDetails({
       decision: auditText(metadata.decision, 80),
-      note: auditText(metadata.note)
+      note: auditText(metadata.note),
+      returnAssignment: auditText(metadata.returnAssignment, 80)
+    });
+  }
+  if (action === "submission.withdrawn") {
+    return compactAuditDetails({
+      previousReviewState: auditText(metadata.previousReviewState, 80)
+    });
+  }
+  if (["submission.withdrawal_conflicted", "submission.review_conflicted"].includes(action)) {
+    return compactAuditDetails({
+      currentReviewState: auditText(metadata.currentReviewState, 80)
     });
   }
   if (action === "evidence_request.created") {
@@ -2162,6 +2273,18 @@ function findInventoryItemMatch(packetLine, inventoryItems) {
   return best;
 }
 
+export function findUniqueInventoryIdentifierMatch(packetLine, inventoryItems) {
+  const packetLins = extractLinValues(packetLine);
+  const packetNsns = extractNsnValues(packetLine);
+  if (!packetLins.size && !packetNsns.size) return null;
+
+  const matches = inventoryItems.filter(item => (
+    [...packetLins].some(lin => item.lins?.has(lin))
+    || [...packetNsns].some(nsn => item.nsns?.has(nsn))
+  ));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function displayNameFor(user) {
   return user?.displayName || user?.display_name || user?.email || null;
 }
@@ -2195,9 +2318,12 @@ async function getTenantAdminRecipients(tenantId, excludeUserId = null) {
 }
 
 async function notifyTenantAdminsOfSubmission(context, submission, { photoCount = 0 } = {}) {
-  const preferences = await getTenantNotificationPreferences(context.tenant.id);
+  const notificationConfig = await getTenantNotificationConfig(context.tenant.id);
+  const preferences = notificationConfig.preferences;
   if (!preferences.email_proof_submitted) return;
-  const recipients = await getTenantAdminRecipients(context.tenant.id, context.user.id);
+  const recipients = notificationConfig.alertRecipientEmail
+    ? [{ id: null, email: notificationConfig.alertRecipientEmail, display_name: null }]
+    : await getTenantAdminRecipients(context.tenant.id, context.user.id);
   if (!recipients.length) return;
 
   const results = await Promise.allSettled(
@@ -2595,7 +2721,40 @@ export function registerRoutes(app) {
       throw new Error("OIDC redirect URI is not allowed");
     }
 
-    return exchangeOidcCode(body);
+    const tokenSet = await exchangeOidcCode(body);
+    request.res.setHeader("Cache-Control", "no-store");
+    if (tokenSet.refresh_token) issueOidcRefreshCookie(request.res, tokenSet.refresh_token);
+    else clearOidcRefreshCookie(request.res);
+    const { refresh_token: refreshToken, ...publicTokenSet } = tokenSet;
+    return { ...publicTokenSet, refresh_available: Boolean(refreshToken) };
+  });
+
+  route(app, "post", "/api/auth/oidc/refresh", async (request, reply) => {
+    const body = z.object({
+      refreshToken: z.string().min(16).max(8192).optional()
+    }).strict().parse(request.body || {});
+    request.res.setHeader("Cache-Control", "no-store");
+    const refreshToken = body.refreshToken || readCookie(request, oidcRefreshCookieName);
+    if (!refreshToken) {
+      reply.code(401);
+      throw new Error("No renewable sign-in session is available");
+    }
+
+    try {
+      const tokenSet = await refreshOidcTokens({ refreshToken });
+      issueOidcRefreshCookie(request.res, tokenSet.refresh_token || refreshToken);
+      const { refresh_token: rotatedRefreshToken, ...publicTokenSet } = tokenSet;
+      return { ...publicTokenSet, refresh_available: Boolean(rotatedRefreshToken || refreshToken) };
+    } catch (error) {
+      if (error?.clearRefreshCookie) clearOidcRefreshCookie(request.res);
+      throw error;
+    }
+  });
+
+  route(app, "post", "/api/auth/oidc/logout", async (request) => {
+    request.res.setHeader("Cache-Control", "no-store");
+    clearOidcRefreshCookie(request.res);
+    return { ok: true };
   });
 
   route(app, "get", "/api/auth/health", async (request, reply) => getAuthHealth(request, reply));
@@ -2892,7 +3051,6 @@ export function registerRoutes(app) {
               ELSE 3
             END,
             s.updated_at DESC
-          LIMIT 40
         `
       ),
       query(
@@ -2920,7 +3078,6 @@ export function registerRoutes(app) {
           JOIN newsletter_issues i ON i.id = d.issue_id
           LEFT JOIN newsletter_subscribers s ON s.id = d.subscriber_id
           ORDER BY d.created_at DESC
-          LIMIT 200
         `
       )
     ]);
@@ -3150,6 +3307,42 @@ export function registerRoutes(app) {
     }
 
     return { subscriber: rowToNewsletterSubscriber(reviewed), notification };
+  });
+
+  route(app, "post", "/api/newsletter/admin/subscribers/:subscriberId/remove", async (request, reply) => {
+    const auth = await requireFrgAdmin(request, reply);
+    const removed = await withTransaction(async client => {
+      const result = await client.query(
+        `
+          UPDATE newsletter_subscribers
+          SET status = 'unsubscribed',
+            unsubscribed_at = now(),
+            reviewed_by = $1,
+            reviewed_at = now(),
+            updated_at = now()
+          WHERE id = $2
+          RETURNING *
+        `,
+        [auth.user.id, request.params.subscriberId]
+      );
+      if (!result.rows[0]) return null;
+      await createAuditEvent(client, {
+        tenantId: null,
+        actorUserId: auth.user.id,
+        action: "newsletter.subscriber.removed",
+        entityType: "newsletter_subscriber",
+        entityId: result.rows[0].id,
+        metadata: { email: result.rows[0].email, status: "unsubscribed" }
+      });
+      return result.rows[0];
+    });
+
+    if (!removed) {
+      reply.code(404);
+      throw new Error("Newsletter subscriber not found");
+    }
+
+    return { subscriber: rowToNewsletterSubscriber(removed) };
   });
 
   route(app, "post", "/api/newsletter/admin/issues", async (request, reply) => {
@@ -3462,8 +3655,52 @@ export function registerRoutes(app) {
                 AND i.status = 'pending'
                 AND i.expires_at > now())
           )::int AS pending_admin_invite_count,
-          (SELECT COUNT(*)::int FROM packet_import_batches b WHERE b.tenant_id = t.id) AS packet_import_count
+          (SELECT COUNT(*)::int FROM packet_import_batches b WHERE b.tenant_id = t.id) AS packet_import_count,
+          (
+            SELECT COUNT(*)::int
+            FROM inventory_sessions active_count
+            WHERE active_count.tenant_id = t.id
+              AND active_count.status = 'active'
+          ) AS active_session_count,
+          (
+            SELECT COUNT(*)::int
+            FROM session_crew_grants crew
+            WHERE crew.tenant_id = t.id
+              AND crew.expires_at > now()
+              AND (
+                crew.status = 'pending'
+                OR (
+                  crew.status = 'consumed'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM session_crew_auth_sessions auth_session
+                    WHERE auth_session.grant_id = crew.id
+                      AND auth_session.revoked_at IS NULL
+                      AND auth_session.expires_at > now()
+                  )
+                )
+              )
+          ) AS active_temporary_crew_count,
+          latest_active.id AS latest_active_session_id,
+          latest_active.name AS latest_active_session_name,
+          latest_active.started_at AS latest_active_session_started_at,
+          latest_active.item_count AS latest_active_session_item_count,
+          latest_active.completed_count AS latest_active_session_completed_count
         FROM tenants t
+        LEFT JOIN LATERAL (
+          SELECT session.id,
+            session.name,
+            COALESCE(session.started_at, session.created_at) AS started_at,
+            COUNT(item.id)::int AS item_count,
+            COUNT(item.id) FILTER (WHERE item.status IN ('found', 'not_found', 'mismatch', 'approved'))::int AS completed_count
+          FROM inventory_sessions session
+          LEFT JOIN inventory_session_items item ON item.session_id = session.id
+          WHERE session.tenant_id = t.id
+            AND session.status = 'active'
+          GROUP BY session.id
+          ORDER BY COALESCE(session.started_at, session.created_at) DESC, session.id DESC
+          LIMIT 1
+        ) latest_active ON true
         ORDER BY t.slug ASC
       `,
       [config.baseDomain]
@@ -3475,7 +3712,22 @@ export function registerRoutes(app) {
       memberCount: row.member_count,
       adminCount: row.admin_count,
       pendingAdminInviteCount: row.pending_admin_invite_count,
-      packetImportCount: row.packet_import_count
+      packetImportCount: row.packet_import_count,
+      activeSessionCount: row.active_session_count,
+      activeTemporaryCrewCount: row.active_temporary_crew_count,
+      latestActiveSession: row.latest_active_session_id ? {
+        id: row.latest_active_session_id,
+        name: row.latest_active_session_name,
+        startedAt: row.latest_active_session_started_at,
+        itemCount: Number(row.latest_active_session_item_count || 0),
+        completedCount: Number(row.latest_active_session_completed_count || 0),
+        progressPercent: Number(row.latest_active_session_item_count || 0) > 0
+          ? Math.round(
+            Number(row.latest_active_session_completed_count || 0)
+            / Number(row.latest_active_session_item_count) * 100
+          )
+          : 0
+      } : null
     }));
     const setup = await inspectPlatformSetup(tenants);
 
@@ -3483,6 +3735,60 @@ export function registerRoutes(app) {
       tenants,
       provisioningAvailable: provisioningAvailable(),
       setup
+    };
+  });
+
+  route(app, "get", "/api/platform/users", async (request, reply) => {
+    await requirePlatformAdmin(request, reply);
+    const result = await query(
+      `
+        SELECT user_account.id,
+          user_account.email,
+          user_account.display_name,
+          user_account.account_type,
+          user_account.authentik_subject,
+          user_account.created_at,
+          user_account.last_seen_at,
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'id', membership.id,
+                'tenantId', tenant.id,
+                'tenantSlug', tenant.slug,
+                'tenantName', tenant.name,
+                'role', membership.role,
+                'status', membership.status,
+                'createdAt', membership.created_at
+              )
+              ORDER BY tenant.slug
+            ) FILTER (WHERE membership.id IS NOT NULL),
+            '[]'::jsonb
+          ) AS memberships
+        FROM app_users user_account
+        LEFT JOIN tenant_memberships membership ON membership.user_id = user_account.id
+        LEFT JOIN tenants tenant ON tenant.id = membership.tenant_id
+        WHERE user_account.account_type = 'authentik'
+        GROUP BY user_account.id
+        ORDER BY lower(COALESCE(user_account.display_name, user_account.email, '')), user_account.id
+      `
+    );
+
+    return {
+      users: result.rows.map(row => ({
+        id: row.id,
+        email: row.email,
+        displayName: row.display_name,
+        accountType: row.account_type,
+        hasSignedIn: Boolean(row.authentik_subject),
+        isPlatformAdmin: config.platformAdminEmails.includes(String(row.email || "").toLowerCase()),
+        memberships: Array.isArray(row.memberships) ? row.memberships : [],
+        createdAt: row.created_at,
+        lastSeenAt: row.last_seen_at
+      })),
+      management: {
+        mutationsAvailable: false,
+        reason: "Role and status changes must use the tenant member workflow so Authentik provisioning stays consistent."
+      }
     };
   });
 
@@ -3957,7 +4263,10 @@ export function registerRoutes(app) {
       const current = currentResult.rows[0];
       const nextPreferences = {
         ...normalizeTenantNotificationPreferences(current?.notification_preferences),
-        ...(body.notificationPreferences || {})
+        ...(body.notificationPreferences || {}),
+        alert_recipient_email: body.alertRecipientEmail !== undefined
+          ? body.alertRecipientEmail.trim().toLowerCase()
+          : normalizeTenantAlertRecipientEmail(current?.notification_preferences)
       };
 
       if (body.displayName !== undefined) {
@@ -3996,6 +4305,7 @@ export function registerRoutes(app) {
       const changedFields = [
         body.displayName !== undefined ? "display_name" : "",
         body.defaultGuidance !== undefined ? "default_guidance" : "",
+        body.alertRecipientEmail !== undefined ? "alert_recipient_email" : "",
         body.notificationPreferences !== undefined ? "notification_preferences" : ""
       ].filter(Boolean);
       await createAuditEvent(client, {
@@ -4092,7 +4402,12 @@ export function registerRoutes(app) {
   });
 
   route(app, "get", "/api/tenant/notifications", async (request, reply) => {
-    const context = await requireTenantContext(request, reply, ["tenant_admin", "contributor", "viewer"]);
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor", "viewer"],
+      { allowCrew: true }
+    );
     const notifications = [];
     const isTenantAdmin = hasTenantRole(context, ["tenant_admin"]);
     const preferences = await getTenantNotificationPreferences(context.tenant.id);
@@ -4154,6 +4469,56 @@ export function registerRoutes(app) {
           })
         });
       });
+
+      const withdrawnProofResult = await query(
+        `
+          SELECT sub.id,
+            sub.withdrawn_at AS created_at,
+            submitter.email AS submitted_by_email,
+            submitter.display_name AS submitted_by_name,
+            si.id AS session_item_id,
+            si.packet_line,
+            s.id AS session_id,
+            s.name AS session_name
+          FROM item_submissions sub
+          JOIN inventory_session_items si ON si.id = sub.session_item_id
+          JOIN inventory_sessions s ON s.id = si.session_id
+          JOIN app_users submitter ON submitter.id = sub.submitted_by
+          WHERE s.tenant_id = $1
+            AND sub.review_state = 'withdrawn'
+            AND sub.withdrawn_at IS NOT NULL
+          ORDER BY sub.withdrawn_at DESC
+          LIMIT 5
+        `,
+        [context.tenant.id]
+      );
+
+      withdrawnProofResult.rows.forEach(row => {
+        const submitterName = displayNameFor({
+          display_name: row.submitted_by_name,
+          email: row.submitted_by_email
+        }) || "The submitter";
+        notifications.push({
+          id: `proof-withdrawn:${row.id}`,
+          type: "proof_withdrawn",
+          priority: "medium",
+          title: "Proof withdrawn before review",
+          body: `${submitterName} withdrew ${compactText(row.packet_line || "a packet row", 68)}. The evidence remains in history.`,
+          createdAt: row.created_at,
+          tenantSlug: context.tenant.slug,
+          sessionId: row.session_id,
+          sessionName: row.session_name,
+          sessionItemId: row.session_item_id,
+          submissionId: row.id,
+          action: notificationAction({
+            label: "Open session",
+            tab: "tasks",
+            sessionId: row.session_id,
+            sessionItemId: row.session_item_id,
+            submissionId: row.id
+          })
+        });
+      });
     }
 
     const proofRequestResult = await query(
@@ -4174,11 +4539,21 @@ export function registerRoutes(app) {
         WHERE s.tenant_id = $1
           AND s.status <> 'closed'
           AND sub.submitted_by = $2
+          AND ($3::uuid IS NULL OR s.id = $3)
           AND sub.review_state = 'request_more_info'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM item_submissions newer
+            WHERE newer.session_item_id = sub.session_item_id
+              AND (
+                newer.created_at > sub.created_at
+                OR (newer.created_at = sub.created_at AND newer.id > sub.id)
+              )
+          )
         ORDER BY COALESCE(sub.reviewed_at, sub.created_at) DESC
         LIMIT 5
       `,
-      [context.tenant.id, context.user.id]
+      [context.tenant.id, context.user.id, context.crew?.sessionId || null]
     );
 
     proofRequestResult.rows.forEach(row => {
@@ -4209,6 +4584,69 @@ export function registerRoutes(app) {
       });
     });
 
+    const rejectedProofResult = await query(
+      `
+        SELECT sub.id,
+          COALESCE(sub.reviewed_at, sub.created_at) AS created_at,
+          sub.review_note,
+          sub.review_return_route,
+          reviewer.email AS reviewed_by_email,
+          reviewer.display_name AS reviewed_by_name,
+          si.id AS session_item_id,
+          si.packet_line,
+          s.id AS session_id,
+          s.name AS session_name
+        FROM item_submissions sub
+        JOIN inventory_session_items si ON si.id = sub.session_item_id
+        JOIN inventory_sessions s ON s.id = si.session_id
+        LEFT JOIN app_users reviewer ON reviewer.id = sub.reviewed_by
+        WHERE s.tenant_id = $1
+          AND s.status <> 'closed'
+          AND sub.submitted_by = $2
+          AND ($3::uuid IS NULL OR s.id = $3)
+          AND sub.review_state = 'rejected'
+          AND si.status NOT IN ('found', 'not_found', 'mismatch', 'approved', 'needs_review')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM item_submissions newer
+            WHERE newer.session_item_id = sub.session_item_id
+              AND (
+                newer.created_at > sub.created_at
+                OR (newer.created_at = sub.created_at AND newer.id > sub.id)
+              )
+          )
+        ORDER BY COALESCE(sub.reviewed_at, sub.created_at) DESC
+        LIMIT 5
+      `,
+      [context.tenant.id, context.user.id, context.crew?.sessionId || null]
+    );
+
+    rejectedProofResult.rows.forEach(row => {
+      const routingText = row.review_return_route === "submitter"
+        ? "The row is still assigned to you."
+        : "The row was returned to the unclaimed queue.";
+      notifications.push({
+        id: `proof-rejected:${row.id}`,
+        type: "proof_rejected",
+        priority: "high",
+        title: "Proof rejected",
+        body: compactText(`${row.review_note || "The proof was not accepted."} ${routingText}`, 112),
+        createdAt: row.created_at,
+        tenantSlug: context.tenant.slug,
+        sessionId: row.session_id,
+        sessionName: row.session_name,
+        sessionItemId: row.session_item_id,
+        submissionId: row.id,
+        action: notificationAction({
+          label: row.review_return_route === "submitter" ? "Open returned row" : "Open session",
+          tab: "tasks",
+          sessionId: row.session_id,
+          sessionItemId: row.session_item_id,
+          submissionId: row.id
+        })
+      });
+    });
+
     const uncheckedResult = await query(
       `
         SELECT s.id AS session_id,
@@ -4219,13 +4657,14 @@ export function registerRoutes(app) {
         JOIN inventory_session_items si ON si.session_id = s.id
         WHERE s.tenant_id = $1
           AND s.status = 'active'
+          AND ($2::uuid IS NULL OR s.id = $2)
           AND si.status = 'unchecked'
         GROUP BY s.id, s.name
         HAVING count(si.id) > 0
         ORDER BY unchecked_count DESC, updated_at DESC
         LIMIT 3
       `,
-      [context.tenant.id]
+      [context.tenant.id, context.crew?.sessionId || null]
     );
 
     uncheckedResult.rows.forEach(row => {
@@ -4255,12 +4694,13 @@ export function registerRoutes(app) {
         SELECT id, name, closed_at
         FROM inventory_sessions
         WHERE tenant_id = $1
+          AND ($2::uuid IS NULL OR id = $2)
           AND status = 'closed'
           AND closed_at IS NOT NULL
         ORDER BY closed_at DESC
         LIMIT 2
       `,
-      [context.tenant.id]
+      [context.tenant.id, context.crew?.sessionId || null]
     );
 
     closedSessionResult.rows.forEach(row => {
@@ -4332,6 +4772,8 @@ export function registerRoutes(app) {
     const preferenceForType = {
       proof_submitted: "proof_submitted",
       proof_request: "proof_requests",
+      proof_rejected: "proof_requests",
+      proof_withdrawn: "proof_submitted",
       assignment: "open_rows",
       packet_import: "packet_imports",
       session_closed: "session_closed"
@@ -4383,7 +4825,7 @@ export function registerRoutes(app) {
           END,
           u.email ASC
       `,
-      [context.tenant.id]
+      [context.tenant.id, context.crew?.sessionId || null]
     );
 
     return {
@@ -5330,7 +5772,7 @@ export function registerRoutes(app) {
         WHERE tenant_id = $1
         ORDER BY title ASC
       `,
-      [context.tenant.id]
+      [context.tenant.id, context.crew?.sessionId || null]
     );
     const mediaByItemId = await loadInventoryItemMedia(result.rows.map(row => row.id));
 
@@ -5346,8 +5788,9 @@ export function registerRoutes(app) {
         `
           SELECT session.*,
             COUNT(item.id)::int AS item_count,
-            COUNT(item.id) FILTER (WHERE item.status IN ('found', 'approved'))::int AS found_count,
-            COUNT(item.id) FILTER (WHERE item.status = 'needs_review')::int AS needs_review_count
+            COUNT(item.id) FILTER (WHERE item.status IN ('found', 'not_found', 'mismatch', 'approved'))::int AS found_count,
+            COUNT(item.id) FILTER (WHERE item.status = 'needs_review')::int AS needs_review_count,
+            MAX(item.updated_at) AS last_item_updated_at
           FROM inventory_sessions session
           LEFT JOIN inventory_session_items item ON item.session_id = session.id
           WHERE session.tenant_id = $1
@@ -5366,11 +5809,13 @@ export function registerRoutes(app) {
             item.location_hint,
             item.status AS item_status,
             item.assigned_to,
+            item.direct_verified_by,
             item.created_at,
             item.updated_at,
             session.name AS session_name,
             session.status AS session_status,
             session.created_at AS session_created_at,
+            session.started_at AS session_started_at,
             session.closed_at AS session_closed_at,
             inventory.title AS item_title,
             inventory.common_name,
@@ -5382,6 +5827,8 @@ export function registerRoutes(app) {
             inventory.metadata AS item_metadata,
             assignee.email AS assigned_to_email,
             assignee.display_name AS assigned_to_name,
+            direct_verifier.email AS direct_verified_by_email,
+            direct_verifier.display_name AS direct_verified_by_name,
             latest.id AS latest_submission_id,
             latest.submitted_by AS latest_submitted_by,
             latest.status AS latest_submission_status,
@@ -5390,8 +5837,11 @@ export function registerRoutes(app) {
             latest.serial_number AS latest_serial_number,
             latest.review_state AS latest_review_state,
             latest.review_note AS latest_review_note,
+            latest.review_return_route AS latest_review_return_route,
             latest.reviewed_by AS latest_reviewed_by,
             latest.reviewed_at AS latest_reviewed_at,
+            latest.withdrawn_by AS latest_withdrawn_by,
+            latest.withdrawn_at AS latest_withdrawn_at,
             latest.created_at AS latest_created_at,
             submitter.email AS latest_submitted_by_email,
             submitter.display_name AS latest_submitted_by_name
@@ -5399,6 +5849,7 @@ export function registerRoutes(app) {
           JOIN inventory_sessions session ON session.id = item.session_id
           LEFT JOIN inventory_items inventory ON inventory.id = item.inventory_item_id
           LEFT JOIN app_users assignee ON assignee.id = item.assigned_to
+          LEFT JOIN app_users direct_verifier ON direct_verifier.id = item.direct_verified_by
           LEFT JOIN LATERAL (
             SELECT submission.*
             FROM item_submissions submission
@@ -5535,8 +5986,9 @@ export function registerRoutes(app) {
         `
           SELECT s.*,
             COUNT(si.id)::int AS item_count,
-            COUNT(si.id) FILTER (WHERE si.status IN ('found', 'approved'))::int AS found_count,
-            COUNT(si.id) FILTER (WHERE si.status = 'needs_review')::int AS needs_review_count
+            COUNT(si.id) FILTER (WHERE si.status IN ('found', 'not_found', 'mismatch', 'approved'))::int AS found_count,
+            COUNT(si.id) FILTER (WHERE si.status = 'needs_review')::int AS needs_review_count,
+            MAX(si.updated_at) AS last_item_updated_at
           FROM inventory_sessions s
           LEFT JOIN inventory_session_items si ON si.session_id = s.id
           WHERE s.tenant_id = $1
@@ -5565,8 +6017,8 @@ export function registerRoutes(app) {
     const session = await withTransaction(async client => {
       const result = await client.query(
         `
-          INSERT INTO inventory_sessions (tenant_id, name, packet_source, status, created_by)
-          VALUES ($1, $2, $3, $4, $5)
+          INSERT INTO inventory_sessions (tenant_id, name, packet_source, status, created_by, started_at)
+          VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 = 'active' THEN now() ELSE NULL END)
           RETURNING *
         `,
         [context.tenant.id, body.name, body.packetSource || null, body.status, context.user.id]
@@ -5755,8 +6207,9 @@ export function registerRoutes(app) {
       `
         SELECT s.*,
           COUNT(si.id)::int AS item_count,
-          COUNT(si.id) FILTER (WHERE si.status IN ('found', 'approved'))::int AS found_count,
-          COUNT(si.id) FILTER (WHERE si.status = 'needs_review')::int AS needs_review_count
+          COUNT(si.id) FILTER (WHERE si.status IN ('found', 'not_found', 'mismatch', 'approved'))::int AS found_count,
+          COUNT(si.id) FILTER (WHERE si.status = 'needs_review')::int AS needs_review_count,
+          MAX(si.updated_at) AS last_item_updated_at
         FROM inventory_sessions s
         LEFT JOIN inventory_session_items si ON si.session_id = s.id
         WHERE s.id = $1 AND s.tenant_id = $2
@@ -5933,8 +6386,12 @@ export function registerRoutes(app) {
           SET
             name = COALESCE($1, name),
             status = COALESCE($2, status),
+            started_at = CASE
+              WHEN $2 IN ('active', 'closed') THEN COALESCE(started_at, now())
+              ELSE started_at
+            END,
             closed_at = CASE
-              WHEN $2 = 'closed' THEN now()
+              WHEN $2 = 'closed' THEN COALESCE(closed_at, now())
               WHEN $2 IN ('draft', 'active') THEN NULL
               ELSE closed_at
             END
@@ -6298,15 +6755,28 @@ export function registerRoutes(app) {
       let matchedCount = 0;
       let possibleMatchCount = 0;
       for (const item of body.items) {
-        const confirmedItem = item.inventoryItemId
+        const explicitlyConfirmedItem = item.inventoryItemId
           ? inventoryItemById.get(item.inventoryItemId) || null
           : null;
-        if (item.inventoryItemId && !confirmedItem) {
+        if (item.inventoryItemId && !explicitlyConfirmedItem) {
           throw requestError("Choose inventory items from this workspace.");
         }
-        const suggestedItem = confirmedItem
+        const automaticMatch = explicitlyConfirmedItem
           ? null
-          : findInventoryItemMatch(item.packetLine, matchableInventoryItems)?.item || null;
+          : findInventoryItemMatch(item.packetLine, matchableInventoryItems);
+        const uniqueIdentifierItem = explicitlyConfirmedItem
+          ? null
+          : findUniqueInventoryIdentifierMatch(item.packetLine, matchableInventoryItems);
+        const canReuseUniqueSavedItem = Boolean(
+          automaticMatch
+          && uniqueIdentifierItem
+          && automaticMatch.item.id === uniqueIdentifierItem.id
+          && (item.expectedQty == null || Number(item.expectedQty) === 1)
+          && automaticMatch.score >= 900
+          && automaticMatch.reasons.some(reason => reason === "lin" || reason === "nsn")
+        );
+        const confirmedItem = explicitlyConfirmedItem || (canReuseUniqueSavedItem ? automaticMatch.item : null);
+        const suggestedItem = confirmedItem ? null : automaticMatch?.item || null;
         const locationHint = item.locationHint || confirmedItem?.current_location || null;
         if (confirmedItem || suggestedItem) matchedCount += 1;
         if (suggestedItem) possibleMatchCount += 1;
@@ -6860,7 +7330,7 @@ export function registerRoutes(app) {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const body = parseBody(
       z.object({
-        status: z.enum(itemStatuses),
+        status: z.enum(["found", "not_found", "mismatch"]),
         note: z.string().optional()
       }),
       request.body
@@ -6882,10 +7352,36 @@ export function registerRoutes(app) {
       if (!currentResult.rows[0]) return null;
       if (currentResult.rows[0].session_status === "closed") return { sessionClosed: true };
 
+      if (["found", "not_found", "mismatch"].includes(body.status)) {
+        await client.query(
+          `
+            WITH superseded AS (
+              UPDATE item_submissions
+              SET review_state = 'superseded',
+                review_return_route = NULL,
+                reviewed_at = COALESCE(reviewed_at, now())
+              WHERE session_item_id = $1
+                AND review_state IN ('pending', 'request_more_info', 'rejected')
+              RETURNING id
+            )
+            UPDATE evidence_requests
+            SET resolved_at = COALESCE(resolved_at, now())
+            WHERE submission_id IN (SELECT id FROM superseded)
+              AND resolved_at IS NULL
+          `,
+          [request.params.sessionItemId]
+        );
+      }
+
       const result = await client.query(
         `
           UPDATE inventory_session_items si
-          SET status = $1, direct_verified_by = $2, updated_at = now()
+          SET status = $1,
+            direct_verified_by = $2,
+            assigned_to = CASE WHEN $1 IN ('found', 'not_found', 'mismatch') THEN NULL ELSE assigned_to END,
+            assigned_by = CASE WHEN $1 IN ('found', 'not_found', 'mismatch') THEN NULL ELSE assigned_by END,
+            assigned_at = CASE WHEN $1 IN ('found', 'not_found', 'mismatch') THEN NULL ELSE assigned_at END,
+            updated_at = now()
           FROM inventory_sessions s
           WHERE si.session_id = s.id
             AND si.id = $3
@@ -7036,7 +7532,9 @@ export function registerRoutes(app) {
       await client.query(
         `
           UPDATE inventory_session_items
-          SET status = 'needs_review', updated_at = now()
+          SET status = 'needs_review',
+            direct_verified_by = NULL,
+            updated_at = now()
           WHERE id = $1
         `,
         [request.params.sessionItemId]
@@ -7082,6 +7580,180 @@ export function registerRoutes(app) {
     return { submission };
   });
 
+  route(app, "post", "/api/submissions/:submissionId/withdraw", async (request, reply) => {
+    const context = await requireTenantContext(
+      request,
+      reply,
+      ["tenant_admin", "contributor"],
+      { allowCrew: true }
+    );
+
+    const withdrawn = await withTransaction(async client => {
+      if (context.crew) {
+        await lockActiveCrewAccess(client, {
+          authSessionId: context.crew.authSessionId,
+          tenantId: context.tenant.id,
+          sessionId: context.crew.sessionId,
+          userId: context.user.id
+        });
+      }
+
+      const pointerResult = await client.query(
+        `
+          SELECT submission.session_item_id
+          FROM item_submissions submission
+          JOIN inventory_session_items item ON item.id = submission.session_item_id
+          JOIN inventory_sessions session ON session.id = item.session_id
+          WHERE submission.id = $1
+            AND session.tenant_id = $2
+        `,
+        [request.params.submissionId, context.tenant.id]
+      );
+      if (!pointerResult.rows[0]) return null;
+
+      const sessionItemResult = await client.query(
+        `
+          SELECT item.id,
+            item.assigned_to,
+            session.id AS session_id,
+            session.status AS session_status
+          FROM inventory_session_items item
+          JOIN inventory_sessions session ON session.id = item.session_id
+          WHERE item.id = $1
+            AND session.tenant_id = $2
+          FOR UPDATE OF item, session
+        `,
+        [pointerResult.rows[0].session_item_id, context.tenant.id]
+      );
+      const sessionItem = sessionItemResult.rows[0];
+      if (!sessionItem) return null;
+      if (sessionItem.session_status === "closed") return { sessionClosed: true };
+      if (context.crew && (
+        sessionItem.session_id !== context.crew.sessionId
+        || sessionItem.session_status !== "active"
+      )) return { crewSessionDenied: true };
+
+      const submissionResult = await client.query(
+        `
+          SELECT *
+          FROM item_submissions
+          WHERE id = $1
+            AND session_item_id = $2
+          FOR UPDATE
+        `,
+        [request.params.submissionId, sessionItem.id]
+      );
+      const submission = submissionResult.rows[0];
+      if (!submission) return null;
+      if (submission.submitted_by !== context.user.id) return { notSubmitter: true };
+
+      if (!["pending", "request_more_info"].includes(submission.review_state)) {
+        await createAuditEvent(client, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          action: "submission.withdrawal_conflicted",
+          entityType: "item_submission",
+          entityId: submission.id,
+          metadata: { currentReviewState: submission.review_state }
+        });
+        return { staleWithdrawal: true, submission };
+      }
+
+      const previousReviewState = submission.review_state;
+      const withdrawnResult = await client.query(
+        `
+          UPDATE item_submissions
+          SET review_state = 'withdrawn',
+            review_return_route = NULL,
+            withdrawn_by = $2,
+            withdrawn_at = now()
+          WHERE id = $1
+            AND submitted_by = $2
+            AND review_state IN ('pending', 'request_more_info')
+          RETURNING *
+        `,
+        [submission.id, context.user.id]
+      );
+      if (!withdrawnResult.rows[0]) return { staleWithdrawal: true, submission };
+
+      await client.query(
+        `
+          UPDATE evidence_requests
+          SET resolved_at = COALESCE(resolved_at, now())
+          WHERE submission_id = $1
+            AND resolved_at IS NULL
+        `,
+        [submission.id]
+      );
+
+      const itemResult = await client.query(
+        `
+          UPDATE inventory_session_items
+          SET status = 'unchecked',
+            direct_verified_by = NULL,
+            updated_at = now()
+          WHERE id = $1
+          RETURNING id, status, assigned_to, updated_at
+        `,
+        [sessionItem.id]
+      );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "submission.withdrawn",
+        entityType: "item_submission",
+        entityId: submission.id,
+        metadata: { previousReviewState }
+      });
+
+      return {
+        submission: withdrawnResult.rows[0],
+        sessionItem: itemResult.rows[0]
+      };
+    });
+
+    if (!withdrawn) {
+      reply.code(404);
+      throw new Error("Submission not found");
+    }
+    if (withdrawn.sessionClosed) {
+      reply.code(409);
+      throw new Error("Closed sessions are read-only.");
+    }
+    if (withdrawn.crewSessionDenied) {
+      reply.code(403);
+      throw new Error("Crew access is limited to its assigned active session.");
+    }
+    if (withdrawn.notSubmitter) {
+      reply.code(403);
+      throw new Error("Only the person who submitted this proof can withdraw it.");
+    }
+    if (withdrawn.staleWithdrawal) {
+      reply.code(409);
+      return {
+        error: "This proof can no longer be withdrawn because its review state changed.",
+        code: "submission_not_actionable",
+        conflict: {
+          operation: "withdraw",
+          currentReviewState: withdrawn.submission?.review_state || null
+        },
+        submission: withdrawn.submission ? rowToSubmission(withdrawn.submission) : null
+      };
+    }
+
+    return {
+      withdrawn: true,
+      submission: rowToSubmission(withdrawn.submission),
+      sessionItem: {
+        id: withdrawn.sessionItem.id,
+        status: withdrawn.sessionItem.status,
+        assignedTo: withdrawn.sessionItem.assigned_to,
+        updatedAt: withdrawn.sessionItem.updated_at
+      }
+    };
+  });
+
   route(app, "get", "/api/inventory/review-queue", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
     const result = await query(
@@ -7109,7 +7781,7 @@ export function registerRoutes(app) {
           JOIN inventory_sessions s ON s.id = si.session_id
           JOIN app_users submitter ON submitter.id = sub.submitted_by
           WHERE s.tenant_id = $1
-            AND sub.review_state IN ('pending', 'request_more_info')
+            AND sub.review_state = 'pending'
             AND s.status <> 'closed'
         )
         SELECT *
@@ -7207,15 +7879,7 @@ export function registerRoutes(app) {
 
   route(app, "patch", "/api/submissions/:submissionId/review", async (request, reply) => {
     const context = await requireTenantContext(request, reply, ["tenant_admin"]);
-    const body = parseBody(
-      z.object({
-        decision: z.enum(reviewDecisions),
-        note: z.string().optional(),
-        saveItem: z.boolean().optional(),
-        savedMediaUploadIds: z.array(z.string().uuid()).max(savedInventoryPhotoLimit).optional()
-      }),
-      request.body
-    );
+    const body = parseSubmissionReviewBody(request.body);
     const requestedSavedMediaUploadIds = body.savedMediaUploadIds || [];
     if (new Set(requestedSavedMediaUploadIds).size !== requestedSavedMediaUploadIds.length) {
       throw requestError("Choose each saved photo only once.");
@@ -7276,7 +7940,15 @@ export function registerRoutes(app) {
       if (!current) return null;
       current.session_item_id = sessionItem.id;
       if (!["pending", "request_more_info"].includes(current.review_state)) {
-        return { staleReview: true };
+        await createAuditEvent(client, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          action: "submission.review_conflicted",
+          entityType: "item_submission",
+          entityId: current.id,
+          metadata: { currentReviewState: current.review_state }
+        });
+        return { staleReview: true, submission: current };
       }
       if (body.decision === "approved" && sessionItem.suggested_inventory_item_id) {
         return { unresolvedSuggestion: true };
@@ -7410,15 +8082,25 @@ export function registerRoutes(app) {
       const result = await client.query(
         `
           UPDATE item_submissions
-          SET review_state = $1, review_note = $2, reviewed_by = $3, reviewed_at = now()
-          WHERE id = $4
+          SET review_state = $1,
+            review_note = $2,
+            review_return_route = $3,
+            reviewed_by = $4,
+            reviewed_at = now()
+          WHERE id = $5
             AND review_state IN ('pending', 'request_more_info')
           RETURNING *
         `,
-        [body.decision, body.note || null, context.user.id, current.id]
+        [
+          body.decision,
+          body.note || null,
+          body.decision === "rejected" ? body.returnAssignment : null,
+          context.user.id,
+          current.id
+        ]
       );
 
-      if (!result.rows[0]) return { staleReview: true };
+      if (!result.rows[0]) return { staleReview: true, submission: current };
       result.rows[0].session_item_id = current.session_item_id;
 
       if (body.decision === "approved") {
@@ -7426,11 +8108,57 @@ export function registerRoutes(app) {
           "UPDATE inventory_session_items SET status = 'approved', updated_at = now() WHERE id = $1",
           [result.rows[0].session_item_id]
         );
+      } else if (body.decision === "rejected") {
+        await client.query(
+          `
+            UPDATE inventory_session_items
+            SET status = 'unchecked',
+              direct_verified_by = NULL,
+              assigned_to = CASE WHEN $2 = 'submitter' THEN $3 ELSE NULL END,
+              assigned_by = CASE WHEN $2 = 'submitter' THEN $4 ELSE NULL END,
+              assigned_at = CASE WHEN $2 = 'submitter' THEN now() ELSE NULL END,
+              updated_at = now()
+            WHERE id = $1
+          `,
+          [result.rows[0].session_item_id, body.returnAssignment, current.submitted_by, context.user.id]
+        );
+        await createAuditEvent(client, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          action: body.returnAssignment === "submitter"
+            ? "session_item.assigned"
+            : "session_item.assignment_cleared",
+          entityType: "inventory_session_item",
+          entityId: result.rows[0].session_item_id,
+          metadata: {
+            assignedTo: body.returnAssignment === "submitter" ? current.submitted_by : null,
+            assignedToRole: "submission_return"
+          }
+        });
       } else {
         await client.query(
-          "UPDATE inventory_session_items SET status = 'needs_review', updated_at = now() WHERE id = $1",
-          [result.rows[0].session_item_id]
+          `
+            UPDATE inventory_session_items
+            SET status = 'needs_review',
+              assigned_to = $2,
+              assigned_by = $3,
+              assigned_at = now(),
+              updated_at = now()
+            WHERE id = $1
+          `,
+          [result.rows[0].session_item_id, current.submitted_by, context.user.id]
         );
+        await createAuditEvent(client, {
+          tenantId: context.tenant.id,
+          actorUserId: context.user.id,
+          action: "session_item.assigned",
+          entityType: "inventory_session_item",
+          entityId: result.rows[0].session_item_id,
+          metadata: {
+            assignedTo: current.submitted_by,
+            assignedToRole: "proof_follow_up"
+          }
+        });
       }
 
       let savedInventoryItem = null;
@@ -7546,7 +8274,11 @@ export function registerRoutes(app) {
         action: "submission.reviewed",
         entityType: "item_submission",
         entityId: result.rows[0].id,
-        metadata: { decision: body.decision, note: body.note || null }
+        metadata: {
+          decision: body.decision,
+          note: body.note || null,
+          returnAssignment: body.returnAssignment || null
+        }
       });
 
       return { submission: result.rows[0], savedInventoryItem };
@@ -7562,7 +8294,17 @@ export function registerRoutes(app) {
     }
     if (reviewed.staleReview) {
       reply.code(409);
-      throw new Error("This proof has already been reviewed or replaced.");
+      return {
+        error: reviewed.submission?.review_state === "withdrawn"
+          ? "The submitter withdrew this proof before it could be reviewed."
+          : "This proof has already been reviewed or replaced.",
+        code: "submission_not_actionable",
+        conflict: {
+          operation: "review",
+          currentReviewState: reviewed.submission?.review_state || null
+        },
+        submission: reviewed.submission ? rowToSubmission(reviewed.submission) : null
+      };
     }
     if (reviewed.unresolvedSuggestion) {
       reply.code(409);
@@ -7645,7 +8387,7 @@ export function registerRoutes(app) {
 
       const submissionResult = await client.query(
         `
-          SELECT id, review_state
+          SELECT id, submitted_by, review_state
           FROM item_submissions
           WHERE id = $1
             AND session_item_id = $2
@@ -7683,9 +8425,29 @@ export function registerRoutes(app) {
       );
 
       await client.query(
-        "UPDATE inventory_session_items SET status = 'needs_review', updated_at = now() WHERE id = $1",
-        [submission.session_item_id]
+        `
+          UPDATE inventory_session_items
+          SET status = 'needs_review',
+            assigned_to = $2,
+            assigned_by = $3,
+            assigned_at = now(),
+            updated_at = now()
+          WHERE id = $1
+        `,
+        [submission.session_item_id, submission.submitted_by, context.user.id]
       );
+
+      await createAuditEvent(client, {
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "session_item.assigned",
+        entityType: "inventory_session_item",
+        entityId: submission.session_item_id,
+        metadata: {
+          assignedTo: submission.submitted_by,
+          assignedToRole: "proof_follow_up"
+        }
+      });
 
       await createAuditEvent(client, {
         tenantId: context.tenant.id,

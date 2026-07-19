@@ -40,6 +40,12 @@ async function openNewsletterSection(page, name) {
   await page.getByRole("button", { name, exact: true }).click();
 }
 
+async function openPlatformSection(page, name) {
+  const menuToggle = page.getByRole("button", { name: "Open platform menu" });
+  if (await menuToggle.isVisible()) await menuToggle.click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 async function seedQaLaunchSession(page, identity) {
   await page.goto(FRONTEND_URL);
   await page.evaluate(qaIdentity => {
@@ -72,13 +78,15 @@ test.describe("QA smoke", () => {
     await page.goto(ADMIN_URL);
     await signInWithQaPersona(page, "Root admin");
 
-    const recentPlatoons = page.locator(".platform-dashboard-card").filter({
-      has: page.getByRole("heading", { name: "Recent platoons", exact: true })
-    });
-    await recentPlatoons.getByRole("button", { name: "Open platoons", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Platoons", exact: true, level: 1 })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Create platoon" }).first()).toBeVisible();
-    await expect(page.getByText("ms.localhost").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    const platoonCard = page.locator(".platform-platoon-card").filter({ hasText: "ms.localhost" }).first();
+    await expect(platoonCard).toBeVisible();
+    await expect(platoonCard.getByRole("button", { name: /Copy link for MS Platoon/i })).toBeVisible();
+    await expect(platoonCard.getByRole("link", { name: /Enter ms\.localhost workspace/i })).toBeVisible();
+
+    await openPlatformSection(page, "Settings");
+    await expect(page.getByRole("heading", { name: "Platform settings", exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create platoon", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Open account actions" }).click();
     await expect(page.getByRole("region", { name: "Account menu" }).getByText("QA Root Admin", { exact: true })).toBeVisible();
   });
@@ -219,29 +227,49 @@ test.describe("QA smoke", () => {
     await page.goto(NEWSLETTER_URL);
     await signInWithQaPersona(page, "Newsletter admin");
 
-    await expect(page.getByRole("heading", { name: "Public content", exact: true })).toBeVisible();
-    await expect(page.locator(".newsletter-heading-actions").getByRole("button", { name: "Add homepage update" })).toBeVisible();
-    await expect(page.locator(".frg-content-list").getByText("Family readiness updates", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Homepage updates" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Newsletter issues" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Subscribers" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Preview homepage" }).first()).toBeVisible();
 
-    await openNewsletterSection(page, "Issues");
+    await page.getByRole("button", { name: /Pending requests/ }).click();
+    await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByLabel("Filter subscribers by status")).toHaveValue("pending");
+    await openNewsletterSection(page, "Overview");
+    await page.getByRole("button", { name: /Approved subscribers/ }).click();
+    await expect(page.getByLabel("Filter subscribers by status")).toHaveValue("active");
+    await openNewsletterSection(page, "Overview");
+
+    await page.getByRole("button", { name: "Update homepage" }).click();
+    const homepageDialog = page.getByRole("dialog", { name: "Manage homepage updates" });
+    await expect(homepageDialog.locator(".frg-content-list").getByText("Family readiness updates", { exact: true })).toBeVisible();
+    await homepageDialog.getByRole("button", { name: "Close homepage editor" }).click();
+
+    await page.getByRole("button", { name: "Manage issues" }).click();
     await expect(page.getByRole("heading", { name: "Newsletter issues", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Write newsletter" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Export deliveries" })).toBeVisible();
-    await page.getByRole("button", { name: /^Black Shadow Family Update/ }).click();
-    await expect(page.getByRole("heading", { name: "Black Shadow Family Update" })).toBeVisible();
-    await expect(page.getByText("Delivery records", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create issue", exact: true })).toBeVisible();
+    const issueRow = page.getByRole("table", { name: "Newsletter issues" }).getByRole("row").filter({ hasText: "Black Shadow Family Update" });
+    await issueRow.getByRole("button", { name: "View" }).click();
+    const issueDialog = page.getByRole("dialog", { name: "View issue" });
+    await expect(issueDialog.getByRole("heading", { name: "Black Shadow Family Update" })).toBeVisible();
 
-    await page.getByLabel("Send test").fill("qa-proof@example.com");
-    await page.getByRole("button", { name: "Send test" }).click();
-    await expect(page.getByText(/Test email was not sent: smtp_not_configured|Test email sent to/)).toBeVisible();
+    await issueDialog.getByLabel("Send test").fill("qa-proof@example.com");
+    await issueDialog.getByRole("button", { name: "Send test" }).click();
+    await expect(issueDialog.getByText(/Test email was not sent: smtp_not_configured|Test email sent to/)).toBeVisible();
 
-    await expect(page.getByRole("button", { name: "Published", exact: true })).toBeDisabled();
-    await expect(page.getByText(/recipient|No delivery records yet/)).toBeVisible();
+    await expect(issueDialog.getByRole("button", { name: "Published", exact: true })).toBeDisabled();
+    await issueDialog.getByRole("button", { name: "Close issue editor" }).click();
+
+    await openNewsletterSection(page, "Analytics");
+    await expect(page.getByRole("heading", { name: "Delivery analytics", exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Export CSV", exact: true })).toBeVisible();
 
     await openNewsletterSection(page, "Subscribers");
     await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
-    await expect(page.getByText("Approved subscribers", { exact: true }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Export CSV" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Export CSV", exact: true })).toBeVisible();
+    await page.getByLabel("Filter subscribers by status").selectOption("active");
+    await expect(page.getByRole("table", { name: "Newsletter subscribers" })).toBeVisible();
   });
 
   test("newsletter unsubscribe page accepts a subscriber email", async ({ page }) => {
@@ -274,11 +302,13 @@ test.describe("QA smoke", () => {
     const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
     if (await workspaceMenu.isVisible()) {
       await workspaceMenu.click();
-      await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
       await page.locator(".leader-brand").getByRole("button", { name: "Close menu" }).click();
     } else {
-      await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
     }
     await expect(page.getByRole("button", { name: "Upload packet" })).toBeVisible();
@@ -327,7 +357,8 @@ test.describe("QA smoke", () => {
     await page.getByRole("button", { name: "Open user menu" }).click();
     const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
     if (await workspaceMenu.isVisible()) await workspaceMenu.click();
-    await expect(page.getByRole("button", { name: "Inventory Sessions" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inventory Sessions" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Review Queue" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Team" })).toHaveCount(0);
   });

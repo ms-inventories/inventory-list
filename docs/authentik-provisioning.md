@@ -18,11 +18,15 @@ The preferred configuration is:
 
 1. Create an Authentik OAuth2/OpenID Scope Mapping with the requested scope name `ak_user_uuid`. Its expression must emit the signed-in user's immutable UUID as the claim `ak_user_uuid` (for example, a mapping result shaped like `{ "ak_user_uuid": str(request.user.uuid) }`). Do not derive this value from email, username, or a mutable attribute.
 2. Attach the mapping to the Inventory OAuth2/OpenID Provider used by `auth.876en.org`.
-3. Only after that mapping exists, set the frontend Coolify variable `VITE_OIDC_SCOPE=openid profile email groups ak_user_uuid`; a mapping attached to the provider is not emitted unless the client requests its scope name. Do not add the scope to the frontend first, because Authentik can reject every existing login with `invalid_scope` while the mapping is absent.
+3. Only after that mapping exists, set the frontend Coolify variable `VITE_OIDC_SCOPE=openid profile email groups offline_access ak_user_uuid`; a mapping attached to the provider is not emitted unless the client requests its scope name. Do not add a scope to the frontend first, because Authentik can reject every existing login with `invalid_scope` while the mapping is absent.
 4. Sign in with a controlled account, inspect the decoded access/ID token, and confirm `ak_user_uuid` is a canonical UUID matching that user's `uuid` from the Authentik management API.
 5. Set `OIDC_IMMUTABLE_USER_ID_CLAIM=ak_user_uuid` on the backend and leave `OIDC_SUBJECT_IS_USER_UUID=false`.
 
 There is one supported alternative: if the Inventory provider is deliberately configured so its OIDC `sub` value is the Authentik user UUID, verify that behavior with more than one controlled account and set `OIDC_SUBJECT_IS_USER_UUID=true`. In that mode the backend uses `sub` as the immutable UUID and does not depend on the named claim. Do not enable this flag merely because a subject looks UUID-like; changing provider subject mode later changes identity and can lock users out.
+
+### Seamless session renewal
+
+Attach Authentik's built-in `offline_access` scope mapping to the Inventory OAuth2/OpenID Provider and enable the provider's **Refresh token** grant type. The frontend must request `offline_access` in `VITE_OIDC_SCOPE`. Authentik then returns a rotating refresh token that the inventory API keeps in a host-only, HttpOnly cookie and exchanges before the short-lived access token expires. Every trusted app subdomain renews against `api.876en.org`, avoiding another Authentik redirect when the user moves between interfaces. Keep the provider's refresh-token validity aligned with the desired signed-in period, and use Authentik revocation or the app's sign-out flow when access must end immediately.
 
 Provisioning must remain disabled if neither verified configuration is available. On first login, the backend compares the OIDC UUID with the UUID returned by the Authentik management API. A missing or different UUID fails closed instead of linking an account by email alone.
 
@@ -92,7 +96,7 @@ AUTHENTIK_PROVISIONING_MAX_ATTEMPTS=8
 Set this build-time value on the frontend resource before the production smoke test:
 
 ```text
-VITE_OIDC_SCOPE=openid profile email groups ak_user_uuid
+VITE_OIDC_SCOPE=openid profile email groups offline_access ak_user_uuid
 ```
 
 `AUTHENTIK_PROVISIONING_ENABLED=true` fails backend startup unless the origin is canonical HTTPS, the token is present, the stage value is a UUID, the managed path and group names are safe, and the recovery duration is `days=1` through `days=7`.

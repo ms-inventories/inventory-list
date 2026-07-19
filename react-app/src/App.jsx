@@ -26,11 +26,12 @@ import { demoIndexData, demoInventoriesByFile } from "./data/demoData.js";
 import { apiRequest, getApiErrorMessage } from "./lib/api.js";
 import { matchesSearch, normalizeSearchText, searchTerms } from "./lib/search.js";
 import {
-  clearAuthSession,
   beginOidcLogin,
   completeOidcRedirect,
+  endOidcSession,
   getSessionAccessToken,
-  readAuthSession
+  readAuthSession,
+  refreshAuthSession
 } from "./lib/auth.js";
 import { getPacketCandidateDisplay, recognizePacketFile } from "./lib/ocr.js";
 
@@ -441,6 +442,10 @@ function getAdminUrl() {
   return getAppUrl("admin", "/#/admin");
 }
 
+function getAdminLaunchUrl() {
+  return getAppUrl("admin", "/#/launch");
+}
+
 function getNewsletterAdminUrl() {
   return getAppUrl("admin", "/#/newsletter");
 }
@@ -450,11 +455,15 @@ function getLaunchUrl() {
 }
 
 function getApplicationPortalUrl() {
-  return getLaunchUrl();
+  return getAdminLaunchUrl();
 }
 
 function getTenantUrl(slug) {
   return getAppUrl(slug, "/#/admin");
+}
+
+function getTenantLaunchUrl(slug) {
+  return getAppUrl(slug, "/#/launch");
 }
 
 function normalizeGroupLabels(groups) {
@@ -689,14 +698,22 @@ function LaunchRouter() {
           const routeAfterRedirect = `${window.location.pathname}${window.location.hash || ""}`;
           const normalizedRouteAfterRedirect = routeAfterRedirect.toLowerCase();
           if (!normalizedRouteAfterRedirect.endsWith("#/launch") && !normalizedRouteAfterRedirect.startsWith("/launch")) {
-            window.location.replace(routeAfterRedirect);
             return;
           }
         }
 
-        const session = redirectedSession || readAuthSession();
+        let session = redirectedSession || readAuthSession();
         token = getSessionAccessToken(session);
         tenantSlug = getTenantSlugFromHostname();
+
+        if (!token) {
+          try {
+            session = await refreshAuthSession(null, { force: true });
+            token = getSessionAccessToken(session);
+          } catch (refreshError) {
+            if (![400, 401].includes(Number(refreshError?.details?.status))) throw refreshError;
+          }
+        }
 
         if (!token) {
           setStatus({ text: "Redirecting to sign in...", isError: false });
@@ -714,13 +731,13 @@ function LaunchRouter() {
         if (tenantSlug) {
           if (!data.tenant) {
             setStatus({ text: "That workspace no longer exists. Redirecting...", isError: false });
-            window.location.replace(data.isPlatformAdmin ? getAdminUrl() : getLaunchUrl());
+            window.location.replace(data.isPlatformAdmin ? getAdminLaunchUrl() : getLaunchUrl());
             return;
           }
 
           setMe(data);
           if (data.isPlatformAdmin || data.membership?.role || slugs.includes(tenantSlug)) {
-            window.location.assign(getTenantUrl(tenantSlug));
+            window.location.replace(getTenantUrl(tenantSlug));
             return;
           }
 
@@ -736,17 +753,17 @@ function LaunchRouter() {
 
         setMe(data);
         if (data.isPlatformAdmin || groups.includes("876en-admins")) {
-          window.location.assign(getAdminUrl());
+          window.location.replace(isAdminHostname() ? getAdminUrl() : getAdminLaunchUrl());
           return;
         }
 
         if (data.isFrgAdmin || groups.includes("876en-frg-admins")) {
-          window.location.assign(getNewsletterAdminUrl());
+          window.location.replace(isAdminHostname() ? getNewsletterAdminUrl() : getAdminLaunchUrl());
           return;
         }
 
         if (slugs.length === 1) {
-          window.location.assign(getTenantUrl(slugs[0]));
+          window.location.replace(getTenantLaunchUrl(slugs[0]));
           return;
         }
 
@@ -797,9 +814,9 @@ function LaunchRouter() {
     }
   }
 
-  function signOutAndReturn() {
-    clearAuthSession();
-    window.location.assign("/");
+  async function signOutAndReturn() {
+    await endOidcSession();
+    window.location.replace("/");
   }
 
   async function copyDiagnostics() {
@@ -862,7 +879,7 @@ function LaunchRouter() {
               <a
                 className="btn btn-secondary btn-full launch-workspace-card"
                 key={workspace.slug}
-                href={getTenantUrl(workspace.slug)}
+                href={getTenantLaunchUrl(workspace.slug)}
                 aria-label={`Open ${workspace.name} workspace`}
               >
                 <span className="launch-workspace-copy">

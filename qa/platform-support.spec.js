@@ -27,7 +27,7 @@ async function activatePlatformNav(page, name, isMobileProject) {
 }
 
 test.describe("Platform support", () => {
-  test("support nav opens deployment diagnostics", async ({ page }, testInfo) => {
+  test("support shows the owner contact and keeps technical diagnostics secondary", async ({ page }, testInfo) => {
     const isMobileProject = Boolean(testInfo.project.use.isMobile);
 
     await seedQaRootSession(page);
@@ -36,8 +36,14 @@ test.describe("Platform support", () => {
     await activatePlatformNav(page, "Support", isMobileProject);
 
     await expect(page.getByRole("heading", { name: "Support", exact: true })).toBeVisible();
-    await expect(page.getByText("Check safe deploy details before troubleshooting.")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Deployment details" })).toBeVisible();
+    await expect(page.getByText("Get help with Shadow Tracer or open technical diagnostics.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Need help with Shadow Tracer?" })).toBeVisible();
+    const contact = page.getByRole("link", { name: "tm.lewisbenson@gmail.com" });
+    await expect(contact).toHaveAttribute("href", "mailto:tm.lewisbenson@gmail.com");
+
+    const diagnostics = page.getByText("Technical diagnostics", { exact: true });
+    await expect(diagnostics).toBeVisible();
+    await diagnostics.click();
     await expect(page.getByRole("button", { name: "Copy diagnostics" })).toBeVisible();
 
     await expect(page.getByText("Current URL", { exact: true })).toBeVisible();

@@ -95,7 +95,8 @@ export const config = {
     tenantGroupPrefix: String(process.env.TENANT_GROUP_PREFIX || "876en-").toLowerCase(),
     immutableUserIdClaim: String(process.env.OIDC_IMMUTABLE_USER_ID_CLAIM || "ak_user_uuid").trim(),
     subjectIsUserUuid: String(process.env.OIDC_SUBJECT_IS_USER_UUID || "").toLowerCase() === "true",
-    tenantGroupFallbackEnabled: String(process.env.AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED ?? "true").toLowerCase() !== "false"
+    tenantGroupFallbackEnabled: String(process.env.AUTHENTIK_TENANT_GROUP_FALLBACK_ENABLED ?? "true").toLowerCase() !== "false",
+    refreshCookieTtlDays: boundedInteger(process.env.OIDC_REFRESH_COOKIE_TTL_DAYS, 30, 1, 90)
   },
   storage: {
     driver: process.env.STORAGE_DRIVER || "local",
@@ -112,6 +113,7 @@ export const config = {
     secretIsPersistent: Boolean(configuredCrewAccessSecret || configuredMediaSigningSecret),
     secretUsesMediaFallback: !configuredCrewAccessSecret,
     grantTtlHours: boundedInteger(process.env.CREW_GRANT_TTL_HOURS, 168, 1, 168),
+    inactivityTtlHours: boundedInteger(process.env.CREW_INACTIVITY_TTL_HOURS, 36, 1, 168),
     maxActiveGrantsPerSession: boundedInteger(process.env.CREW_MAX_ACTIVE_GRANTS_PER_SESSION, 25, 1, 100),
     maxStagedUploadsPerAuthSession: boundedInteger(process.env.CREW_MAX_STAGED_UPLOADS_PER_SESSION, 12, 12, 100),
     maxFailuresPerGrant: boundedInteger(process.env.CREW_MAX_FAILURES_PER_GRANT, 5, 3, 10),
@@ -143,6 +145,8 @@ export const config = {
     pass: process.env.SMTP_PASS || "",
     fromName: process.env.EMAIL_FROM_NAME || "876 EN Inventory",
     fromAddress: process.env.EMAIL_FROM_ADDRESS || "no-reply@876en.org",
+    proofFromName: process.env.PROOF_EMAIL_FROM_NAME || "876 EN Inventory Proof",
+    proofFromAddress: process.env.PROOF_EMAIL_FROM_ADDRESS || "proof@876en.org",
     newsletterFromName: process.env.NEWSLETTER_FROM_NAME || "",
     newsletterFromAddress: process.env.NEWSLETTER_FROM_ADDRESS || ""
   }

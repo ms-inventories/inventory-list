@@ -68,14 +68,16 @@ test.describe("Tenant notifications", () => {
 
     await panel.getByRole("button", { name: "Open sessions" }).click();
     await expect(panel).toBeHidden();
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
 
     await page.getByRole("button", { name: "Notifications" }).click();
     await page.getByRole("region", { name: "Notifications" }).getByRole("button", { name: "Open review queue" }).click();
+    await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
   });
 
-  test("proof requests open the exact assigned session item", async ({ page, request }, testInfo) => {
+  test("rejections kept with the submitter open the exact assigned session item", async ({ page, request }, testInfo) => {
     const suffix = `${testInfo.project.name}-${Date.now()}`;
     const sessionName = `QA notification ${suffix}`;
     const packetLine = `QA-NOTIFICATION-${suffix.toUpperCase()}`;
@@ -105,9 +107,9 @@ test.describe("Tenant notifications", () => {
         headers: qaHeaders(qaNco),
         data: { status: "not_found", note: `Initial check for ${suffix}` }
       }));
-      await responseJson(await request.post(`${API_URL}/submissions/${submission.submission.id}/evidence-requests`, {
+      await responseJson(await request.patch(`${API_URL}/submissions/${submission.submission.id}/review`, {
         headers: qaHeaders(qaPlatoonAdmin),
-        data: { message: requestNote, requestedFields: ["serial_photo"] }
+        data: { decision: "rejected", note: requestNote, returnAssignment: "submitter" }
       }));
 
       await openTenant(page, qaNco);
@@ -116,6 +118,7 @@ test.describe("Tenant notifications", () => {
       await expect(notification).toBeVisible();
       await notification.click();
 
+      await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
       await expect(page.locator(".session-summary").getByText(sessionName, { exact: true })).toBeVisible();
       await expect(page.getByRole("dialog", { name: packetLine })).toBeVisible();

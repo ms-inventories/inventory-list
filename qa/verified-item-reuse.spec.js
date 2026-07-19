@@ -117,6 +117,23 @@ async function seedBrowserIdentity(page) {
 }
 
 async function openWorkspaceView(page, label, heading) {
+  if (label === "Inventory Sessions") {
+    await page.getByRole("button", { name: /^Notifications/ }).click();
+    await page.getByRole("region", { name: "Notifications" })
+      .getByRole("button", { name: "Open sessions", exact: true })
+      .click();
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    return;
+  }
+  if (label === "Review Queue") {
+    await page.getByRole("region", { name: "Dashboard review results" })
+      .getByRole("button", { name: "Open review queue", exact: true })
+      .click();
+    await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    return;
+  }
   const menu = page.getByRole("button", { name: "Open workspace menu" });
   if (await menu.isVisible()) await menu.click();
   await page.getByRole("button", { name: label, exact: true }).click();
@@ -257,19 +274,18 @@ test.describe("verified item reuse UI", () => {
       await evidenceSummary.click();
 
       const saveRecord = evidencePicker.getByRole("checkbox", { name: /Update this item's reference record/ });
-      await expect(saveRecord).not.toBeChecked();
+      await expect(saveRecord).toBeChecked();
       await expectMinHeight(evidencePicker.locator(".saved-evidence-enable"), touchTargetMinimum);
-      await saveRecord.check();
-      await expect(evidenceSummary.getByText("1/3 selected", { exact: true })).toBeVisible();
+      await expect(evidenceSummary.getByText("3/3 selected", { exact: true })).toBeVisible();
 
       const savedOption = evidencePicker.locator(".saved-evidence-option", { hasText: "Previous" });
       const newOptions = evidencePicker.locator(".saved-evidence-option", { hasText: "This submission" });
       const savedCheckbox = savedOption.getByRole("checkbox");
       await expect(savedCheckbox).toBeChecked();
       await expect(newOptions).toHaveCount(3);
-      for (let index = 0; index < 3; index += 1) {
-        await expect(newOptions.nth(index).getByRole("checkbox")).not.toBeChecked();
-      }
+      await expect(newOptions.nth(0).getByRole("checkbox")).toBeChecked();
+      await expect(newOptions.nth(1).getByRole("checkbox")).toBeChecked();
+      await expect(newOptions.nth(2).getByRole("checkbox")).not.toBeChecked();
       await expectMinHeight(savedOption, touchTargetMinimum);
       await expectMinHeight(newOptions.first(), touchTargetMinimum);
       await expectContained(page, evidencePicker);
@@ -277,10 +293,6 @@ test.describe("verified item reuse UI", () => {
       const firstNewCheckbox = newOptions.nth(0).getByRole("checkbox");
       const secondNewCheckbox = newOptions.nth(1).getByRole("checkbox");
       const thirdNewCheckbox = newOptions.nth(2).getByRole("checkbox");
-      await firstNewCheckbox.check();
-      await secondNewCheckbox.check();
-      await expect(evidenceSummary.getByText("3/3 selected", { exact: true })).toBeVisible();
-
       await thirdNewCheckbox.click();
       await expect(page.getByText("Keep up to 3 photos with the saved item.", { exact: true })).toBeVisible();
       await expect(thirdNewCheckbox).not.toBeChecked();

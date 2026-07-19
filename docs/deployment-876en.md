@@ -82,7 +82,7 @@ VITE_OIDC_CLIENT_ID=<authentik inventory client id>
 VITE_OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 VITE_OIDC_AUTHORIZATION_ENDPOINT=https://auth.876en.org/application/o/authorize/
 VITE_OIDC_TOKEN_ENDPOINT=https://auth.876en.org/application/o/token/
-VITE_OIDC_SCOPE=openid profile email groups ak_user_uuid
+VITE_OIDC_SCOPE=openid profile email groups offline_access ak_user_uuid
 VITE_ENABLE_AUTH_DIAGNOSTICS=false
 ```
 
@@ -182,9 +182,13 @@ SMTP_USER=<brevo smtp login>
 SMTP_PASS=<brevo smtp key>
 EMAIL_FROM_NAME=876 EN Inventory
 EMAIL_FROM_ADDRESS=no-reply@876en.org
+PROOF_EMAIL_FROM_NAME=876 EN Inventory Proof
+PROOF_EMAIL_FROM_ADDRESS=proof@876en.org
 NEWSLETTER_FROM_NAME=Black Shadow Company
 NEWSLETTER_FROM_ADDRESS=newsletter@876en.org
 ```
+
+Verify `876en.org` and the `proof@876en.org` sender in the SMTP provider before production delivery. Otherwise the relay can reject the message or rewrite the visible From domain.
 
 Use the existing Brevo account for both `nsvss.com` and `876en.org`. Add and authenticate `876en.org` as another sending domain, then create the newsletter sender; both domains can use the same SMTP credentials.
 
@@ -216,12 +220,15 @@ OIDC_AUDIENCE=<authentik inventory client id>
 OIDC_CLIENT_ID=<authentik inventory client id>
 OIDC_DISCOVERY_URL=https://auth.876en.org/application/o/inventory-web/.well-known/openid-configuration
 OIDC_GROUPS_CLAIM=groups
+OIDC_REFRESH_COOKIE_TTL_DAYS=30
 PLATFORM_ADMIN_GROUP=876en-admins
 PLATFORM_ADMIN_SUBJECTS=<optional oidc subject allowlist>
 FRG_ADMIN_GROUP=876en-frg-admins
 TENANT_ADMIN_GROUP=876en-platoon-admin
 TENANT_GROUP_PREFIX=876en-
 ```
+
+The API keeps the rotating refresh token in a host-only, HttpOnly, `SameSite=Strict` cookie scoped to `/api/auth/oidc/refresh`. Because every app subdomain renews through `api.876en.org`, moving between the admin and platoon interfaces does not require another Authentik redirect. Do not proxy this endpoint through an unrelated domain.
 
 App groups:
 
@@ -240,10 +247,10 @@ Frontend OIDC notes:
 
 - Configure the Authentik application as a public/OIDC client with PKCE.
 - The frontend client ID should match `VITE_OIDC_CLIENT_ID`.
-- If you keep an Authentik application tile, set its Launch URL to `https://876en.org/#/launch`. The tile is optional; the normal product flow starts from the site login or a direct app URL.
+- If you keep an Authentik application tile, set its Launch URL to `https://admin.876en.org/#/launch`. The tile is optional; the normal product flow starts from the site login or a direct app URL.
 - Add redirect URIs for the public app/admin hosts you use, starting with `https://admin.876en.org/`. Tenant admin login on platoon subdomains will also need allowed redirect URIs such as `https://1st.876en.org/` and `https://ms.876en.org/`, or an Authentik wildcard/regex redirect rule if you choose to allow tenant-wide callback URLs.
 - Make sure the provider emits a group claim. The app looks for groups such as `876en-admins` or `876en-ms` in the access token, ID token, and OIDC userinfo response; if `/#/launch` still says `No groups in token`, add or enable the Authentik OAuth/OIDC scope mapping that exposes user groups.
-- The public `876en.org` nav login dropdown should point to the app launcher, `https://876en.org/#/launch`. Authentik handles sign-in, but its app dashboard is not the user destination.
+- The public `876en.org` Login action should point to `https://admin.876en.org/#/launch`. The launcher sends platoon-only users directly to their workspace; Authentik's app dashboard is not the user destination.
 - The frontend can use explicit Authentik OAuth endpoints (`/application/o/authorize/` and `/application/o/token/`) so the browser does not need to fetch the discovery document from `auth.876en.org`.
 - Keep `VITE_ENABLE_AUTH_DIAGNOSTICS=false` for normal production. Set it to `true` only during a support session when you intentionally need the manual access-token fallback or extra auth diagnostics.
 - Tenant invitation links use `https://<tenant>.876en.org/#/accept-invite?token=...`. Authentik only sees the origin/path portion of that redirect URI, so the allowed redirect entry is the tenant root such as `https://1st.876en.org/`; the app restores the invite hash after login.
@@ -283,7 +290,7 @@ Use this as the first real go-live pass.
 4. Frontend Coolify env has `VITE_BASE_DOMAIN=876en.org`, `VITE_API_BASE_URL=https://api.876en.org/api`, and the Authentik discovery/client values.
 5. Cloudflare routes include `admin.876en.org`, `876en.org`, `api.876en.org`, and the tenant wildcard or explicit tenant hostnames.
 6. Authentik has redirect URIs for `https://admin.876en.org/`, `https://876en.org/`, and each first tenant host such as `https://1st.876en.org/` and `https://ms.876en.org/`.
-7. Open `https://876en.org/#/launch`, sign in with the account in `876en-admins`, and confirm it routes to platform admin.
+7. Open `https://admin.876en.org/#/launch`, sign in with the account in `876en-admins`, and confirm it routes to platform admin without returning to Authentik a second time.
 8. Create the first tenants, for example `1st` and `ms`, assigning each platoon admin email as the first platoon admin.
 9. Open each tenant admin link, create a test inventory session, import a couple packet rows, invite one contributor, and submit/approve one proof item.
 10. Confirm a current in-app evidence/source link opens, then copy the same plain `/media/...` URL into an anonymous/private browser and confirm it returns `403`. Also confirm a contributor cannot open a packet-source link.

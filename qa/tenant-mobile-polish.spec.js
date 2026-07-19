@@ -59,6 +59,14 @@ async function openWorkspaceView(page, name) {
   await item.click();
 }
 
+async function openSessionsFromNotifications(page) {
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open sessions", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+}
+
 async function expectContained(locator) {
   await expect(locator).toBeVisible();
   expect(await locator.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
@@ -198,7 +206,7 @@ test.describe("tenant mobile and tablet polish", () => {
     }
   });
 
-  test("mobile dashboard previews stop at three rows per card", async ({ page, request }, testInfo) => {
+  test("mobile dashboard hides the work queue and limits the review preview to three rows", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     await page.setViewportSize({ width: 360, height: 740 });
     const suffix = scenarioSuffix(testInfo, "dashboard-preview");
@@ -253,13 +261,11 @@ test.describe("tenant mobile and tablet polish", () => {
       await expect(page.getByRole("region", { name: "Active inventory" })).toContainText(session.name);
 
       const workCard = page.getByRole("region", { name: "Pending inventory results" });
-      const workLists = workCard.getByRole("group", { name: "Dashboard work assignment lists" });
-      await workLists.getByRole("button", { name: /^Mine\b/ }).click();
-      await expect(workCard.locator(".leader-table-row")).toHaveCount(3);
+      await expect(workCard).toBeHidden();
 
       const reviewCard = page.getByRole("region", { name: "Dashboard review results" });
       await expect(reviewCard.locator(".leader-table-row")).toHaveCount(3);
-      for (const card of [workCard, reviewCard]) {
+      for (const card of [reviewCard]) {
         await expectContained(card);
         for (const row of await card.locator(".leader-table-row").all()) {
           await expectInsideHorizontally(card, row);
@@ -271,7 +277,7 @@ test.describe("tenant mobile and tablet polish", () => {
     }
   });
 
-  test("reachable Team, search, session disclosure, and proof controls meet 44px touch targets", async ({ page, request }, testInfo) => {
+  test("reachable Team, search, visible item details, and proof controls meet 44px touch targets", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     await page.setViewportSize({ width: 412, height: 915 });
     const suffix = scenarioSuffix(testInfo, "touch-targets");
@@ -300,7 +306,7 @@ test.describe("tenant mobile and tablet polish", () => {
       await manage.click();
       await expectMinTargetSize(page.locator(".team-member-manage .member-role-select").first());
 
-      await openWorkspaceView(page, "Inventory Sessions");
+      await openSessionsFromNotifications(page);
       await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
       const sessionList = page.locator(".session-list");
       await expect(sessionList).toBeVisible();
@@ -323,11 +329,11 @@ test.describe("tenant mobile and tablet polish", () => {
       await row.getByRole("button", { name: /Open details for/ }).click();
       let drawer = page.getByRole("dialog");
       await expect(drawer).toBeVisible();
-      const disclosures = drawer.locator(".session-detail-disclosure > summary");
-      expect(await disclosures.count()).toBeGreaterThan(0);
-      for (const summary of await disclosures.all()) {
-        await expectMinTargetSize(summary);
-      }
+      await expect(drawer.locator(".session-detail-disclosure > summary")).toHaveCount(0);
+      await expect(drawer.getByRole("heading", { name: "Inventory details" })).toBeVisible();
+      await expect(drawer.getByRole("heading", { name: "Manage item" })).toBeVisible();
+      await expectMinTargetSize(drawer.getByRole("combobox", { name: "Assign to" }));
+      await expectMinTargetSize(drawer.getByRole("combobox", { name: "Set result" }));
       await drawer.getByRole("button", { name: "Close item details" }).click();
       await expect(drawer).toBeHidden();
 
@@ -335,9 +341,7 @@ test.describe("tenant mobile and tablet polish", () => {
       drawer = page.getByRole("dialog");
       const proofForm = drawer.locator(".proof-form");
       await expect(proofForm).toBeVisible();
-      for (const control of await proofForm.locator(".segmented-control button").all()) {
-        await expectMinTargetSize(control);
-      }
+      await expectMinTargetSize(proofForm.getByRole("combobox", { name: "Inventory result" }));
       await expectMinTargetSize(proofForm.locator(".photo-picker"));
 
       const photoName = `touch-target-${suffix}.jpg`;

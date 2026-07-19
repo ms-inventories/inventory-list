@@ -153,12 +153,23 @@ test.describe("cross-session reports", () => {
     expect(apiReport.rows.some(item => item.packetLine === foundMarker)).toBeTruthy();
     expect(apiReport.rows.some(item => item.packetLine === approvedMissingMarker)).toBeTruthy();
     expect(apiReport.rows.some(item => item.packetLine === foreignMarker)).toBeFalsy();
+    expect(apiReport.rows.find(item => item.packetLine === foundMarker)?.directVerifiedByName).toBe(qaAdmin.name);
+    expect(apiReport.rows.find(item => item.packetLine === pendingMarker)?.submissions
+      .some(submission => submission.submittedByName === qaNco.name)).toBeTruthy();
+    const closedTiming = apiReport.sessions.find(session => session.id === closed.id);
+    expect(closedTiming?.startedAt).toBeTruthy();
+    expect(closedTiming?.completedAt).toBeTruthy();
+    expect(closedTiming?.durationToCompletionSeconds).toBeGreaterThanOrEqual(0);
 
     await signInAndOpenReports(page);
     const results = page.getByRole("region", { name: "Report results" });
     await expect(results.getByText(foundMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(approvedMissingMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(foreignMarker, { exact: true })).toHaveCount(0);
+    await expect(results.locator(".reports-table-row", { hasText: foundMarker }).getByText(qaAdmin.name, { exact: true })).toBeVisible();
+    const sessionTiming = page.getByRole("region", { name: "Session timing" });
+    await expect(sessionTiming.getByText(closedName, { exact: true })).toBeVisible();
+    await expect(sessionTiming.getByText("Time to 100%", { exact: true })).toBeVisible();
 
     await page.getByRole("combobox", { name: "Session", exact: true }).selectOption(active.id);
     await expect(results.getByText(foundMarker, { exact: true })).toBeVisible();

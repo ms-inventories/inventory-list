@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, errors, jwtVerify } from "jose";
 import { config } from "./config.js";
 import { withTransaction } from "./db.js";
@@ -8,7 +9,73 @@ import {
 
 let jwksPromise = null;
 let discoveryPromise = null;
+const oidcRefreshFlights = new Map();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const oidcRefreshCookieName = "inventory_oidc_refresh";
+
+function appendSetCookie(response, cookieValue) {
+  const current = response.getHeader("Set-Cookie");
+  const values = current ? (Array.isArray(current) ? current : [current]) : [];
+  response.setHeader("Set-Cookie", [...values, cookieValue]);
+}
+
+export function oidcRefreshCookieValue(
+  refreshToken,
+  { production = config.env === "production", maxAgeDays = config.oidc.refreshCookieTtlDays } = {}
+) {
+  const maxAge = Math.max(1, Math.floor(maxAgeDays * 24 * 60 * 60));
+  return [
+    `${oidcRefreshCookieName}=${encodeURIComponent(refreshToken)}`,
+    "Path=/api/auth/oidc/refresh",
+    `Max-Age=${maxAge}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    production ? "Secure" : null
+  ].filter(Boolean).join("; ");
+}
+
+export function issueOidcRefreshCookie(response, refreshToken) {
+  if (!refreshToken) return;
+  appendSetCookie(response, oidcRefreshCookieValue(refreshToken));
+}
+
+export function clearOidcRefreshCookie(response, { production = config.env === "production" } = {}) {
+  appendSetCookie(response, [
+    `${oidcRefreshCookieName}=`,
+    "Path=/api/auth/oidc/refresh",
+    "Max-Age=0",
+    "HttpOnly",
+    "SameSite=Strict",
+    production ? "Secure" : null
+  ].filter(Boolean).join("; "));
+}
+
+export function classifyOidcRefreshFailure(status, providerCode = "") {
+  const normalizedCode = String(providerCode || "").trim().toLowerCase();
+  const rejected = Number(status) === 401 || ["invalid_grant", "invalid_token"].includes(normalizedCode);
+  if (rejected) {
+    return {
+      statusCode: 401,
+      publicCode: "oidc_refresh_rejected",
+      message: "The renewable sign-in session is no longer valid.",
+      clearRefreshCookie: true
+    };
+  }
+  if (Number(status) === 429 || Number(status) >= 500) {
+    return {
+      statusCode: Number(status) === 429 ? 503 : 502,
+      publicCode: "oidc_refresh_unavailable",
+      message: "The sign-in service is temporarily unavailable.",
+      clearRefreshCookie: false
+    };
+  }
+  return {
+    statusCode: 400,
+    publicCode: "oidc_refresh_failed",
+    message: "The sign-in session could not be renewed.",
+    clearRefreshCookie: false
+  };
+}
 
 const rejectedBearerTokenErrorCodes = new Set([
   "ERR_JOSE_ALG_NOT_ALLOWED",
@@ -208,6 +275,56 @@ export async function exchangeOidcCode({ code, codeVerifier, redirectUri }) {
   }
 
   return tokenSet;
+}
+
+async function refreshOidcTokensOnce({ refreshToken }) {
+  const discovery = await getDiscovery();
+  if (!discovery.token_endpoint) throw new Error("OIDC discovery did not include token_endpoint");
+  if (!config.oidc.clientId) throw new Error("OIDC_CLIENT_ID is required for token refresh");
+
+  const body = new URLSearchParams({
+    client_id: config.oidc.clientId,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken
+  });
+
+  const response = await fetch(discovery.token_endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body
+  });
+
+  const text = await response.text();
+  let tokenSet = null;
+  try {
+    tokenSet = text ? JSON.parse(text) : {};
+  } catch {
+    tokenSet = { error: text || "Token refresh failed" };
+  }
+
+  if (!response.ok) {
+    const failure = classifyOidcRefreshFailure(response.status, tokenSet?.error);
+    const error = new Error(failure.message);
+    Object.assign(error, failure);
+    throw error;
+  }
+
+  return tokenSet;
+}
+
+export function refreshOidcTokens({ refreshToken }) {
+  const refreshKey = createHash("sha256").update(String(refreshToken)).digest("hex");
+  const existing = oidcRefreshFlights.get(refreshKey);
+  if (existing) return existing;
+
+  const promise = refreshOidcTokensOnce({ refreshToken }).finally(() => {
+    if (oidcRefreshFlights.get(refreshKey) === promise) oidcRefreshFlights.delete(refreshKey);
+  });
+  oidcRefreshFlights.set(refreshKey, promise);
+  return promise;
 }
 
 async function verifyBearerToken(token, idToken = "") {
