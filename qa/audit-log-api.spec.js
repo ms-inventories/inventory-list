@@ -227,7 +227,7 @@ test.describe("tenant audit log API", () => {
       from: startedAt
     }), { headers: qaHeaders(qaAdmin) }));
     const invitation = access.events.find(event => event.action === "invitation.created" && event.details.email === invitationEmail);
-    expect(invitation?.details).toEqual({ email: invitationEmail, role: "viewer" });
+    expect(invitation?.details).toEqual({ email: invitationEmail, role: "viewer", deliveryRequested: true });
 
     const ncoEvents = await responseJson(await request.get(auditUrl({
       actor: ncoMember.userId,

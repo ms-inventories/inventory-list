@@ -21,9 +21,24 @@ if (apply && verifyOnly) throw new Error("Choose either --apply or --verify.");
 if (repair && !apply) throw new Error("--repair must be used with --apply.");
 
 const tenantDefinitions = [
-  { slug: "demo-1st", name: "[Demo] 1st Platoon", accent: "Alpha" },
-  { slug: "demo-2nd", name: "[Demo] 2nd Platoon", accent: "Bravo" },
-  { slug: "demo-maint", name: "[Demo] Maintenance Platoon", accent: "Maintenance" }
+  {
+    slug: "demo-1st",
+    name: "[Demo] 1st Platoon",
+    accent: "Alpha",
+    pendingMember: { tag: "1st-pending", displayName: "Pending Alpha Crew", role: "contributor" }
+  },
+  {
+    slug: "demo-2nd",
+    name: "[Demo] 2nd Platoon",
+    accent: "Bravo",
+    pendingMember: { tag: "2nd-pending", displayName: "Pending Bravo Observer", role: "viewer" }
+  },
+  {
+    slug: "demo-maint",
+    name: "[Demo] Maintenance Platoon",
+    accent: "Maintenance",
+    pendingMember: { tag: "maint-pending", displayName: "Pending Maintenance Leader", role: "tenant_admin" }
+  }
 ];
 const historicalSessionName = "[Demo] Previous inventory - June";
 const activeSessionDefinitions = [
@@ -132,6 +147,16 @@ if (apply && process.env.MVP_CONFIRM_PRODUCTION_DEMO !== expectedConfirmation) {
 const token = await oidcAccessToken(adminUsername, adminPassword);
 const me = await appRequest("/api/me", { token });
 if (me?.isPlatformAdmin !== true) throw new Error("Demo seed operator is not a platform administrator.");
+if (apply) {
+  const capabilityResponse = await appRequest("/api/platform/capabilities", { token });
+  if (capabilityResponse?.capabilities?.silentInvitationCreate !== true) {
+    throw new Error(
+      "Production API does not advertise silent invitation creation. Deploy the matching backend before applying demo fixtures."
+    );
+  }
+}
+
+const demoResetNote = "If a seeded pending invitation was revoked, reset the dedicated demo workspaces with scripts/production-tenant-reset.mjs before recreating the fixture. If it was accepted, reset those workspaces, then use a fresh MVP_DEMO_EMAIL_BASE and a separate empty MVP_DEMO_MANIFEST_PATH because the accepted permanent identity is intentionally retained.";
 
 function plusAddress(email, tag) {
   const separator = email.lastIndexOf("@");
@@ -145,6 +170,85 @@ const demoMembers = skipMembers ? [] : [
   { email: plusAddress(emailBase, "specialist"), displayName: "Demo Inventory Specialist", role: "contributor" },
   { email: plusAddress(emailBase, "observer"), displayName: "Demo Read-only Observer", role: "viewer" }
 ];
+const demoPendingMembers = skipMembers ? [] : tenantDefinitions.map(definition => ({
+  email: plusAddress(emailBase, definition.pendingMember.tag),
+  displayName: definition.pendingMember.displayName,
+  role: definition.pendingMember.role,
+  tenantSlug: definition.slug
+}));
+const demoPendingMemberBySlug = new Map(demoPendingMembers.map(member => [member.tenantSlug, member]));
+const demoPeople = [...demoMembers, ...demoPendingMembers];
+const demoFixtureCounts = Object.freeze({
+  uniquePlatformPeople: new Set(demoPeople.map(person => person.email)).size,
+  sharedActivePeople: demoMembers.length,
+  uniquePendingPeople: demoPendingMembers.length,
+  membershipsPerTenant: demoMembers.length + (skipMembers ? 0 : 1)
+});
+if (!skipMembers && (
+  demoFixtureCounts.uniquePlatformPeople !== 6
+  || demoFixtureCounts.sharedActivePeople !== 3
+  || demoFixtureCounts.uniquePendingPeople !== 3
+  || demoFixtureCounts.membershipsPerTenant !== 4
+)) {
+  throw new Error("The production demo people fixture must resolve to six unique people and four memberships per workspace.");
+}
+
+function expectedMembersFor(definition) {
+  const pending = demoPendingMemberBySlug.get(definition.slug);
+  return pending ? [...demoMembers, pending] : [...demoMembers];
+}
+
+function inspectExpectedPendingState(definition, members, invitations, {
+  allowMissing = true,
+  allowExpired = false
+} = {}) {
+  const expected = demoPendingMemberBySlug.get(definition.slug) || null;
+  if (!expected) {
+    return { expected: null, member: null, invitation: null, state: "skipped", failures: [] };
+  }
+
+  const failures = [];
+  const memberMatches = members.filter(member => String(member.email || "").toLowerCase() === expected.email);
+  const invitationMatches = invitations.filter(invitation => String(invitation.email || "").toLowerCase() === expected.email);
+  const member = memberMatches[0] || null;
+  const invitation = invitationMatches[0] || null;
+
+  if (memberMatches.length > 1) failures.push(`duplicate pending membership for ${expected.email}`);
+  if (invitationMatches.length > 1) failures.push(`duplicate invitation history for ${expected.email}`);
+  if (!member && !invitation) {
+    if (!allowMissing) failures.push(`pending membership and invitation for ${expected.email} are missing`);
+    return { expected, member, invitation, state: "missing", failures };
+  }
+  if (!member || !invitation) {
+    failures.push(`pending membership and invitation for ${expected.email} must either both exist or both be absent`);
+    return { expected, member, invitation, state: "conflicting", failures };
+  }
+
+  if (member.displayName !== expected.displayName) failures.push(`pending member ${expected.email} has a different display name`);
+  if (member.role !== expected.role) failures.push(`pending member ${expected.email} has role ${member.role || "missing"} instead of ${expected.role}`);
+  if (member.status !== "invited") failures.push(`pending member ${expected.email} has status ${member.status || "missing"} instead of invited`);
+  if (member.accountType === "session_crew") failures.push(`pending member ${expected.email} is a temporary crew identity`);
+  if (member.provisioning) failures.push(`pending member ${expected.email} unexpectedly has an Authentik provisioning job`);
+  if (invitation.role !== expected.role) failures.push(`pending invitation ${expected.email} has role ${invitation.role || "missing"} instead of ${expected.role}`);
+
+  const expiresAt = new Date(invitation.expiresAt || 0).getTime();
+  if (invitation.status === "pending" && expiresAt > Date.now()) {
+    return { expected, member, invitation, state: failures.length ? "conflicting" : "ready", failures };
+  }
+  if (invitation.status === "expired" && allowExpired) {
+    return { expected, member, invitation, state: failures.length ? "conflicting" : "expired", failures };
+  }
+  if (invitation.status === "expired") {
+    failures.push(`pending invitation ${expected.email} is expired and requires explicit repair`);
+  } else if (invitation.status === "pending") {
+    failures.push(`pending invitation ${expected.email} does not have a future expiration`);
+  } else {
+    failures.push(
+      `pending invitation ${expected.email} has conflicting status ${invitation.status || "missing"}. ${demoResetNote}`
+    );
+  }
+  return { expected, member, invitation, state: "conflicting", failures };
+}
 
 async function tenantRequest(slug, requestPath, options = {}) {
   return appRequest(requestPath, { ...options, token, tenantSlug: slug });
@@ -256,6 +360,10 @@ async function loadPlatformTenants() {
   return (await appRequest("/api/platform/tenants", { token })).tenants || [];
 }
 
+async function loadPlatformUsers() {
+  return (await appRequest("/api/platform/users", { token })).users || [];
+}
+
 async function ensureTenant(definition) {
   const matches = (await loadPlatformTenants()).filter(tenant => tenant.slug === definition.slug);
   if (matches.length > 1) throw new Error(`Duplicate workspace slug ${definition.slug}.`);
@@ -353,6 +461,99 @@ async function ensureMembers(slug) {
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }
   throw new Error(`Demo members did not finish provisioning in ${slug} within two minutes.`);
+}
+
+async function ensurePendingInvitation(definition) {
+  const expected = demoPendingMemberBySlug.get(definition.slug) || null;
+  if (!expected) return null;
+
+  let [membersResponse, invitationsResponse] = await Promise.all([
+    tenantRequest(definition.slug, "/api/tenant/members"),
+    tenantRequest(definition.slug, "/api/tenant/invitations")
+  ]);
+  const expectedMemberEmails = new Set(expectedMembersFor(definition).map(member => member.email));
+  const unexpectedMember = (membersResponse.members || []).find(member => (
+    !expectedMemberEmails.has(String(member.email || "").toLowerCase())
+  ));
+  const unexpectedInvitation = (invitationsResponse.invitations || []).find(invitation => (
+    String(invitation.email || "").toLowerCase() !== expected.email
+  ));
+  if (unexpectedMember || unexpectedInvitation) {
+    throw new Error(
+      `Pending demo invitation setup found unexpected permanent access state in ${definition.slug}; refusing to mutate it.`
+    );
+  }
+  let state = inspectExpectedPendingState(
+    definition,
+    membersResponse.members || [],
+    invitationsResponse.invitations || [],
+    { allowMissing: true, allowExpired: repair }
+  );
+  if (state.failures.length) {
+    throw new Error(`Pending demo invitation in ${definition.slug} conflicts with the fixture: ${state.failures.join("; ")}.`);
+  }
+
+  if (state.state === "missing") {
+    const created = await tenantRequest(definition.slug, "/api/tenant/invitations", {
+      method: "POST",
+      body: {
+        email: expected.email,
+        displayName: expected.displayName,
+        role: expected.role,
+        sendEmail: false,
+        expiresInDays: 60
+      }
+    });
+    if (
+      created?.email?.sent !== false
+      || created?.email?.reason !== "not_requested"
+      || created?.invitation?.email !== expected.email
+      || created?.invitation?.status !== "pending"
+    ) {
+      throw new Error(`Pending demo invitation creation returned an unexpected result in ${definition.slug}.`);
+    }
+  } else if (state.state === "expired") {
+    if (!repair) {
+      throw new Error(`Pending demo invitation ${expected.email} is expired in ${definition.slug}; rerun with --apply --repair.`);
+    }
+    const refreshed = await tenantRequest(
+      definition.slug,
+      `/api/tenant/invitations/${state.invitation.id}/resend`,
+      { method: "POST", body: { sendEmail: false, expiresInDays: 60 } }
+    );
+    if (
+      refreshed?.email?.sent !== false
+      || refreshed?.email?.reason !== "not_requested"
+      || refreshed?.invitation?.id !== state.invitation.id
+      || refreshed?.invitation?.status !== "pending"
+    ) {
+      throw new Error(`Pending demo invitation refresh returned an unexpected result in ${definition.slug}.`);
+    }
+  }
+
+  [membersResponse, invitationsResponse] = await Promise.all([
+    tenantRequest(definition.slug, "/api/tenant/members"),
+    tenantRequest(definition.slug, "/api/tenant/invitations")
+  ]);
+  state = inspectExpectedPendingState(
+    definition,
+    membersResponse.members || [],
+    invitationsResponse.invitations || [],
+    { allowMissing: false, allowExpired: false }
+  );
+  if (
+    state.state !== "ready"
+    || state.failures.length
+    || (membersResponse.members || []).length !== expectedMembersFor(definition).length
+    || (invitationsResponse.invitations || []).length !== 1
+  ) {
+    const detail = state.failures.join("; ") || (
+      `${state.state}; ${(membersResponse.members || []).length} memberships; `
+      + `${(invitationsResponse.invitations || []).length} invitations`
+    );
+    throw new Error(`Pending demo invitation did not reach its exact expected state in ${definition.slug}: ${detail}.`);
+  }
+  return { member: state.member, invitation: state.invitation };
 }
 
 async function loadSessions(slug) {
@@ -577,15 +778,19 @@ async function inspectPreExistingTenant(definition, tenant) {
     failures.push(`${definition.slug} has name ${JSON.stringify(tenant.name)} instead of ${JSON.stringify(definition.name)}.`);
   }
 
-  const [membersResponse, sessions] = await Promise.all([
+  const [membersResponse, invitationsResponse, sessions] = await Promise.all([
     tenantRequest(definition.slug, "/api/tenant/members"),
+    tenantRequest(definition.slug, "/api/tenant/invitations"),
     loadSessions(definition.slug)
   ]);
   const members = membersResponse.members || [];
+  const invitations = invitationsResponse.invitations || [];
   if (demoMembers.length && !membersResponse.provisioningAvailable) {
     failures.push(`${definition.slug} cannot provision permanent demo accounts.`);
   }
-  const expectedMembersByEmail = new Map(demoMembers.map(member => [member.email, member]));
+  const pendingExpected = demoPendingMemberBySlug.get(definition.slug) || null;
+  const expectedMembers = expectedMembersFor(definition);
+  const expectedMembersByEmail = new Map(expectedMembers.map(member => [member.email, member]));
   for (const actual of members) {
     const email = String(actual.email || "").toLowerCase();
     const expected = expectedMembersByEmail.get(email);
@@ -599,6 +804,12 @@ async function inspectPreExistingTenant(definition, tenant) {
     if (actual.accountType === "session_crew") {
       failures.push(`${definition.slug} member ${expected.email} is a temporary crew identity, not a permanent account.`);
     }
+    if (pendingExpected && expected.email === pendingExpected.email) {
+      if (actual.role !== expected.role || actual.status !== "invited" || actual.provisioning) {
+        failures.push(`${definition.slug} pending member ${expected.email} must remain invited with its exact role and no Authentik provisioning job.`);
+      }
+      continue;
+    }
     if (!["active", "invited", "disabled"].includes(actual.status)) {
       failures.push(`${definition.slug} member ${expected.email} has unsupported status ${actual.status || "missing"}.`);
     }
@@ -609,10 +820,25 @@ async function inspectPreExistingTenant(definition, tenant) {
       failures.push(`${definition.slug} member ${expected.email} has unsupported provisioning status ${actual.provisioning.status || "missing"}.`);
     }
   }
-  for (const expected of demoMembers) {
+  for (const expected of expectedMembers) {
     const matches = members.filter(actual => String(actual.email || "").toLowerCase() === expected.email);
     if (matches.length > 1) failures.push(`${definition.slug} contains duplicate membership ownership for ${expected.email}.`);
   }
+
+  const expectedInvitationEmails = new Set(pendingExpected ? [pendingExpected.email] : []);
+  for (const invitation of invitations) {
+    const email = String(invitation.email || "").toLowerCase();
+    if (!expectedInvitationEmails.has(email)) {
+      failures.push(`${definition.slug} contains unexpected permanent invitation ${email || invitation.id}.`);
+    }
+  }
+  const pendingState = inspectExpectedPendingState(
+    definition,
+    members,
+    invitations,
+    { allowMissing: true, allowExpired: repair }
+  );
+  failures.push(...pendingState.failures.map(failure => `${definition.slug} ${failure}.`));
 
   const expectedSessionNames = new Set([
     historicalSessionName,
@@ -715,11 +941,21 @@ async function inspectPreExistingTenant(definition, tenant) {
     }
   }
 
-  return { definition, tenant, membersResponse, members, sessions, sessionDetails, failures };
+  return {
+    definition,
+    tenant,
+    membersResponse,
+    members,
+    invitations,
+    pendingInvitationState: pendingState.state,
+    sessions,
+    sessionDetails,
+    failures
+  };
 }
 
 async function preflightDemoIdentities(snapshots) {
-  const inspections = await Promise.all(demoMembers.map(async member => ({
+  const inspections = await Promise.all(demoPeople.map(async member => ({
     member,
     inspection: await appRequest("/api/platform/identity-check", {
       token,
@@ -769,14 +1005,41 @@ async function preflightApplyState(existingTenants) {
     if (matches[0]) snapshots.push(await inspectPreExistingTenant(definition, matches[0]));
   }
   const identityPreflight = await preflightDemoIdentities(snapshots);
+  const platformUsers = await loadPlatformUsers();
+  const pendingPeopleFailures = [];
+  for (const expected of demoPendingMembers) {
+    const matches = platformUsers.filter(user => String(user.email || "").toLowerCase() === expected.email);
+    if (matches.length > 1) {
+      pendingPeopleFailures.push(`${expected.email} matches multiple existing platform people.`);
+      continue;
+    }
+    const actual = matches[0] || null;
+    if (!actual) continue;
+    const memberships = actual.memberships || [];
+    const exactMemberships = memberships.filter(membership => (
+      membership.tenantSlug === expected.tenantSlug
+      && membership.role === expected.role
+      && membership.status === "invited"
+    ));
+    if (
+      actual.displayName !== expected.displayName
+      || memberships.length !== 1
+      || exactMemberships.length !== 1
+    ) {
+      pendingPeopleFailures.push(
+        `${expected.email} already exists as a platform person outside its exact pending ${expected.tenantSlug} fixture membership.`
+      );
+    }
+  }
   const failures = [
     ...snapshots.flatMap(snapshot => snapshot.failures || []),
-    ...identityPreflight.failures
+    ...identityPreflight.failures,
+    ...pendingPeopleFailures
   ];
   if (failures.length) {
     throw new Error(`Production demo read-only preflight failed before fixture mutation: ${failures.join(" | ")}`);
   }
-  return { snapshots, identityPreflight };
+  return { snapshots, identityPreflight, platformUsers };
 }
 
 async function ensureScenarioState(slug, session, row, item, { canRestore, assignmentTarget = null }) {
@@ -1136,7 +1399,7 @@ async function verifyRequiredMedia(slug, sessionId, requiredMedia) {
   return { checked, failures };
 }
 
-async function verifyTenant(definition, manifest) {
+async function verifyTenant(definition, manifest, { allowMissingPendingInvitation = false } = {}) {
   const failures = [];
   const requiredMedia = [];
   const tenantMatches = (await loadPlatformTenants()).filter(candidate => candidate.slug === definition.slug);
@@ -1224,7 +1487,10 @@ async function verifyTenant(definition, manifest) {
     };
   }
 
-  const membersResponse = await tenantRequest(definition.slug, "/api/tenant/members");
+  const [membersResponse, invitationsResponse] = await Promise.all([
+    tenantRequest(definition.slug, "/api/tenant/members"),
+    tenantRequest(definition.slug, "/api/tenant/invitations")
+  ]);
   const specialistEmail = demoMembers.find(member => member.role === "contributor")?.email || null;
   const specialistMember = specialistEmail
     ? (membersResponse.members || []).find(member => (
@@ -1405,13 +1671,46 @@ async function verifyTenant(definition, manifest) {
   }
 
   const memberSummaries = [];
+  const members = membersResponse.members || [];
+  const invitations = invitationsResponse.invitations || [];
+  const pendingExpected = demoPendingMemberBySlug.get(definition.slug) || null;
+  const pendingState = inspectExpectedPendingState(
+    definition,
+    members,
+    invitations,
+    { allowMissing: allowMissingPendingInvitation, allowExpired: false }
+  );
+  failures.push(...pendingState.failures.map(failure => `${definition.slug} ${failure}.`));
+  const pendingShouldExist = Boolean(
+    pendingExpected && !(allowMissingPendingInvitation && pendingState.state === "missing")
+  );
+  const expectedMembershipCount = demoMembers.length + (pendingShouldExist ? 1 : 0);
+  const expectedInvitationCount = pendingShouldExist ? 1 : 0;
   addFailure(
     failures,
-    (membersResponse.members || []).length === demoMembers.length,
-    `Demo workspace must contain exactly ${demoMembers.length} permanent test memberships.`
+    members.length === expectedMembershipCount,
+    `Demo workspace must contain exactly ${expectedMembershipCount} permanent test memberships.`
   );
+  addFailure(
+    failures,
+    invitations.length === expectedInvitationCount,
+    `Demo workspace must contain exactly ${expectedInvitationCount} permanent pending invitations.`
+  );
+  const expectedMembershipEmails = new Set([
+    ...demoMembers.map(member => member.email),
+    ...(pendingShouldExist ? [pendingExpected.email] : [])
+  ]);
+  for (const actual of members) {
+    const email = String(actual.email || "").toLowerCase();
+    addFailure(failures, expectedMembershipEmails.has(email), `Unexpected permanent membership ${email || actual.id}.`);
+  }
+  const expectedInvitationEmails = new Set(pendingShouldExist ? [pendingExpected.email] : []);
+  for (const actual of invitations) {
+    const email = String(actual.email || "").toLowerCase();
+    addFailure(failures, expectedInvitationEmails.has(email), `Unexpected permanent invitation ${email || actual.id}.`);
+  }
   for (const expected of demoMembers) {
-    const matches = (membersResponse.members || []).filter(member => (
+    const matches = members.filter(member => (
       String(member.email || "").toLowerCase() === expected.email
     ));
     const actual = matches[0] || null;
@@ -1432,9 +1731,24 @@ async function verifyTenant(definition, manifest) {
       displayName: actual?.displayName || null,
       role: actual?.role || null,
       status: actual?.status || null,
+      fixtureState: "active",
+      present: Boolean(actual),
       provisioningStatus: actual?.provisioning?.status || null,
       provisioningDesiredRole: actual?.provisioning?.desiredRole || null,
       provisioningDesiredState: actual?.provisioning?.desiredState || null
+    });
+  }
+  if (pendingExpected) {
+    memberSummaries.push({
+      email: pendingExpected.email,
+      displayName: pendingState.member?.displayName || null,
+      role: pendingState.member?.role || null,
+      status: pendingState.member?.status || null,
+      fixtureState: "pending",
+      present: Boolean(pendingState.member),
+      provisioningStatus: pendingState.member?.provisioning?.status || null,
+      provisioningDesiredRole: pendingState.member?.provisioning?.desiredRole || null,
+      provisioningDesiredState: pendingState.member?.provisioning?.desiredState || null
     });
   }
 
@@ -1456,6 +1770,14 @@ async function verifyTenant(definition, manifest) {
     historicalSession: historicalSummary,
     activeSessions: activeSummaries,
     members: memberSummaries,
+    pendingInvitation: pendingExpected ? {
+      email: pendingExpected.email,
+      displayName: pendingExpected.displayName,
+      role: pendingExpected.role,
+      status: pendingState.invitation?.status || null,
+      expiresAt: pendingState.invitation?.expiresAt || null,
+      ready: pendingState.state === "ready"
+    } : null,
     media: {
       requiredReferenceCount: requiredMedia.length,
       uniqueImagesVerified: mediaVerification.checked
@@ -1539,7 +1861,7 @@ function verifyManifestExact(manifest, verification) {
   addFailure(failures, manifest.emailBase === (skipMembers ? null : emailBase), "Manifest member email configuration does not match this run.");
   addFailure(
     failures,
-    JSON.stringify(manifest.memberEmails || []) === JSON.stringify(demoMembers.map(member => member.email)),
+    JSON.stringify(manifest.memberEmails || []) === JSON.stringify(demoPeople.map(member => member.email)),
     "Manifest member aliases do not exactly match this run."
   );
   return failures;
@@ -1555,20 +1877,38 @@ if (!apply && !verifyOnly) {
     origins: { api: apiOrigin, authentik: authentikOrigin, admin: adminOrigin },
     nonProductionOriginOverride: usesProductionOrigins ? null : nonProductionOriginOverride,
     manifestPath,
-    maintenanceNote: "Validation GETs do not change fixture settings, members, sessions, or rows, but the server may perform normal stale-crew expiry maintenance.",
+    resetNote: demoResetNote,
+    maintenanceNote: "Validation GETs do not change fixture settings, members, sessions, or rows, but the server may perform normal stale-crew and pending-invitation expiry maintenance.",
     members: demoMembers.map(member => ({ displayName: member.displayName, role: member.role, email: member.email })),
+    pendingInvitations: demoPendingMembers.map(member => ({
+      tenantSlug: member.tenantSlug,
+      displayName: member.displayName,
+      role: member.role,
+      email: member.email,
+      sendEmail: false
+    })),
+    fixtureCounts: demoFixtureCounts,
     tenants: tenantDefinitions.map(definition => ({
-      ...definition,
+      slug: definition.slug,
+      name: definition.name,
+      accent: definition.accent,
       exists: existingTenants.some(tenant => tenant.slug === definition.slug)
     })),
-    perTenant: { closedHistorySessions: 1, activeSessions: 2, rowsPerActiveSession: 7, temporaryCrewPasses: 2 }
+    perTenant: {
+      permanentMemberships: demoFixtureCounts.membershipsPerTenant,
+      pendingPermanentInvitations: skipMembers ? 0 : 1,
+      closedHistorySessions: 1,
+      activeSessions: 2,
+      rowsPerActiveSession: 7,
+      temporaryCrewPasses: 2
+    }
   }, null, 2));
   process.exit(0);
 }
 
 let manifest = null;
 let manifestLock = null;
-console.error("NOTE: validation session and crew GETs do not change fixture content, but the server may perform normal stale-crew expiry maintenance.");
+console.error("NOTE: validation GETs do not change fixture content, but the server may perform normal stale-crew and pending-invitation expiry maintenance.");
 try {
   if (apply) {
     await preflightManifest();
@@ -1605,11 +1945,12 @@ try {
     manifest.authentikOrigin = authentikOrigin;
     manifest.adminOrigin = adminOrigin;
     manifest.emailBase = expectedManifestEmailBase;
-    manifest.memberEmails = demoMembers.map(member => member.email);
+    manifest.memberEmails = demoPeople.map(member => member.email);
     await writeManifest(manifest);
 
     if (demoMembers.length) {
       console.error(`WARNING: permanent account provisioning may send enrollment or recovery email to: ${demoMembers.map(member => member.email).join(", ")}`);
+      console.error(`NOTE: pending demo invitations are created or refreshed without sending email: ${demoPendingMembers.map(member => member.email).join(", ")}`);
     }
     if (repair) {
       console.error("WARNING: repair mode may reopen demo sessions, restore claimed or reviewed fixture rows, revoke/recreate crew passes, and prune stale manifest credentials.");
@@ -1617,16 +1958,29 @@ try {
 
     const readyExistingSlugs = new Set();
     if (!repair) {
+      const verifiedExistingDefinitions = [];
+      const pendingInvitationUpgrades = [];
       for (const definition of tenantDefinitions) {
         if (!applyExistingTenants.some(tenant => tenant.slug === definition.slug)) continue;
-        const existingVerification = await verifyTenant(definition, manifest);
+        const snapshot = applyPreflight.snapshots.find(candidate => candidate.definition?.slug === definition.slug) || null;
+        const pendingInvitationMissing = snapshot?.pendingInvitationState === "missing";
+        const existingVerification = await verifyTenant(definition, manifest, {
+          allowMissingPendingInvitation: pendingInvitationMissing
+        });
         if (!existingVerification.ready) {
           throw new Error(
             `${definition.slug} already exists but is not an untouched, complete demo fixture. `
-            + `No fixture settings, members, sessions, or rows were changed; normal stale-crew expiry maintenance may have run. Review: ${existingVerification.failures.join(" | ")}. `
+            + `No fixture settings, members, sessions, or rows were changed; normal stale-crew or pending-invitation expiry maintenance may have run. Review: ${existingVerification.failures.join(" | ")}. `
             + "Use --apply --repair with the REPAIR confirmation only if restoring demo state is intentional."
           );
         }
+        verifiedExistingDefinitions.push(definition);
+        if (pendingInvitationMissing) pendingInvitationUpgrades.push(definition);
+      }
+      for (const definition of pendingInvitationUpgrades) {
+        await ensurePendingInvitation(definition);
+      }
+      for (const definition of verifiedExistingDefinitions) {
         readyExistingSlugs.add(definition.slug);
       }
     }
@@ -1636,6 +1990,7 @@ try {
       await ensureTenant(definition);
       await ensureSettings(definition.slug);
       const members = await ensureMembers(definition.slug);
+      await ensurePendingInvitation(definition);
       const specialistEmail = demoMembers.find(member => member.role === "contributor")?.email || null;
       const assignmentTarget = (members || []).find(member => (
         String(member.email || "").toLowerCase() === specialistEmail
@@ -1664,12 +2019,29 @@ try {
   const verification = [];
   for (const definition of tenantDefinitions) verification.push(await verifyTenant(definition, manifest));
   const manifestFailures = verifyManifestExact(manifest, verification);
-  const ready = verification.every(result => result.ready) && manifestFailures.length === 0;
+  const verifiedPeople = new Set(verification.flatMap(result => (
+    result.members || []
+  )).filter(member => member.present).map(member => member.email).filter(Boolean));
+  const fixtureFailures = [];
+  addFailure(
+    fixtureFailures,
+    verifiedPeople.size === demoFixtureCounts.uniquePlatformPeople,
+    `Expected ${demoFixtureCounts.uniquePlatformPeople} unique demo platform people but verified ${verifiedPeople.size}.`
+  );
+  const ready = verification.every(result => result.ready)
+    && manifestFailures.length === 0
+    && fixtureFailures.length === 0;
   console.log(JSON.stringify({
     ok: ready,
     mode: repair ? "repair" : apply ? "apply" : "verify",
     origins: { api: apiOrigin, authentik: authentikOrigin, admin: adminOrigin },
     manifestPath,
+    resetNote: demoResetNote,
+    fixtureCounts: {
+      ...demoFixtureCounts,
+      verifiedUniquePlatformPeople: verifiedPeople.size
+    },
+    fixtureFailures,
     manifestFailures,
     verification
   }, null, 2));

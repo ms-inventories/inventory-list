@@ -81,7 +81,7 @@ test.describe("Platform user roles", () => {
     await roleSelect.selectOption("viewer");
     const roleDialog = page.getByRole("dialog", { name: "Change this user’s access?" });
     await expect(roleDialog).toContainText("QA Member");
-    await expect(roleDialog).toContainText("Viewer");
+    await expect(roleDialog).toContainText("Read only");
     await roleDialog.getByRole("button", { name: "Confirm role change" }).click();
     await expect(roleDialog).toHaveCount(0);
     expect(updates[0]).toEqual({ role: "viewer" });

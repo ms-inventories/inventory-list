@@ -206,7 +206,7 @@ test.describe("tenant mobile and tablet polish", () => {
     }
   });
 
-  test("mobile dashboard keeps work claimable and limits both previews to three rows", async ({ page, request }, testInfo) => {
+  test("mobile dashboard keeps session work behind Open session and limits the review preview to three rows", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     await page.setViewportSize({ width: 360, height: 740 });
     const suffix = scenarioSuffix(testInfo, "dashboard-preview");
@@ -258,13 +258,28 @@ test.describe("tenant mobile and tablet polish", () => {
       await page.goto(TENANT_URL);
       await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
-      await expect(page.getByRole("region", { name: "Active inventory" })).toContainText(session.name);
+      const activeInventory = page.getByRole("region", { name: "Active inventory" });
+      await expect(activeInventory).toContainText(session.name);
+      await expect(page.getByRole("region", { name: "Pending inventory results" })).toHaveCount(0);
 
-      const workCard = page.getByRole("region", { name: "Pending inventory results" });
-      await expect(workCard).toBeVisible();
-      await expect(workCard.locator(".leader-table-row")).toHaveCount(3);
-      await expect(workCard.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-      const fallbackThumb = workCard.locator(".leader-thumb").first();
+      const reviewCard = page.getByRole("region", { name: "Dashboard review results" });
+      await expect(reviewCard.locator(".leader-table-row")).toHaveCount(3);
+      await expectContained(reviewCard);
+      for (const row of await reviewCard.locator(".leader-table-row").all()) {
+        await expectInsideHorizontally(reviewCard, row);
+      }
+      await expectContained(page.locator("main"));
+
+      await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
+      const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+      await expect(inventoryWorkspace).toBeVisible();
+      await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" })
+        .getByRole("button", { name: /^Mine\b/ })
+        .click();
+      const sessionRow = inventoryWorkspace.locator(".session-item").first();
+      await expect(sessionRow).toBeVisible();
+      await expect(sessionRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      const fallbackThumb = sessionRow.locator(".session-item-leading-thumb");
       await expect(fallbackThumb).toBeVisible();
       const fallbackThumbAlignment = await fallbackThumb.evaluate(element => {
         const icon = element.querySelector("svg");
@@ -283,16 +298,8 @@ test.describe("tenant mobile and tablet polish", () => {
       expect(fallbackThumbAlignment.display).toBe("grid");
       expect(fallbackThumbAlignment.horizontalOffset).toBeLessThanOrEqual(1);
       expect(fallbackThumbAlignment.verticalOffset).toBeLessThanOrEqual(1);
-
-      const reviewCard = page.getByRole("region", { name: "Dashboard review results" });
-      await expect(reviewCard.locator(".leader-table-row")).toHaveCount(3);
-      for (const card of [workCard, reviewCard]) {
-        await expectContained(card);
-        for (const row of await card.locator(".leader-table-row").all()) {
-          await expectInsideHorizontally(card, row);
-        }
-      }
-      await expectContained(page.locator("main"));
+      await expectContained(sessionRow);
+      await expectInsideHorizontally(inventoryWorkspace, sessionRow);
     } finally {
       await approveAndCloseScenario(request, scenario);
     }

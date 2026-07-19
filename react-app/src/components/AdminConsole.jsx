@@ -8067,7 +8067,7 @@ function LeaderOverviewPanel({
   onOpenUpload,
   onInviteCrew,
   onOpenReview,
-  showWorkQueue = true
+  showWorkQueue = false
 }) {
   const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [sessions, setSessions] = useState([]);
@@ -8329,8 +8329,9 @@ function LeaderOverviewPanel({
         </div>
       </section>
 
-      <div className={`leader-dashboard-grid ${canManage ? "" : "single"}`}>
-        <section className="leader-card" aria-label="Pending inventory results" hidden={!showWorkQueue}>
+      <div className={`leader-dashboard-grid ${!canManage || !showWorkQueue ? "single" : ""}`}>
+        {showWorkQueue ? (
+        <section className="leader-card" aria-label="Pending inventory results">
           <div className="leader-card-header">
             <span className="leader-card-icon">
               <Search aria-hidden="true" />
@@ -8420,6 +8421,7 @@ function LeaderOverviewPanel({
             )}
           </div>
         </section>
+        ) : null}
 
         {canManage ? (
           <section className="leader-card" aria-label="Dashboard review results">
@@ -8466,11 +8468,7 @@ function LeaderOverviewPanel({
                     <RefreshCw aria-hidden="true" />
                     <span>Reset dashboard search</span>
                   </button>
-                ) : (
-                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
-                    <span>Open review queue</span>
-                  </button>
-                )}
+                ) : null}
               />
             )}
           </div>
@@ -10404,7 +10402,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const userName = me?.user?.display_name || me?.user?.displayName || me?.user?.email || "Signed in";
   const userRole = isCrew ? "Crew member" : me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
-  const tenantSearch = {
+  const tenantSearch = activeTab === "dashboard" && !isTenantAdmin && !isSessionWorkspaceOpen ? null : ({
     dashboard: {
       label: "Search dashboard",
       placeholder: "Search dashboard items, sessions, locations..."
@@ -10421,7 +10419,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       label: "Search teammates",
       placeholder: "Search teammates, roles, status..."
     }
-  }[activeTab] || null;
+  }[activeTab] || null);
   const activeNavLabel = navItems.find(item => item.id === activeTab)?.label || "Workspace";
 
   useEffect(() => {
@@ -11413,7 +11411,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                   setIsSessionWorkspaceOpen(false);
                   navigateAppHash("/admin/review");
                 }}
-                showWorkQueue
+                showWorkQueue={false}
               />
 
               {isSessionWorkspaceOpen ? (
@@ -11727,12 +11725,21 @@ export default function AdminConsole() {
 
     let timeoutId = null;
     let cancelled = false;
+    const scheduledSession = session;
     const schedule = delay => {
       timeoutId = window.setTimeout(renewSession, Math.min(Math.max(0, delay), 2_147_000_000));
     };
     const renewSession = async () => {
+      const activeSession = readAuthSession();
+      if (
+        !activeSession
+        || activeSession.accessToken !== scheduledSession.accessToken
+        || activeSession.refreshToken !== scheduledSession.refreshToken
+        || Number(activeSession.expiresAt || 0) !== Number(scheduledSession.expiresAt || 0)
+      ) return;
+
       try {
-        await refreshAuthSession(readAuthSession() || session, { force: true });
+        await refreshAuthSession(activeSession, { force: true });
       } catch {
         if (!cancelled) schedule(60_000);
       }
@@ -11759,9 +11766,17 @@ export default function AdminConsole() {
       let callbackFailed = false;
       try {
         const redirectedSession = await completeOidcRedirect();
-        if (redirectedSession && !ignore) {
+        if (ignore) return;
+        if (redirectedSession) {
           setSession(redirectedSession);
           await loadMe(redirectedSession.accessToken);
+          return;
+        }
+        const storedSession = readAuthSession();
+        const storedToken = getSessionAccessToken(storedSession);
+        if (storedToken) {
+          setSession(storedSession);
+          await loadMe(storedToken);
           return;
         }
       } catch (error) {
@@ -11966,7 +11981,7 @@ export default function AdminConsole() {
       ) : null}
 
       {!me ? (
-        isBootingAccess ? <AuthBootPanel status={status} /> : <AuthPanel
+        isBootingAccess && !authAction ? <AuthBootPanel status={status} /> : <AuthPanel
           status={status}
           authAction={authAction}
           manualToken={manualToken}

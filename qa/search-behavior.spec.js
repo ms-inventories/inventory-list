@@ -47,7 +47,8 @@ test.describe("page-scoped search", () => {
     await expect(sessionSearch).toHaveValue("");
     await sessionSearch.fill("battery SEARCH-SERIAL-20-684");
     const sessionResults = page.getByRole("region", { name: "Session row results" });
-    await expect(sessionResults.getByText("Field Radio", { exact: true })).toBeVisible();
+    const radioSessionRow = sessionResults.locator(".session-item", { hasText: "Field Radio" });
+    await expect(radioSessionRow.locator(".session-item-main > div > strong")).toHaveText("Field Radio");
     await expect(sessionResults.getByText("Quiet Generator", { exact: true })).toHaveCount(0);
     const assignmentLists = page.getByRole("group", { name: "Work assignment lists" });
     const unclaimedList = assignmentLists.getByRole("button", { name: /^Unclaimed\b/ });
@@ -58,20 +59,20 @@ test.describe("page-scoped search", () => {
     await expect(othersList).toHaveAttribute("aria-pressed", "true");
     await expect(sessionResults.getByText("Field Radio", { exact: true })).toHaveCount(0);
     await unclaimedList.click();
-    await expect(sessionResults.getByText("Field Radio", { exact: true })).toBeVisible();
-    const radioSessionRow = sessionResults.locator(".session-item", { hasText: "Field Radio" });
+    await expect(radioSessionRow.locator(".session-item-main > div > strong")).toHaveText("Field Radio");
     await expect(radioSessionRow.getByText("Needs review", { exact: true })).toBeVisible();
     await expect(radioSessionRow.getByText("needs_review", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     await expect(sessionSearch).toHaveValue("");
-    await expect(sessionResults.getByText("Quiet Generator", { exact: true })).toBeVisible();
+    const generatorSessionRow = sessionResults.locator(".session-item", { hasText: "Quiet Generator" });
+    await expect(generatorSessionRow.locator(".session-item-main > div > strong")).toHaveText("Quiet Generator");
 
     await page.getByRole("button", { name: "Close work queue", exact: true }).click();
     await page.getByRole("region", { name: "Dashboard review results" })
       .getByRole("button", { name: "Open review queue", exact: true })
       .click();
-    await expect(page.getByRole("region", { name: "Review queue" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
     const reviewSearch = page.getByRole("searchbox", { name: "Search dashboard" });
     await expect(reviewSearch).toHaveValue("");
     await reviewSearch.fill("battery search-serial-20684");

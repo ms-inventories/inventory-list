@@ -241,7 +241,8 @@ test.describe("platform async action states", () => {
     await expect(page.getByRole("status")).toContainText(`Created ${slug}.localhost.`);
   });
 
-  test("an initial platoon load failure offers one clear retry", async ({ page }) => {
+  test("an initial platoon load failure offers one clear retry", async ({ page }, testInfo) => {
+    const isMobileProject = Boolean(testInfo.project.use.isMobile);
     let loadAttempts = 0;
     let allowLoad = false;
     await page.route("**/api/platform/tenants", async route => {
@@ -264,7 +265,8 @@ test.describe("platform async action states", () => {
     await expect(page.getByText("Could not load platoons", { exact: true })).toBeVisible();
     const failedLoadAttempts = loadAttempts;
     allowLoad = true;
-    await page.getByRole("button", { name: "Try again" }).click();
+    if (isMobileProject) await page.getByRole("button", { name: "Open account actions" }).click();
+    await page.getByRole("button", { name: "Refresh platform" }).click();
     await expect.poll(() => loadAttempts).toBe(failedLoadAttempts + 1);
     await expect(page.getByRole("status")).toContainText("Platform refreshed.");
     await expect(page.getByText("Could not load platoons", { exact: true })).toHaveCount(0);

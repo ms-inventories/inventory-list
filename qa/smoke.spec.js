@@ -47,8 +47,7 @@ async function openPlatformSection(page, name) {
 }
 
 async function seedQaLaunchSession(page, identity) {
-  await page.goto(FRONTEND_URL);
-  await page.evaluate(qaIdentity => {
+  await page.addInitScript(qaIdentity => {
     localStorage.setItem("inventory.qa.identity", JSON.stringify(qaIdentity));
     localStorage.setItem("inventory.auth.session", JSON.stringify({
       accessToken: "qa-dev",

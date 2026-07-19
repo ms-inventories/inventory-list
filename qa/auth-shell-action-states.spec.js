@@ -32,6 +32,10 @@ async function doubleClickBeforeReactCommit(locator) {
 test.describe("fallback authentication shell action states", () => {
   test("QA sign-in is single-shot and keeps the selected action visible", async ({ page }) => {
     let meRequests = 0;
+    let releaseSignIn;
+    const signInGate = new Promise(resolve => {
+      releaseSignIn = resolve;
+    });
     await page.route("**/api/me", async route => {
       const headers = route.request().headers();
       if (route.request().method() !== "GET" || headers["x-dev-sub"] !== "qa-root") {
@@ -39,7 +43,7 @@ test.describe("fallback authentication shell action states", () => {
         return;
       }
       meRequests += 1;
-      await new Promise(resolve => setTimeout(resolve, 450));
+      await signInGate;
       await route.continue();
     });
 
@@ -49,8 +53,9 @@ test.describe("fallback authentication shell action states", () => {
 
     const rootAdmin = page.getByRole("button", { name: "Root admin", exact: true });
     await doubleClickBeforeReactCommit(rootAdmin);
-    await expect(page.getByRole("button", { name: "Signing in...", exact: true })).toBeDisabled();
     await expect.poll(() => meRequests).toBe(1);
+    await expect(page.getByRole("button", { name: "Signing in...", exact: true })).toBeDisabled();
+    releaseSignIn();
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     expect(meRequests).toBe(1);
   });

@@ -111,12 +111,10 @@ async function createPriorHistoryScenario(request, projectName) {
 async function signInAsNco(page) {
   await page.goto(TENANT_URL);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.addStyleTag({
-    content: 'section[aria-label="Pending inventory results"] { display: none !important; }'
-  });
   await page.locator("summary").filter({ hasText: "QA users" }).click();
   await page.getByRole("button", { name: "NCO" }).click();
   await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Pending inventory results" })).toHaveCount(0);
 }
 
 async function openSession(page, sessionName) {

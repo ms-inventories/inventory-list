@@ -116,7 +116,7 @@ test.describe("proof review reliability", () => {
     });
     expect(staleReview.status()).toBe(409);
     expect(await staleReview.json()).toMatchObject({
-      code: "conflict",
+      code: "submission_not_actionable",
       error: "This proof has already been reviewed or replaced."
     });
 
@@ -129,7 +129,7 @@ test.describe("proof review reliability", () => {
       }
     });
     expect(staleRejection.status()).toBe(409);
-    expect(await staleRejection.json()).toMatchObject({ code: "conflict" });
+    expect(await staleRejection.json()).toMatchObject({ code: "submission_not_actionable" });
 
     await responseJson(await request.patch(`${API_URL}/submissions/${response.submission.id}/review`, {
       headers: qaHeaders(qaAdmin),
@@ -141,7 +141,7 @@ test.describe("proof review reliability", () => {
       data: { decision: "approved" }
     });
     expect(repeatedApproval.status()).toBe(409);
-    expect(await repeatedApproval.json()).toMatchObject({ code: "conflict" });
+    expect(await repeatedApproval.json()).toMatchObject({ code: "submission_not_actionable" });
 
     const queueAfterApproval = await responseJson(await request.get(`${API_URL}/inventory/review-queue`, {
       headers: qaHeaders(qaAdmin)

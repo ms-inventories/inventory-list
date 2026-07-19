@@ -30,12 +30,11 @@ test("an unauthorized API response clears the rejected browser session", async (
 });
 
 test("a near-expiry OIDC session renews silently before loading the workspace", async ({ page }) => {
-  let refreshCount = 0;
+  const refreshTokens = [];
   let meAuthorization = "";
 
   await page.route("**/api/auth/oidc/refresh", async route => {
-    refreshCount += 1;
-    expect((await route.request().postDataJSON()).refreshToken).toBe("qa-refresh-token");
+    refreshTokens.push((await route.request().postDataJSON()).refreshToken);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -67,6 +66,20 @@ test("a near-expiry OIDC session renews silently before loading the workspace", 
   });
 
   await page.addInitScript(() => {
+    // Let the proactive API refresh finish before the dashboard's zero-delay
+    // renewal timer wakes, reproducing the rotated-token race deterministically.
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay = 0, ...args) => nativeSetTimeout(
+      callback,
+      Number(delay) === 0 ? 100 : delay,
+      ...args
+    );
+    localStorage.setItem("inventory.qa.identity", JSON.stringify({
+      sub: "qa-lead",
+      email: "qa-lead@876en.test",
+      name: "QA Platoon Admin",
+      groups: ["876en-ms", "876en-platoon-admin"]
+    }));
     localStorage.setItem("inventory.auth.session", JSON.stringify({
       accessToken: "expiring-access-token",
       idToken: "expiring-id-token",
@@ -78,7 +91,7 @@ test("a near-expiry OIDC session renews silently before loading the workspace", 
 
   await page.goto(TENANT_URL);
 
-  await expect.poll(() => refreshCount).toBe(1);
+  await expect.poll(() => refreshTokens).toEqual(["qa-refresh-token"]);
   await expect.poll(() => meAuthorization).toBe("Bearer renewed-access-token");
   await expect.poll(() => page.evaluate(() => {
     const session = JSON.parse(localStorage.getItem("inventory.auth.session") || "null");
@@ -92,6 +105,9 @@ test("a near-expiry OIDC session renews silently before loading the workspace", 
     refreshToken: "rotated-refresh-token",
     hasFutureExpiry: true
   });
+  await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+  await page.waitForTimeout(250);
+  expect(refreshTokens).toEqual(["qa-refresh-token"]);
   await expect(page.getByText("Your sign-in expired. Try again.")).toHaveCount(0);
 });
 

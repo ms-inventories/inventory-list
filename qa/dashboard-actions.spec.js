@@ -160,32 +160,26 @@ test.describe("dashboard action destinations", () => {
 
       await page.reload();
       await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-      const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
-      await expect(pendingResults, "the dashboard work queue supports one-tap claiming").toBeVisible();
+      await expect(page.getByRole("region", { name: "Pending inventory results" })).toHaveCount(0);
       const activeInventory = page.getByRole("region", { name: "Active inventory" });
       const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
       if (await selector.isVisible()) await selector.selectOption(sessionId);
-
-      const dashboardLists = pendingResults.getByRole("group", { name: "Dashboard work assignment lists" });
-      await dashboardLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
-      let dashboardRow = pendingResults.locator(".leader-table-row", { hasText: "Quiet Generator" });
-      await expect(dashboardRow).toBeVisible();
-      await expect(dashboardRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-      await dashboardRow.getByRole("button", { name: "Claim item", exact: true }).click();
-      await expect(page.locator(".leader-dashboard").getByRole("status")).toContainText("Item claimed");
-      await expect(page.getByRole("dialog"), "dashboard claiming must not open any item UI").toHaveCount(0);
-      await expect(page.locator(".proof-form"), "dashboard claiming must not jump into proof entry").toHaveCount(0);
-      await dashboardLists.getByRole("button", { name: /^Mine\b/ }).click();
-      dashboardRow = pendingResults.locator(".leader-table-row", { hasText: "Quiet Generator" });
-      await expect(dashboardRow).toBeVisible();
 
       await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
       await expectSessionsPageWithoutCreateDialog(page);
       const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
       const assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
-      await assignmentLists.getByRole("button", { name: /^Mine\b/ }).click();
+      await assignmentLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
 
       const pendingRow = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
+      await expect(pendingRow).toBeVisible();
+      await expect(pendingRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await pendingRow.getByRole("button", { name: "Claim item", exact: true }).click();
+      await expect(inventoryWorkspace.locator(".session-panel").getByRole("status")).toContainText("Item claimed");
+      await expect(page.getByRole("dialog"), "claiming must not open any item UI").toHaveCount(0);
+      await expect(page.locator(".proof-form"), "claiming must not jump into proof entry").toHaveCount(0);
+      await assignmentLists.getByRole("button", { name: /^Mine\b/ }).click();
+
       await expect(pendingRow).toBeVisible();
       await expect(pendingRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
       await expect(page.locator(".session-item-drawer")).toHaveCount(0);
@@ -291,28 +285,7 @@ test.describe("dashboard action destinations", () => {
     const sessionSelector = activeInventory.getByRole("combobox", { name: "Active inventory" });
     if (await sessionSelector.isVisible()) await sessionSelector.selectOption(session.id);
 
-    const pendingResults = page.getByRole("region", { name: "Pending inventory results" });
-    await pendingResults.getByRole("group", { name: "Dashboard work assignment lists" })
-      .getByRole("button", { name: /^Unclaimed\b/ })
-      .click();
-    const dashboardRow = pendingResults.locator(".leader-table-row", { hasText: "Quiet Generator" });
-    await expect(dashboardRow).toBeVisible();
-    const dashboardHistory = dashboardRow.getByRole("region", { name: "Previous inventory for Quiet Generator" });
-    await expect(dashboardHistory.getByText("Previous inventory", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.getByText("3 earlier records", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.getByText("Motor pool, bay 4", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.getByText("June 2026 inventory", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.getByText("Not found", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.getByText("July 2026 recheck", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.getByText("This must not replace the last-found location", { exact: true })).toHaveCount(0);
-    await expect(dashboardHistory.getByText("4", { exact: true })).toBeVisible();
-    await expect(dashboardHistory.locator(`time[datetime="${inventoriedAt}"]`)).toBeVisible();
-    await expect(dashboardHistory.locator(`time[datetime="${latestOutcomeAt}"]`)).toBeVisible();
-    await expect(dashboardHistory.locator("img")).toHaveCount(2);
-    await expect(dashboardRow.locator(".leader-thumb img"), "history supplies the claim-row thumbnail").toBeVisible();
-    await expect(dashboardRow.getByRole("button", { name: "Claim item", exact: true })).toBeVisible();
-    await expect(dashboardRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-    expect(await dashboardRow.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+    await expect(page.getByRole("region", { name: "Pending inventory results" })).toHaveCount(0);
 
     await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
     await expectSessionsPageWithoutCreateDialog(page);
@@ -322,9 +295,22 @@ test.describe("dashboard action destinations", () => {
       .click();
     const sessionRow = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
     await expect(sessionRow).toBeVisible();
-    await expect(sessionRow.getByRole("region", { name: "Previous inventory for Quiet Generator" })).toContainText("Motor pool, bay 4");
+    const sessionHistory = sessionRow.getByRole("region", { name: "Previous inventory for Quiet Generator" });
+    await expect(sessionHistory.getByText("Previous inventory", { exact: true })).toBeVisible();
+    await expect(sessionHistory.getByText("3 earlier records", { exact: true })).toBeVisible();
+    await expect(sessionHistory.getByText("Motor pool, bay 4", { exact: true })).toBeVisible();
+    await expect(sessionHistory.getByText("June 2026 inventory", { exact: true })).toBeVisible();
+    await expect(sessionHistory.getByText("Not found", { exact: true })).toBeVisible();
+    await expect(sessionHistory.getByText("July 2026 recheck", { exact: true })).toBeVisible();
+    await expect(sessionHistory.getByText("This must not replace the last-found location", { exact: true })).toHaveCount(0);
+    await expect(sessionHistory.getByText("4", { exact: true })).toBeVisible();
+    await expect(sessionHistory.locator(`time[datetime="${inventoriedAt}"]`)).toBeVisible();
+    await expect(sessionHistory.locator(`time[datetime="${latestOutcomeAt}"]`)).toBeVisible();
+    await expect(sessionHistory.locator("img")).toHaveCount(2);
     await expect(sessionRow.locator(".session-item-leading-thumb img"), "history supplies the full-session thumbnail").toBeVisible();
+    await expect(sessionRow.getByRole("button", { name: "Claim item", exact: true })).toBeVisible();
     await expect(sessionRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+    expect(await sessionRow.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
     await sessionRow.getByRole("button", { name: "View previous inventory photo 1" }).click();
     const viewer = page.getByRole("dialog", { name: "Evidence photo" });
     await expect(viewer).toBeVisible();

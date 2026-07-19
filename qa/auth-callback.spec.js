@@ -20,21 +20,33 @@ const qaIdentities = {
 };
 
 async function seedOidcCallback(page, callbackUrl, identity, returnTo = "/#/launch") {
-  const originUrl = new URL("/", callbackUrl).toString();
-  await page.goto(originUrl);
-  await page.evaluate(({ qaIdentity, oidcReturnTo }) => {
+  await page.addInitScript(qaIdentity => {
+    // QA auth emulates the server-side renewal cookie with an origin-scoped
+    // localStorage identity, so seed each app origin visited by this flow.
     localStorage.setItem("inventory.qa.identity", JSON.stringify(qaIdentity));
+  }, identity);
+  const originUrl = new URL("/", callbackUrl).toString();
+  await page.route(originUrl, route => route.fulfill({
+    status: 200,
+    contentType: "text/html",
+    body: "<!doctype html><title>QA callback setup</title>"
+  }), { times: 1 });
+  await page.goto(originUrl);
+  await page.evaluate(oidcReturnTo => {
     sessionStorage.setItem("inventory.oidc.state", JSON.stringify({
       state: "qa-state",
       returnTo: oidcReturnTo,
       createdAt: Date.now()
     }));
     sessionStorage.setItem("inventory.oidc.verifier", "qa-verifier-value-long-enough-for-callback-tests");
-  }, { qaIdentity: identity, oidcReturnTo: returnTo });
+  }, returnTo);
+  await page.unroute(originUrl);
 }
 
 async function mockTokenExchange(page, { status = 200 } = {}) {
+  const calls = { token: 0, refresh: 0 };
   await page.route("**/api/auth/oidc/token", async route => {
+    calls.token += 1;
     if (status >= 400) {
       await route.fulfill({
         status,
@@ -54,46 +66,54 @@ async function mockTokenExchange(page, { status = 200 } = {}) {
       })
     });
   });
-  await page.route("**/api/auth/oidc/refresh", route => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({
-      access_token: "qa-dev",
-      token_type: "Bearer",
-      refresh_available: true,
-      expires_in: 3600
-    })
-  }));
+  await page.route("**/api/auth/oidc/refresh", route => {
+    calls.refresh += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        access_token: "qa-dev",
+        token_type: "Bearer",
+        refresh_available: true,
+        expires_in: 3600
+      })
+    });
+  });
+  return calls;
 }
 
 test.describe("OIDC callback recovery", () => {
   test("root callback routes platform admins toward the platform workspace", async ({ page }) => {
     await seedOidcCallback(page, ROOT_CALLBACK_URL, qaIdentities.root, "/#/launch");
-    await mockTokenExchange(page);
+    const calls = await mockTokenExchange(page);
 
     await page.goto(ROOT_CALLBACK_URL);
 
     await expect(page).toHaveURL(/admin\.localhost:5175\/#\/admin/);
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    expect(calls).toEqual({ token: 1, refresh: 1 });
   });
 
   test("admin callback completes on the admin host", async ({ page }) => {
     await seedOidcCallback(page, ADMIN_CALLBACK_URL, qaIdentities.root, "/#/admin");
-    await mockTokenExchange(page);
+    const calls = await mockTokenExchange(page);
 
     await page.goto(ADMIN_CALLBACK_URL);
 
     await expect(page).toHaveURL(/admin\.localhost:5175\/#\/admin/);
-    await expect(page.getByRole("heading", { name: "Platoons" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    expect(calls).toEqual({ token: 1, refresh: 0 });
   });
 
   test("tenant callback keeps the tenant host and opens the workspace", async ({ page }) => {
     await seedOidcCallback(page, TENANT_CALLBACK_URL, qaIdentities.lead, "/#/admin");
-    await mockTokenExchange(page);
+    const calls = await mockTokenExchange(page);
 
     await page.goto(TENANT_CALLBACK_URL);
 
     await expect(page).toHaveURL(/ms\.localhost:5175\/#\/admin/);
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+    expect(calls).toEqual({ token: 1, refresh: 0 });
   });
 
   test("token exchange failures show callback-specific recovery copy", async ({ page }) => {

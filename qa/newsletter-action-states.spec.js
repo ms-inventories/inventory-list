@@ -133,7 +133,7 @@ test.describe("newsletter async action states", () => {
     const issueRow = page.getByRole("table", { name: "Newsletter issues" }).getByRole("row").filter({ hasText: uiIssue.title });
     await issueRow.getByRole("button", { name: "Edit" }).click();
 
-    const issueDialog = page.getByRole("dialog", { name: "Edit issue" });
+    const issueDialog = page.getByRole("dialog", { name: /^(Edit|View) issue$/ });
     const editor = issueDialog.locator(".newsletter-editor-form");
     const publishButton = editor.getByRole("button", { name: "Publish", exact: true });
     await publishButton.evaluate(button => {
@@ -191,7 +191,7 @@ test.describe("newsletter async action states", () => {
       await expect(contentEditor.getByRole("button", { name: "Saving homepage update..." })).toBeDisabled();
       await expect(contentEditor.getByLabel("Title")).toBeDisabled();
       await expect(contentEditor.getByRole("button", { name: "Remove" })).toBeDisabled();
-      await expect(homepageDialog.getByRole("button", { name: "Add homepage update" })).toBeDisabled();
+      await expect(homepageDialog.getByRole("button", { name: "New update" })).toBeDisabled();
       await expect(contentEditor.getByText("Public content saved.")).toBeVisible();
       expect(saveAttempts).toBe(1);
       await homepageDialog.getByRole("button", { name: "Close homepage editor" }).click();

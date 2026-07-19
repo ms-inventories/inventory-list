@@ -191,7 +191,7 @@ test.describe("mobile layout audit", () => {
     await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
     const addUser = page.getByRole("button", { name: "Add user", exact: true });
     await expect(addUser).toBeVisible();
-    const accessRow = page.getByRole("table", { name: "Platform users" }).getByRole("row").filter({ hasText: "MS Platoon" }).first();
+    const accessRow = page.getByRole("table", { name: "Platform users" }).getByRole("row").filter({ hasText: "QA NCO" }).filter({ hasText: "MS Platoon" });
     for (const label of ["Role", "Status"]) {
       await expect(accessRow.locator(".mobile-field-label").getByText(label, { exact: true })).toBeVisible();
     }
@@ -293,7 +293,7 @@ test.describe("mobile layout audit", () => {
     await expect(activeInventorySelect).toBeVisible();
     await activeInventorySelect.selectOption({ label: "July sensitive items" });
     await expect(activeInventorySelect.locator("option:checked")).toHaveText("July sensitive items");
-    await expect(page.getByRole("region", { name: "Pending inventory results", exact: true }).getByText("July sensitive items", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Pending inventory results", exact: true })).toHaveCount(0);
     await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
     const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });

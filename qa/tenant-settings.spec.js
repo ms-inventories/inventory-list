@@ -146,8 +146,7 @@ test.describe("tenant settings", () => {
       }
 
       await page.reload();
-      await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-      await openWorkspaceTab(page, "Workspace Settings");
+      await expect(page.getByRole("heading", { name: "Workspace Settings" })).toBeVisible();
       await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(displayName);
       await expect(page.getByLabel("Guidance", { exact: true })).toHaveCount(0);
       await expect(page.locator(".leader-nav").getByText("Inventory Guidance", { exact: true })).toHaveCount(0);

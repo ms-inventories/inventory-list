@@ -2090,7 +2090,8 @@ function safeTenantAuditDetails(action, value) {
     return compactAuditDetails({
       email: auditText(metadata.email, 320),
       role: auditText(metadata.role, 80),
-      expiresAt: auditTimestamp(metadata.expiresAt)
+      expiresAt: auditTimestamp(metadata.expiresAt),
+      deliveryRequested: auditBoolean(metadata.deliveryRequested)
     });
   }
   if (action === "inventory_item.created") {
@@ -4246,6 +4247,15 @@ export function registerRoutes(app) {
     };
   });
 
+  route(app, "get", "/api/platform/capabilities", async (request, reply) => {
+    await requirePlatformAdmin(request, reply);
+    return {
+      capabilities: {
+        silentInvitationCreate: true
+      }
+    };
+  });
+
   route(app, "get", "/api/platform/tenants", async (request, reply) => {
     await requirePlatformAdmin(request, reply);
 
@@ -4268,17 +4278,23 @@ export function registerRoutes(app) {
               AND m.status = 'active'
           ) AS admin_count,
           (
-            (SELECT COUNT(*) FROM tenant_memberships m
+            SELECT COUNT(*)::int
+            FROM (
+              SELECT lower(u.email) AS email
+              FROM tenant_memberships m
+              JOIN app_users u ON u.id = m.user_id
               WHERE m.tenant_id = t.id
                 AND m.role = 'tenant_admin'
-                AND m.status = 'invited')
-            +
-            (SELECT COUNT(*) FROM tenant_invitations i
+                AND m.status = 'invited'
+              UNION
+              SELECT lower(i.email) AS email
+              FROM tenant_invitations i
               WHERE i.tenant_id = t.id
                 AND i.role = 'tenant_admin'
                 AND i.status = 'pending'
-                AND i.expires_at > now())
-          )::int AS pending_admin_invite_count,
+                AND i.expires_at > now()
+            ) pending_admins
+          ) AS pending_admin_invite_count,
           (SELECT COUNT(*)::int FROM packet_import_batches b WHERE b.tenant_id = t.id) AS packet_import_count,
           (
             SELECT COUNT(*)::int
@@ -6036,6 +6052,7 @@ export function registerRoutes(app) {
         email: z.string().email().max(254),
         displayName: z.string().optional(),
         role: z.enum(tenantRoles).default("contributor"),
+        sendEmail: z.boolean().default(true),
         expiresInDays: z.number().int().min(1).max(60).default(14)
       }),
       request.body
@@ -6084,19 +6101,21 @@ export function registerRoutes(app) {
         action: "invitation.created",
         entityType: "tenant_invitation",
         entityId: inviteResult.rows[0].id,
-        metadata: { email, role: body.role }
+        metadata: { email, role: body.role, deliveryRequested: body.sendEmail }
       });
 
       return inviteResult.rows[0];
     });
 
     const inviteUrl = buildInviteUrl(context.tenant, token);
-    const emailResult = await sendInviteNotification({
-      context,
-      email,
-      role: body.role,
-      inviteUrl
-    });
+    const emailResult = body.sendEmail
+      ? await sendInviteNotification({
+        context,
+        email,
+        role: body.role,
+        inviteUrl
+      })
+      : { sent: false, reason: "not_requested" };
 
     reply.code(201);
     return {
