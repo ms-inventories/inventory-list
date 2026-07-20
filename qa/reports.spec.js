@@ -170,7 +170,9 @@ test.describe("cross-inventory reports", () => {
     const inventoryTiming = page.getByRole("region", { name: "Inventory timing" });
     const closedTimingRow = inventoryTiming.getByRole("row").filter({ hasText: closedName });
     await expect(closedTimingRow.getByRole("rowheader", { name: closedName, exact: true })).toBeVisible();
-    if (testInfo.project.name === "mobile-chrome") {
+    const compactTimingLayout = await inventoryTiming.locator(".reports-session-timing-head")
+      .evaluate(element => getComputedStyle(element).display === "none");
+    if (compactTimingLayout) {
       const durationCell = closedTimingRow.getByRole("cell").last();
       await expect(durationCell).toBeVisible();
       expect(await durationCell.evaluate(element => getComputedStyle(element, "::before").content)).toBe('"Time to 100%"');
@@ -232,7 +234,7 @@ test.describe("cross-inventory reports", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
   });
 
-  test("reflows the report canvas at a desktop split-pane width", async ({ page, request }, testInfo) => {
+  test("reflows the report canvas at a compact-desktop width", async ({ page, request }, testInfo) => {
     const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
     const session = await createSession(request, `QA Split Report ${suffix}`);
     const item = await createItem(request, session.id, `SPLIT-PANE-${suffix}`);
@@ -243,7 +245,8 @@ test.describe("cross-inventory reports", () => {
     await page.getByRole("combobox", { name: "Inventory", exact: true }).selectOption(session.id);
 
     const reportPage = page.locator(".reports-page");
-    await expect(page.locator(".leader-sidebar")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open workspace menu", exact: true })).toBeVisible();
+    await expect(page.locator(".leader-sidebar")).toHaveAttribute("aria-hidden", "true");
     await expect(reportPage.locator(".reports-table-header")).toBeHidden();
     await expect(reportPage.getByText("Inventory", { exact: true }).last()).toBeVisible();
     await expect(reportPage.locator(".reports-session-timing-head")).toBeHidden();
@@ -265,7 +268,7 @@ test.describe("cross-inventory reports", () => {
     });
 
     expect(layout.containerType).toBe("inline-size");
-    expect(layout.pageWidth).toBeLessThanOrEqual(760);
+    expect(layout.pageWidth).toBeLessThanOrEqual(1000);
     expect(layout.pageScrollWidth).toBeLessThanOrEqual(layout.pageWidth + 1);
     expect(layout.timingScrollWidth).toBeLessThanOrEqual(layout.timingWidth + 1);
     expect(layout.resultsScrollWidth).toBeLessThanOrEqual(layout.resultsWidth + 1);

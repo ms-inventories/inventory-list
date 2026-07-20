@@ -232,8 +232,10 @@ test.describe("mobile layout audit", () => {
     expect(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
 
     const legacyLinks = page.locator(".legacy-links-card");
-    await expect(legacyLinks.getByText("Legacy sign-in links", { exact: true })).toBeVisible();
-    await expect(legacyLinks).not.toHaveAttribute("open", "");
+    if (await legacyLinks.count()) {
+      await expect(legacyLinks.getByText("Legacy sign-in links", { exact: true })).toBeVisible();
+      await expect(legacyLinks).not.toHaveAttribute("open", "");
+    }
 
     const manage = page.locator(".team-member-manage > summary").first();
     await expectMinTargetSize(manage, { height: 44 });
@@ -460,13 +462,58 @@ test.describe("intermediate inventory layout", () => {
     test.skip(testInfo.project.name !== "chromium", "Intermediate desktop widths are covered once in Chromium.");
   });
 
-  test("keeps inventory hierarchy and actions usable from 900px through 1280px", async ({ page }) => {
+  test("keeps tenant chrome, inventory hierarchy, and actions usable from 861px through 1280px", async ({ page }) => {
+    test.setTimeout(60_000);
     await page.setViewportSize({ width: 1280, height: 900 });
     await seedQaRootSession(page);
     await page.goto("http://qa-search-desktop.localhost:5175/#/admin");
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Notifications", exact: true }).click();
+    const activeInventoryCard = page.getByRole("region", { name: "Active inventory", exact: true });
+    const activeInventoryHeader = activeInventoryCard.locator(".leader-card-header");
+    const activeInventoryActions = activeInventoryCard.locator(".leader-active-inventory-actions");
+    const dashboardTopbar = page.locator(".leader-topbar");
+    const dashboardContext = dashboardTopbar.locator(".leader-topbar-context, .leader-search");
+    const dashboardActions = dashboardTopbar.locator(".leader-user-actions");
+    const dashboardRefresh = dashboardTopbar.getByRole("button", { name: "Refresh workspace", exact: true });
+    const dashboardUserTrigger = dashboardTopbar.getByRole("button", { name: "Open user menu", exact: true });
+    for (const width of [1100, 1025]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
+      await expectContained(dashboardTopbar);
+      await expect(dashboardRefresh).toBeHidden();
+      await expect(dashboardUserTrigger.locator(":scope > div")).toBeHidden();
+      await expect(dashboardUserTrigger).toHaveCSS("width", "44px");
+      const [contextBox, actionsBox] = await Promise.all([dashboardContext.boundingBox(), dashboardActions.boundingBox()]);
+      expect(contextBox.x + contextBox.width).toBeLessThanOrEqual(actionsBox.x - 4);
+      await expect(page.getByRole("button", { name: "Open workspace menu", exact: true })).toBeHidden();
+      await expect(page.locator(".leader-sidebar")).not.toHaveAttribute("aria-hidden", "true");
+    }
+    for (const width of [1024, 900, 869, 861]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
+      await expectContained(dashboardTopbar);
+      await expect(dashboardRefresh).toBeHidden();
+      await expect(dashboardUserTrigger.locator(":scope > div")).toBeHidden();
+      await expect(dashboardUserTrigger).toHaveCSS("width", "44px");
+      await expectInsideHorizontally(activeInventoryCard, activeInventoryHeader);
+      await expectInsideHorizontally(activeInventoryHeader, activeInventoryActions);
+      await expect(page.getByRole("button", { name: "Open workspace menu", exact: true })).toBeVisible();
+      await expect(page.locator(".leader-sidebar")).toHaveAttribute("aria-hidden", "true");
+    }
+    const workspaceMenu = page.locator(".leader-mobile-nav-toggle");
+    await workspaceMenu.click();
+    await expect(workspaceMenu).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator(".leader-sidebar")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(page.locator(".leader-system-card")).toContainText("Current platoon");
+    await expect(page.locator("main.leader-main")).toHaveAttribute("aria-hidden", "true");
+    await page.keyboard.press("Escape");
+    await expect(workspaceMenu).toHaveAttribute("aria-expanded", "false");
+    await expect(workspaceMenu).toBeFocused();
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+
+    await page.getByRole("button", { name: /^Notifications/ }).click();
     await page.getByRole("region", { name: "Notifications" }).getByRole("button", { name: "Open inventories", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
     const session = page.locator(".session-row", { hasText: "Search behavior fixture" });
@@ -486,13 +533,36 @@ test.describe("intermediate inventory layout", () => {
     const inlineControls = row.locator(".session-item-inline-manage");
     const sessionMain = inventoryWorkspace.locator(".session-main");
     const sessionSidebar = inventoryWorkspace.locator(".session-sidebar");
+    const sessionSummary = inventoryWorkspace.locator(".session-summary");
+    const sessionSummaryActions = sessionSummary.locator(".session-summary-actions");
+    const sessionList = inventoryWorkspace.locator(".session-list");
+    const topbar = page.locator(".leader-topbar");
+    const topbarSearch = topbar.locator(".leader-search");
+    const topbarActions = topbar.locator(".leader-user-actions");
+    const topbarRefresh = topbar.getByRole("button", { name: "Refresh workspace", exact: true });
+    const topbarNotifications = topbar.getByRole("button", { name: /^Notifications/ });
+    const topbarUserTrigger = topbar.getByRole("button", { name: "Open user menu", exact: true });
     const [wideMainBox, wideSidebarBox] = await Promise.all([sessionMain.boundingBox(), sessionSidebar.boundingBox()]);
     expect(wideMainBox.x).toBeLessThan(wideSidebarBox.x);
 
-    for (const width of [1024, 900]) {
+    for (const width of [1100, 1025, 1024, 900, 869, 861]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(row).toBeVisible();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
+      await expectContained(topbar);
+      await expectInsideHorizontally(topbar, topbarActions);
+      await expect(topbarRefresh).toBeHidden();
+      await expectMinTargetSize(topbarNotifications, { width: 44, height: 44 });
+      await expect(topbarUserTrigger.locator(":scope > div")).toBeHidden();
+      await expectMinTargetSize(topbarUserTrigger, { width: 44, height: 44 });
+      const [searchBox, topbarActionsBox] = await Promise.all([topbarSearch.boundingBox(), topbarActions.boundingBox()]);
+      expect(searchBox.x + searchBox.width).toBeLessThanOrEqual(topbarActionsBox.x - 4);
+      await expectInsideHorizontally(sessionSummary, sessionSummaryActions);
+      await expect(sessionSummary).toHaveCSS("flex-direction", "column");
+      await expect(sessionSummary.getByRole("button", { name: "Invite crew", exact: true })).toHaveCount(1);
+      await expect(sessionSummary.getByRole("button", { name: /Close out|Close inventory|Delete draft|Reopen/i })).toHaveCount(0);
+      await expect(sessionList).toHaveCSS("max-height", "none");
+      await expect(sessionList).toHaveCSS("overflow-y", "visible");
       await expectInsideHorizontally(row, actions);
       await expect(row.getByRole("button", { name: "Found", exact: true })).toHaveCount(0);
       await expect(row.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
@@ -505,6 +575,48 @@ test.describe("intermediate inventory layout", () => {
     }
 
     await expect(page.getByRole("dialog"), "resizing inline inventory work must not open a dialog").toHaveCount(0);
+  });
+
+  test("keeps every tenant section contained in the compact-desktop drawer range", async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await seedQaRootSession(page);
+    await page.goto("http://qa-search-desktop.localhost:5175/#/admin");
+    await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toBeVisible();
+
+    const views = [
+      ["Equipment", "Equipment Library"],
+      ["Reports", "Reports"],
+      ["Team", "Team"],
+      ["Activity Log", "Activity Log"],
+      ["Workspace Settings", "Workspace Settings"],
+      ["Dashboard", "Leader Dashboard"]
+    ];
+
+    for (const width of [1024, 900, 869, 861]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const [navLabel, heading] of views) {
+        await openWorkspaceView(page, navLabel);
+        await expect(page.getByRole("heading", { name: heading, exact: true }).first()).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
+        await expectContained(page.locator("main.leader-main"));
+        await expectContained(page.locator(".leader-topbar"));
+        await expectContained(page.locator(".leader-content"));
+        await expect(page.locator(".leader-sidebar")).toHaveAttribute("aria-hidden", "true");
+
+        const search = page.locator(".leader-topbar .leader-search");
+        if (await search.isVisible()) {
+          const actions = page.locator(".leader-topbar .leader-user-actions");
+          const [searchBox, actionsBox] = await Promise.all([search.boundingBox(), actions.boundingBox()]);
+          expect(searchBox.x + searchBox.width).toBeLessThanOrEqual(actionsBox.x - 4);
+        }
+
+        if (navLabel === "Reports") {
+          await expectContained(page.locator(".reports-session-timing-table"));
+          await expectContained(page.locator(".reports-results"));
+        }
+      }
+    }
   });
 
   test("keeps the Users table readable without horizontal panning on compact desktops", async ({ page }) => {

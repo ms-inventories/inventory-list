@@ -1349,9 +1349,14 @@ button {
 }
 
 .leader-system-card svg {
+  flex: 0 0 24px;
   width: 24px;
   height: 24px;
   color: #d5c36b;
+}
+
+.leader-system-card > div {
+  min-width: 0;
 }
 
 .leader-system-card strong,
@@ -1369,10 +1374,14 @@ button {
   font-weight: 760;
   line-height: 1.25;
   margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .leader-main {
   min-width: 0;
+  container: leader-main / inline-size;
 }
 
 .leader-mobile-nav-toggle {
@@ -9595,6 +9604,32 @@ button {
       "sidebar";
   }
 
+  .session-sidebar {
+    margin-top: 4px;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+
+  .session-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .session-row strong {
+    overflow-wrap: anywhere;
+  }
+
+  .prior-match-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .prior-match-banner .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+
   .session-item {
     grid-template-columns: 1fr;
   }
@@ -9667,6 +9702,193 @@ button {
     display: block;
     font-size: 0.8rem;
     line-height: 1.2;
+  }
+}
+
+/* A desktop sidebar can leave a phone-sized main canvas in docked panes and
+   compact laptop windows. Compact the topbar from the space it actually has. */
+@container leader-main (max-width: 880px) {
+  .leader-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 12px 16px;
+  }
+
+  .leader-topbar .leader-user-actions {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .leader-topbar .icon-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .leader-topbar-refresh {
+    display: none;
+  }
+
+  .leader-topbar .leader-user-trigger {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    justify-content: center;
+    border: 0;
+    padding: 0;
+  }
+
+  .leader-topbar .leader-user-trigger > div,
+  .leader-topbar .leader-user-trigger > svg {
+    display: none;
+  }
+}
+
+@media (min-width: 861px) and (max-width: 980px) {
+  .leader-content {
+    padding: 24px 20px 42px;
+  }
+
+  .leader-active-inventory .leader-card-header,
+  .leader-dashboard-grid .leader-card-header {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .leader-active-inventory .leader-card-header > div,
+  .leader-dashboard-grid .leader-card-header > div {
+    min-width: 0;
+  }
+
+  .leader-active-inventory-actions,
+  .leader-dashboard-grid .leader-card-header > .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .leader-active-inventory-actions .btn,
+  .leader-dashboard-grid .leader-card-header > .btn {
+    flex: 1 1 150px;
+    min-height: 44px;
+    justify-content: center;
+  }
+}
+
+/* Tenant workspaces are phone-first and often run beside another pane. Use the
+   accessible drawer through tablet and compact-desktop widths so the fixed
+   navigation never consumes a quarter of the working canvas. */
+@media (min-width: 861px) and (max-width: 1024px) {
+  .leader-shell,
+  .leader-shell.sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .leader-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 55;
+    width: min(84vw, 300px);
+    height: 100dvh;
+    padding: 14px 12px;
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+    box-shadow: 20px 0 42px rgba(12, 18, 15, 0.22);
+  }
+
+  .leader-shell.sidebar-open .leader-sidebar {
+    transform: translateX(0);
+  }
+
+  .leader-shell.sidebar-open .leader-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: block;
+    border: 0;
+    background: rgba(12, 18, 15, 0.48);
+  }
+
+  .leader-brand,
+  .leader-shell.sidebar-collapsed .leader-brand {
+    justify-content: space-between;
+    padding: 0 4px 10px;
+  }
+
+  .leader-shell.sidebar-collapsed .leader-brand strong,
+  .leader-shell.sidebar-collapsed .leader-nav span,
+  .leader-shell.sidebar-collapsed .leader-system-card div {
+    display: block;
+  }
+
+  .leader-shell.sidebar-collapsed .leader-nav button {
+    justify-content: flex-start;
+    padding: 0 12px;
+  }
+
+  .leader-nav {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    overflow-x: visible;
+    padding-bottom: 2px;
+  }
+
+  .leader-nav button {
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  .leader-shell.sidebar-collapsed .leader-system-card {
+    justify-content: flex-start;
+    padding: 12px;
+  }
+
+  .leader-mobile-nav-toggle {
+    display: grid;
+  }
+
+  .leader-topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    min-height: 68px;
+    padding: 12px 16px;
+  }
+
+  .leader-topbar .leader-user-actions {
+    grid-column: auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .leader-topbar .icon-button,
+  .leader-topbar .leader-user-trigger {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .leader-topbar-refresh {
+    display: none;
+  }
+
+  .leader-topbar .leader-user-trigger {
+    justify-content: center;
+    border: 0;
+    padding: 0;
+  }
+
+  .leader-topbar .leader-user-trigger > div,
+  .leader-topbar .leader-user-trigger > svg {
+    display: none;
+  }
+
+  .leader-popover {
+    position: fixed;
+    top: 70px;
+    right: 12px;
+    left: auto;
+    width: min(360px, calc(100vw - 24px));
+    max-height: calc(100dvh - 82px);
+    overflow-y: auto;
   }
 }
 
@@ -11520,10 +11742,9 @@ button {
   display: none;
 }
 
-/* Reports can have a narrow working area even when the browser itself is wide
-   enough to keep the desktop sidebar open (for example, in a split pane). Base
-   this reflow on the report canvas instead of the outer viewport. */
-@container reports-page (max-width: 760px) {
+/* Reflow before the report table's fixed column minimums can overflow. Base
+   this on the report canvas rather than an arbitrary device breakpoint. */
+@container reports-page (max-width: 1000px) {
   .reports-page .leader-page-heading {
     align-items: stretch;
     flex-direction: column;

@@ -10538,7 +10538,7 @@ function TenantPeoplePanel({
 }
 
 function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
-  const isMobileViewport = useMediaQuery("(max-width: 860px)");
+  const isMobileViewport = useMediaQuery("(max-width: 1024px)");
   const isCrew = me?.authKind === "crew";
   const isTenantAdmin = Boolean(me?.isPlatformAdmin || me?.membership?.role === "tenant_admin");
   const canSubmitProof = Boolean(isCrew || isTenantAdmin || me?.membership?.role === "contributor");
@@ -11490,8 +11490,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
         <div className="leader-system-card">
           <ShieldCheck aria-hidden="true" />
           <div>
-            <strong>Workspace active</strong>
-            <span>{tenant?.name || `${tenantSlug}.${appConfig.baseDomain}`}</span>
+            <strong>Current platoon</strong>
+            <span>{tenant ? tenantDisplayName(tenant) : `${tenantSlug}.${appConfig.baseDomain}`}</span>
           </div>
         </div>
       </aside>
