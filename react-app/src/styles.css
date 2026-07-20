@@ -11061,6 +11061,10 @@ button {
   padding: 18px;
 }
 
+.reports-page {
+  container: reports-page / inline-size;
+}
+
 .reports-filter-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -11212,6 +11216,165 @@ button {
 
 .reports-print-header {
   display: none;
+}
+
+/* Reports can have a narrow working area even when the browser itself is wide
+   enough to keep the desktop sidebar open (for example, in a split pane). Base
+   this reflow on the report canvas instead of the outer viewport. */
+@container reports-page (max-width: 760px) {
+  .reports-page .leader-page-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .reports-page .leader-page-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .reports-page .leader-page-actions > .btn,
+  .reports-page .responsive-action-menu.mobile-secondary-actions,
+  .reports-page .responsive-action-menu.mobile-secondary-actions > summary,
+  .reports-page .responsive-action-menu.mobile-secondary-actions > button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .reports-page .desktop-secondary-action {
+    display: none !important;
+  }
+
+  .reports-page .responsive-action-menu.mobile-secondary-actions {
+    display: block;
+  }
+
+  .reports-page .responsive-action-panel {
+    position: static;
+    min-width: 0;
+    margin-top: 8px;
+    box-shadow: none;
+  }
+
+  .reports-page .reports-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-page .reports-result-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reports-page .reports-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reports-page .reports-summary-grid > div:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .reports-page .reports-session-timing-table {
+    overflow-x: visible;
+  }
+
+  .reports-page .reports-session-timing-head {
+    display: none;
+  }
+
+  .reports-page .reports-session-timing-row {
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+    padding: 14px;
+  }
+
+  .reports-page .reports-session-timing-row > strong {
+    grid-column: 1 / -1;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .reports-page .reports-session-timing-row > span {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+    overflow-wrap: anywhere;
+  }
+
+  .reports-page .reports-session-timing-row > span::before {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .reports-page .reports-session-timing-row > span:nth-child(2)::before {
+    content: "Started";
+  }
+
+  .reports-page .reports-session-timing-row > span:nth-child(3)::before {
+    content: "Completed";
+  }
+
+  .reports-page .reports-session-timing-row > span:nth-child(4) {
+    grid-column: 1 / -1;
+  }
+
+  .reports-page .reports-session-timing-row > span:nth-child(4)::before {
+    content: "Time to 100%";
+  }
+
+  .reports-page .reports-table-header {
+    display: none;
+  }
+
+  .reports-page .reports-table-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .reports-page .reports-table-row > [data-label] {
+    display: grid;
+    grid-template-columns: minmax(108px, 0.42fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    padding: 0;
+  }
+
+  .reports-page .mobile-field-label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .reports-page .reports-field-value {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+  }
+}
+
+@container reports-page (max-width: 480px) {
+  .reports-page .leader-page-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-page .reports-session-timing-row {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-page .reports-session-timing-row > span:nth-child(4) {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 860px) {

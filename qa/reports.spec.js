@@ -225,6 +225,46 @@ test.describe("cross-session reports", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
   });
 
+  test("reflows the report canvas at a desktop split-pane width", async ({ page, request }, testInfo) => {
+    const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
+    const session = await createSession(request, `QA Split Report ${suffix}`);
+    const item = await createItem(request, session.id, `SPLIT-PANE-${suffix}`);
+    await directCheck(request, item.id, "found");
+
+    await page.setViewportSize({ width: 869, height: 960 });
+    await signInAndOpenReports(page);
+    await page.getByRole("combobox", { name: "Session", exact: true }).selectOption(session.id);
+
+    const reportPage = page.locator(".reports-page");
+    await expect(page.locator(".leader-sidebar")).toBeVisible();
+    await expect(reportPage.locator(".reports-table-header")).toBeHidden();
+    await expect(reportPage.getByText("Session", { exact: true }).last()).toBeVisible();
+    await expect(reportPage.locator(".reports-session-timing-head")).toBeHidden();
+
+    const layout = await reportPage.evaluate(element => {
+      const timing = element.querySelector(".reports-session-timing-table");
+      const results = element.querySelector(".reports-results");
+      return {
+        containerType: getComputedStyle(element).containerType,
+        pageWidth: element.clientWidth,
+        pageScrollWidth: element.scrollWidth,
+        timingWidth: timing?.clientWidth || 0,
+        timingScrollWidth: timing?.scrollWidth || 0,
+        resultsWidth: results?.clientWidth || 0,
+        resultsScrollWidth: results?.scrollWidth || 0,
+        documentWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth
+      };
+    });
+
+    expect(layout.containerType).toBe("inline-size");
+    expect(layout.pageWidth).toBeLessThanOrEqual(760);
+    expect(layout.pageScrollWidth).toBeLessThanOrEqual(layout.pageWidth + 1);
+    expect(layout.timingScrollWidth).toBeLessThanOrEqual(layout.timingWidth + 1);
+    expect(layout.resultsScrollWidth).toBeLessThanOrEqual(layout.resultsWidth + 1);
+    expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentWidth + 1);
+  });
+
   test("contributors cannot open reports", async ({ page, request }) => {
     await page.goto(TENANT_URL);
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
