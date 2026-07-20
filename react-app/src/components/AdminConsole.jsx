@@ -3664,7 +3664,7 @@ function SessionPanel({
                             <span>{withdrawingSubmissionId === submission.id ? "Withdrawing..." : "Withdraw submission"}</span>
                           </button>
                         ) : pendingProof && canManage && onOpenReview && !selectedSessionIsClosed ? (
-                          <button className="btn btn-primary btn-small session-row-primary-action" type="button" onClick={onOpenReview}>
+                          <button className="btn btn-primary btn-small session-row-primary-action" type="button" onClick={() => onOpenReview(submission.id)}>
                             <MessageSquare aria-hidden="true" />
                             <span>Review proof</span>
                           </button>
@@ -4560,7 +4560,19 @@ function SavedEvidencePicker({
   );
 }
 
-function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSearch, onOpenSessions }) {
+function ReviewPanel({
+  token,
+  tenantSlug,
+  query = "",
+  submissionId = "",
+  showHeading = true,
+  refreshVersion = 0,
+  onQueryChange,
+  onClearSearch,
+  onOpenSessions,
+  onInventoryChanged,
+  onSubmissionReviewed
+}) {
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading review queue...", isError: false });
   const [requestingSubmissionId, setRequestingSubmissionId] = useState("");
@@ -4577,7 +4589,10 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
   const proofRequestOpenRef = useRef("");
   const hasSearchQuery = searchTerms(query).length > 0;
   const isAnyProofRequestPending = [...reviewActions.values()].includes("reject");
-  const visibleSubmissions = submissions.filter(submission => matchesSearch([
+  const scopedSubmissions = submissionId
+    ? submissions.filter(submission => submission.id === submissionId)
+    : submissions;
+  const visibleSubmissions = scopedSubmissions.filter(submission => matchesSearch([
     submission.sessionItem?.packetLine,
     submission.session?.name,
     submission.submittedByName,
@@ -4675,7 +4690,7 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
 
   useEffect(() => {
     loadQueue();
-  }, [tenantSlug, token]);
+  }, [tenantSlug, token, refreshVersion]);
 
   useEffect(() => {
     if (!photoViewer) return undefined;
@@ -4719,6 +4734,8 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
       });
       await loadQueue();
       setStatus({ text: `${actionLabel} proof for ${packetLine}.`, isError: false });
+      onInventoryChanged?.();
+      onSubmissionReviewed?.(submissionId, decision);
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
@@ -4830,15 +4847,17 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
 
   return (
     <section className="admin-card review-panel">
-      <div className="admin-card-heading">
-        <span className="admin-icon">
-          <MessageSquare aria-hidden="true" />
-        </span>
-        <div>
-          <p className="eyebrow">Platoon admin review</p>
-          <h2>Review Queue</h2>
+      {showHeading ? (
+        <div className="admin-card-heading">
+          <span className="admin-icon">
+            <MessageSquare aria-hidden="true" />
+          </span>
+          <div>
+            <p className="eyebrow">Platoon admin review</p>
+            <h2>Review Queue</h2>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <StatusLine status={status} />
 
@@ -4996,9 +5015,9 @@ function ReviewPanel({ token, tenantSlug, query = "", onQueryChange, onClearSear
           </article>
         )) : (
           <EmptyPanel
-            title={hasSearchQuery ? "No matching review work" : "Nothing to review"}
-            body={hasSearchQuery ? "Clear the search or try a packet line, session, submitter, serial, location, or proof note." : "Submitted proof will appear here."}
-            action={hasSearchQuery ? (
+            title={submissionId ? "Proof no longer waiting" : hasSearchQuery ? "No matching review work" : "Nothing to review"}
+            body={submissionId ? "This submission was already reviewed or withdrawn." : hasSearchQuery ? "Clear the search or try a packet line, session, submitter, serial, location, or proof note." : "Submitted proof will appear here."}
+            action={submissionId ? null : hasSearchQuery ? (
               <button className="btn btn-secondary btn-small" type="button" onClick={() => {
                 if (onClearSearch) onClearSearch();
                 else onQueryChange?.("");
@@ -8090,6 +8109,7 @@ function LeaderOverviewPanel({
   canManage,
   canSubmit,
   preferredSessionId,
+  refreshVersion = 0,
   onSessionChange,
   onCreateSession,
   onOpenSessions,
@@ -8126,7 +8146,7 @@ function LeaderOverviewPanel({
 
   useEffect(() => {
     loadDashboard();
-  }, [tenantSlug, token, canManage]);
+  }, [tenantSlug, token, canManage, refreshVersion]);
 
   const hasSearchQuery = searchTerms(query).length > 0;
   const openSessions = sessions.filter(session => session.status !== "closed");
@@ -8245,7 +8265,7 @@ function LeaderOverviewPanel({
       assignedPerson(item)
     ], query))
     .slice(0, dashboardPreviewLimit);
-  const visibleSubmissions = submissions.filter(submission => matchesSearch([
+  const matchingSubmissions = submissions.filter(submission => matchesSearch([
     submission.sessionItem?.packetLine,
     submission.session?.name,
     submission.submittedByName,
@@ -8262,7 +8282,9 @@ function LeaderOverviewPanel({
       historyItem.submittedByName,
       historyItem.submittedByEmail
     ])
-  ], query)).slice(0, dashboardPreviewLimit);
+  ], query));
+  const visibleSubmissions = matchingSubmissions.slice(0, dashboardPreviewLimit);
+  const hiddenReviewCount = Math.max(0, matchingSubmissions.length - visibleSubmissions.length);
 
   return (
     <div className="leader-dashboard">
@@ -8461,11 +8483,10 @@ function LeaderOverviewPanel({
             </span>
             <div>
               <h2>Review</h2>
-              <p>Leader approval required.</p>
+              <p>{submissions.length
+                ? `${countLabel(submissions.length, "submission")} waiting for approval.`
+                : "No proof is waiting for approval."}</p>
             </div>
-            <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
-              <span>Open review queue</span>
-            </button>
           </div>
 
           <div className="leader-table">
@@ -8482,9 +8503,9 @@ function LeaderOverviewPanel({
                       <span>{submission.submittedByName || submission.submittedByEmail || "Submitted"}</span>
                     </div>
                   </div>
-                  <span>{submission.reviewNote || submission.note || formatReviewState(submission.reviewState)}</span>
+                  {submission.reviewNote || submission.note ? <span>{submission.reviewNote || submission.note}</span> : null}
                   <span className={`status-pill ${submission.reviewState}`}>{formatReviewState(submission.reviewState)}</span>
-                  <button className="btn btn-secondary btn-small" type="button" onClick={onOpenReview}>
+                  <button className="btn btn-primary btn-small" type="button" onClick={() => onOpenReview(submission.id)}>
                     <span>Review proof</span>
                   </button>
                 </article>
@@ -8502,6 +8523,14 @@ function LeaderOverviewPanel({
               />
             )}
           </div>
+          {hiddenReviewCount ? (
+            <div className="leader-card-footer">
+              <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenReview("")}>
+                <span>Review all {matchingSubmissions.length}</span>
+                <ArrowRight aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
         </section>
         ) : null}
       </div>
@@ -10385,6 +10414,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   });
   const [isSessionWorkspaceOpen, setIsSessionWorkspaceOpen] = useState(() => isCrew || tenantRouteFromLocation().panel === "sessions");
   const [isReviewWorkspaceOpen, setIsReviewWorkspaceOpen] = useState(() => isTenantAdmin && tenantRouteFromLocation().panel === "review");
+  const [reviewSubmissionId, setReviewSubmissionId] = useState("");
+  const [reviewModalRevision, setReviewModalRevision] = useState(0);
   const [sessionIntent, setSessionIntent] = useState("");
   const [preferredSessionId, setPreferredSessionId] = useState(() => me?.crew?.sessionId || "");
   const [isStartInventoryOpen, setIsStartInventoryOpen] = useState(false);
@@ -10425,6 +10456,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const leaderSearchInputRef = useRef(null);
   const tenantSidebarRef = useRef(null);
   const tenantMobileNavToggleRef = useRef(null);
+  const reviewModalTriggerRef = useRef(null);
+  const reviewModalCloseRef = useRef(null);
+  const reviewSearchInputRef = useRef(null);
+  const reviewReturnPathRef = useRef("/admin");
   const startInventoryActionRef = useRef(false);
   const notificationActionRef = useRef(false);
   const workspaceRefreshActionRef = useRef(false);
@@ -10432,7 +10467,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const userName = me?.user?.display_name || me?.user?.displayName || me?.user?.email || "Signed in";
   const userRole = isCrew ? "Crew member" : me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
-  const tenantSearch = activeTab === "dashboard" && !isTenantAdmin && !isSessionWorkspaceOpen ? null : ({
+  const tenantSearch = isReviewWorkspaceOpen ? null : activeTab === "dashboard" && !isTenantAdmin && !isSessionWorkspaceOpen ? null : ({
     dashboard: {
       label: "Search dashboard",
       placeholder: "Search dashboard items, sessions, locations..."
@@ -10478,6 +10513,19 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     };
   }, [isSidebarOpen, isMobileViewport]);
 
+  useEffect(() => {
+    if (!isReviewWorkspaceOpen) {
+      setReviewSubmissionId("");
+      return undefined;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(() => reviewModalCloseRef.current?.focus?.());
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isReviewWorkspaceOpen]);
+
   function openPlatformAdmin() {
     const port = window.location.port ? `:${window.location.port}` : "";
     const isLocalhost = window.location.hostname.endsWith("localhost");
@@ -10518,6 +10566,62 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   function clearLeaderSearch() {
     setLeaderQuery("");
     window.requestAnimationFrame(() => leaderSearchInputRef.current?.focus());
+  }
+
+  function clearReviewSearch() {
+    setLeaderQuery("");
+    window.requestAnimationFrame(() => reviewSearchInputRef.current?.focus());
+  }
+
+  function openReviewWorkspace(submissionId = "") {
+    reviewModalTriggerRef.current = document.activeElement;
+    const currentPath = String(window.location.hash || "")
+      .replace(/^#/, "")
+      .split("?")[0];
+    if (currentPath && currentPath !== "/admin/review") {
+      reviewReturnPathRef.current = currentPath;
+    } else if (!currentPath) {
+      reviewReturnPathRef.current = isSessionWorkspaceOpen ? "/admin/sessions" : tenantTabHashes[activeTab] || tenantTabHashes.dashboard;
+    }
+    setReviewSubmissionId(submissionId || "");
+    setLeaderQuery("");
+    setIsReviewWorkspaceOpen(true);
+    setIsSidebarOpen(false);
+    setIsNotificationsOpen(false);
+    setIsUserMenuOpen(false);
+    navigateAppHash("/admin/review");
+  }
+
+  function closeReviewWorkspace({ restoreFocus = true } = {}) {
+    setIsReviewWorkspaceOpen(false);
+    setReviewSubmissionId("");
+    setLeaderQuery("");
+    navigateAppHash(reviewReturnPathRef.current || tenantTabHashes.dashboard, { replace: true });
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => reviewModalTriggerRef.current?.focus?.());
+    }
+  }
+
+  function handleReviewModalKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeReviewWorkspace();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...event.currentTarget.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    )].filter(element => element.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function openTenantSidebar() {
@@ -10613,8 +10717,13 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       const route = tenantRouteFromLocation();
       const nextTab = navItems.some(item => item.id === route.tab) ? route.tab : "dashboard";
       setActiveTab(nextTab);
-      setIsSessionWorkspaceOpen(isCrew || route.panel === "sessions");
-      setIsReviewWorkspaceOpen(isTenantAdmin && route.panel === "review");
+      if (route.panel === "review" && isTenantAdmin) {
+        setIsReviewWorkspaceOpen(true);
+      } else {
+        setIsSessionWorkspaceOpen(isCrew || route.panel === "sessions");
+        setIsReviewWorkspaceOpen(false);
+        setReviewSubmissionId("");
+      }
       setIsSidebarOpen(false);
       setIsNotificationsOpen(false);
       setIsUserMenuOpen(false);
@@ -11096,9 +11205,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     const tab = action.tab;
     if (tab === "review" && isTenantAdmin) {
       setActiveTab("dashboard");
-      setIsReviewWorkspaceOpen(true);
-      setIsSessionWorkspaceOpen(false);
-      navigateAppHash("/admin/review");
+      openReviewWorkspace(action.submissionId || notification?.submissionId || "");
       return;
     }
 
@@ -11155,7 +11262,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       isSidebarCollapsed ? "sidebar-collapsed" : ""
     ].filter(Boolean).join(" ")}>
       <button className="leader-sidebar-backdrop" type="button" aria-label="Close menu" onClick={() => closeTenantSidebar()} />
-      <aside ref={tenantSidebarRef} className="leader-sidebar" aria-hidden={isMobileViewport && !isSidebarOpen ? "true" : undefined} inert={isMobileViewport && !isSidebarOpen ? true : undefined}>
+      <aside ref={tenantSidebarRef} className="leader-sidebar" aria-hidden={isReviewWorkspaceOpen || (isMobileViewport && !isSidebarOpen) ? "true" : undefined} inert={isReviewWorkspaceOpen || (isMobileViewport && !isSidebarOpen) ? true : undefined}>
         <div className="leader-brand">
           <button
             className="leader-menu-button"
@@ -11202,7 +11309,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
         </div>
       </aside>
 
-      <main className="leader-main">
+      <main className="leader-main" aria-hidden={isReviewWorkspaceOpen ? "true" : undefined} inert={isReviewWorkspaceOpen ? true : undefined}>
         <header className={`leader-topbar ${tenantSearch ? "has-search" : "without-search"}`}>
           <button
             ref={tenantMobileNavToggleRef}
@@ -11324,10 +11431,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     {isTenantAdmin ? (
                       <button type="button" onClick={() => {
                         setActiveTab("dashboard");
-                        setIsReviewWorkspaceOpen(true);
-                        setIsSessionWorkspaceOpen(false);
-                        setIsNotificationsOpen(false);
-                        navigateAppHash("/admin/review");
+                        openReviewWorkspace();
                       }}>
                         <ClipboardList aria-hidden="true" />
                         <span>Open review queue</span>
@@ -11430,17 +11534,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 canManage={isTenantAdmin}
                 canSubmit={canSubmitProof}
                 preferredSessionId={preferredSessionId}
+                refreshVersion={reviewModalRevision}
                 onSessionChange={setPreferredSessionId}
                 onCreateSession={() => openStartInventoryWizard("packet")}
                 onOpenSessions={() => openSessions()}
                 onOpenSession={openActivitySession}
                 onOpenUpload={() => openSessions("packet")}
                 onInviteCrew={session => setCrewDialogSession(session)}
-                onOpenReview={() => {
-                  setIsReviewWorkspaceOpen(true);
-                  setIsSessionWorkspaceOpen(false);
-                  navigateAppHash("/admin/review");
-                }}
+                onOpenReview={openReviewWorkspace}
                 showWorkQueue={false}
               />
 
@@ -11469,34 +11570,11 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     onUploadIntentHandled={() => setSessionIntent("")}
                     onSessionChange={setPreferredSessionId}
                     onInviteCrew={session => setCrewDialogSession(session)}
-                    onOpenReview={() => {
-                      setIsReviewWorkspaceOpen(true);
-                      setIsSessionWorkspaceOpen(false);
-                      navigateAppHash("/admin/review");
-                    }}
+                    onOpenReview={openReviewWorkspace}
                   />
                 </section>
               ) : null}
 
-              {isReviewWorkspaceOpen && isTenantAdmin ? (
-                <section className="embedded-workspace-panel" aria-label="Review queue">
-                  <div className="embedded-workspace-heading">
-                    <div><p className="eyebrow">Leader review</p><h2>Review queue</h2></div>
-                    <button className="btn btn-secondary btn-small" type="button" onClick={() => {
-                      setIsReviewWorkspaceOpen(false);
-                      navigateAppHash(tenantTabHashes.dashboard);
-                    }}>Close review queue</button>
-                  </div>
-                  <ReviewPanel
-                    token={token}
-                    tenantSlug={tenantSlug}
-                    query={leaderQuery}
-                    onQueryChange={setLeaderQuery}
-                    onClearSearch={clearLeaderSearch}
-                    onOpenSessions={() => openSessions()}
-                  />
-                </section>
-              ) : null}
             </>
           ) : null}
 
@@ -11570,6 +11648,79 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           ) : null}
         </div>
       </main>
+
+      {isReviewWorkspaceOpen && isTenantAdmin ? (
+        <div
+          className="modal-backdrop review-workspace-modal-backdrop"
+          role="presentation"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) closeReviewWorkspace();
+          }}
+        >
+          <section
+            className="modal-panel review-workspace-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reviewWorkspaceTitle"
+            onKeyDown={handleReviewModalKeyDown}
+          >
+            <header className="review-workspace-modal-header">
+              <span className="modal-icon">
+                <MessageSquare aria-hidden="true" />
+              </span>
+              <div>
+                <p className="eyebrow">Leader review</p>
+                <h2 className="modal-title" id="reviewWorkspaceTitle">{reviewSubmissionId ? "Review proof" : "Review queue"}</h2>
+                <p className="modal-copy">{reviewSubmissionId
+                  ? "Compare the submitted evidence, then approve it or reject it with a clear reason."
+                  : "Work through every proof submission waiting for leader approval."}</p>
+              </div>
+              <button ref={reviewModalCloseRef} className="icon-button review-workspace-modal-close" type="button" aria-label="Close review" onClick={() => closeReviewWorkspace()} autoFocus>
+                <X aria-hidden="true" />
+              </button>
+            </header>
+
+            {!reviewSubmissionId ? (
+              <div className="review-workspace-search" role="search">
+                <Search aria-hidden="true" />
+                <input
+                  ref={reviewSearchInputRef}
+                  type="search"
+                  value={leaderQuery}
+                  aria-label="Search review queue"
+                  placeholder="Search items, inventories, submitters, or locations..."
+                  onChange={event => setLeaderQuery(event.target.value)}
+                />
+                {leaderQuery ? (
+                  <button type="button" aria-label="Clear review search" onClick={clearReviewSearch}>
+                    <X aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="review-workspace-modal-body" role="region" aria-label="Review queue">
+              <ReviewPanel
+                token={token}
+                tenantSlug={tenantSlug}
+                query={leaderQuery}
+                submissionId={reviewSubmissionId}
+                showHeading={false}
+                onQueryChange={setLeaderQuery}
+                onClearSearch={clearReviewSearch}
+                onOpenSessions={() => {
+                  closeReviewWorkspace({ restoreFocus: false });
+                  openSessions();
+                }}
+                onInventoryChanged={() => setReviewModalRevision(current => current + 1)}
+                onSubmissionReviewed={reviewedSubmissionId => {
+                  if (reviewSubmissionId === reviewedSubmissionId) closeReviewWorkspace();
+                }}
+              />
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {crewDialogSession ? (
         <CrewAccessDialog

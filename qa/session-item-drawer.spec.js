@@ -286,8 +286,18 @@ test.describe("inline session item work", () => {
     await expect(proofHistory.getByText(scenario.note, { exact: true })).toBeVisible();
     await expect(proofHistory.getByText(`Serial: ${scenario.serialNumber}`, { exact: true })).toBeVisible();
     await expect(proofHistory.getByText(scenario.requestMessage, { exact: false })).toBeVisible();
-    await expect(row.getByRole("button", { name: "Review proof" })).toBeVisible();
+    const reviewProofButton = row.getByRole("button", { name: "Review proof" });
+    await expect(reviewProofButton).toBeVisible();
     await expect(row.getByRole("button", { name: /Add proof|Respond with proof/ })).toHaveCount(0);
+
+    await reviewProofButton.click();
+    const reviewDialog = page.getByRole("dialog", { name: "Review proof", exact: true });
+    await expect(reviewDialog).toBeVisible();
+    await expect(reviewDialog.locator(".review-card", { hasText: scenario.packetLine })).toBeVisible();
+    await expect(reviewDialog.locator(".review-card")).toHaveCount(1);
+    await reviewDialog.getByRole("button", { name: "Close review", exact: true }).click();
+    await expect(reviewDialog).toBeHidden();
+    await expect(reviewProofButton).toBeFocused();
 
     const evidenceButton = proofHistory.getByRole("button", { name: "View Item photo: Readable serial plate" });
     await evidenceButton.click();

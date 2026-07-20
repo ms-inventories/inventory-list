@@ -99,11 +99,12 @@ async function signInAsPlatoonAdmin(page) {
 }
 
 async function openReviewQueue(page) {
-  await page.getByRole("region", { name: "Dashboard review results" })
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
     .getByRole("button", { name: "Open review queue", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
 }
 
 async function loadSessionDetail(request, record) {
@@ -113,6 +114,31 @@ async function loadSessionDetail(request, record) {
 }
 
 test.describe("review queue decisions", () => {
+  test("dashboard proof opens one concise review in a modal without duplicating the queue", async ({ page, request }, testInfo) => {
+    const suffix = `modal-${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}`;
+    const pending = await createPendingSubmission(request, suffix);
+
+    await signInAsPlatoonAdmin(page);
+    const dashboardReview = page.getByRole("region", { name: "Dashboard review results" });
+    await expect(dashboardReview.getByRole("button", { name: "Open review queue", exact: true })).toHaveCount(0);
+    const dashboardRow = dashboardReview.locator(".review-row", { hasText: pending.packetLine });
+    const reviewProofButton = dashboardRow.getByRole("button", { name: "Review proof", exact: true });
+    await expect(reviewProofButton).toBeVisible();
+    await reviewProofButton.click();
+
+    const dialog = page.getByRole("dialog", { name: "Review proof", exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(".review-card", { hasText: pending.packetLine })).toBeVisible();
+    await expect(dialog.locator(".review-card")).toHaveCount(1);
+    await expect(page.locator(".embedded-workspace-panel").filter({ hasText: "Review Queue" })).toHaveCount(0);
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+
+    await dialog.getByRole("button", { name: "Close review", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(reviewProofButton).toBeFocused();
+    await expect(page).toHaveURL(/#\/admin$/);
+  });
+
   test("approve and both rejection return routes update every dependent state", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     const suffix = testInfo.project.name.replace(/[^a-z0-9]+/gi, "-");

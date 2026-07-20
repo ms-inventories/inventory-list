@@ -97,11 +97,12 @@ async function seedBrowserIdentity(page, identity) {
 }
 
 async function openReviewQueue(page) {
-  await page.getByRole("region", { name: "Dashboard review results" })
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
     .getByRole("button", { name: "Open review queue", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Review Queue", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
 }
 
 test.describe("session claim API", () => {

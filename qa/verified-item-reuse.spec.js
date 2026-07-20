@@ -127,11 +127,12 @@ async function openWorkspaceView(page, label, heading) {
     return;
   }
   if (label === "Review Queue") {
-    await page.getByRole("region", { name: "Dashboard review results" })
+    await page.getByRole("button", { name: /^Notifications/ }).click();
+    await page.getByRole("region", { name: "Notifications" })
       .getByRole("button", { name: "Open review queue", exact: true })
       .click();
     await expect(page.getByRole("region", { name: "Review queue", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
     return;
   }
   const menu = page.getByRole("button", { name: "Open workspace menu" });
