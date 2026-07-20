@@ -269,6 +269,12 @@ test.describe("inline session item work", () => {
       name: `View previous inventory history for ${scenario.title}`
     });
     await expect(historyButton).toBeVisible();
+    await expect(historyButton).toHaveAttribute("title", "Previous inventory");
+    await expect(historyButton.locator("svg")).toBeVisible();
+    await expect(historyButton.locator("span")).toHaveCount(0);
+    await expect(row.locator(".session-item-action-controls").getByRole("button", {
+      name: `View previous inventory history for ${scenario.title}`
+    })).toHaveCount(1);
     await historyButton.click();
     const historyDialog = page.getByRole("dialog", { name: `Previous inventory for ${scenario.title}` });
     await expect(historyDialog).toBeVisible();

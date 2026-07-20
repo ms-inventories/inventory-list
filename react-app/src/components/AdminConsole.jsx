@@ -2197,38 +2197,41 @@ function InventoryActionsMenu({
   );
 }
 
+function PreviousInventoryAction({ item, onOpen }) {
+  const title = itemDisplayName(item);
+  if (!getPriorInventorySnapshot(item)) return null;
+
+  return (
+    <button
+      className="icon-button session-item-history-action"
+      type="button"
+      title="Previous inventory"
+      aria-label={`View previous inventory history for ${title}`}
+      aria-haspopup="dialog"
+      onClick={onOpen}
+    >
+      <History aria-hidden="true" />
+    </button>
+  );
+}
+
 function SessionItemInlineContext({
   item,
   canManage,
   isClosed,
   matchAction,
   onResolveMatch,
-  onOpenHistory,
   onOpenSuggestedPhoto,
   onOpenProofPhoto
 }) {
   const title = itemDisplayName(item);
   const submissions = item.submissions || [];
-  const priorSnapshot = getPriorInventorySnapshot(item);
   const hasSuggestedMatch = Boolean(canManage && !isClosed && item.suggestedInventoryItem);
 
-  if (!priorSnapshot && !hasSuggestedMatch && !submissions.length) return null;
+  if (!hasSuggestedMatch && !submissions.length) return null;
 
   return (
     <div className="session-item-context-stack">
-      {priorSnapshot ? (
-        <button
-          className="btn btn-secondary btn-small session-item-history-action"
-          type="button"
-          aria-label={`View previous inventory history for ${title}`}
-          aria-haspopup="dialog"
-          onClick={onOpenHistory}
-        >
-          <History aria-hidden="true" />
-          <span>Previous inventory</span>
-        </button>
-      ) : null}
-
       {hasSuggestedMatch ? (
         <PossiblePriorMatchCard
           item={item}
@@ -3819,6 +3822,7 @@ function SessionPanel({
                               <span>{needsMoreProof ? "Respond" : "Add proof"}</span>
                             </button>
                           ) : null}
+                          <PreviousInventoryAction item={item} onOpen={() => openHistory(item.id)} />
                           {canManage && !selectedSessionIsClosed ? (
                             <SessionItemLeaderMenu
                               item={item}
@@ -3846,7 +3850,6 @@ function SessionPanel({
                         isClosed={selectedSessionIsClosed}
                         matchAction={matchAction}
                         onResolveMatch={action => resolvePriorMatch(item.id, action)}
-                        onOpenHistory={() => openHistory(item.id)}
                         onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
                         onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                       />
@@ -3900,14 +3903,16 @@ function SessionPanel({
                           <strong>{itemDisplayName(item)}</strong>
                           <small>{assignedPerson(item) ? `Completed by ${assignedPerson(item)}` : "Completed"}</small>
                         </span>
-                        <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
+                        <div className="session-completed-item-actions">
+                          <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
+                          <PreviousInventoryAction item={item} onOpen={() => openHistory(item.id)} />
+                        </div>
                         <SessionItemInlineContext
                           item={item}
                           canManage={canManage}
                           isClosed
                           matchAction=""
                           onResolveMatch={() => {}}
-                          onOpenHistory={() => openHistory(item.id)}
                           onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
                           onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                         />

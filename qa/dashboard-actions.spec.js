@@ -787,6 +787,9 @@ test.describe("dashboard action destinations", () => {
   });
 
   test("previous inventory history opens from a compact, accessible modal trigger", async ({ page, request }, testInfo) => {
+    if (testInfo.project.name === "mobile-chrome") {
+      await page.setViewportSize({ width: 320, height: 800 });
+    }
     const sessionPayload = await responseJson(await request.get(`${API_URL}/inventory/sessions`, {
       headers: qaHeaders(testInfo)
     }));
@@ -876,9 +879,21 @@ test.describe("dashboard action destinations", () => {
     await expect(sessionRow.getByRole("region", { name: "Previous inventory for Quiet Generator" })).toHaveCount(0);
     const historyButton = sessionRow.getByRole("button", { name: "View previous inventory history for Quiet Generator" });
     await expect(historyButton).toBeVisible();
+    await expect(historyButton).toHaveAttribute("title", "Previous inventory");
     await expect(historyButton).toHaveAttribute("aria-haspopup", "dialog");
+    await expect(historyButton.locator("svg")).toBeVisible();
+    await expect(historyButton.locator("span")).toHaveCount(0);
     await expect(sessionRow.locator(".session-item-leading-thumb img"), "history supplies the full-session thumbnail").toBeVisible();
-    await expect(sessionRow.getByRole("button", { name: "Claim item", exact: true })).toBeVisible();
+    const actionControls = sessionRow.locator(".session-item-action-controls");
+    const claimButton = actionControls.getByRole("button", { name: "Claim item", exact: true });
+    await expect(claimButton).toBeVisible();
+    await expect(actionControls.getByRole("button", { name: "View previous inventory history for Quiet Generator" })).toHaveCount(1);
+    const [claimBox, historyBox] = await Promise.all([claimButton.boundingBox(), historyButton.boundingBox()]);
+    expect(claimBox).not.toBeNull();
+    expect(historyBox).not.toBeNull();
+    expect(historyBox.width).toBeGreaterThanOrEqual(44);
+    expect(historyBox.height).toBeGreaterThanOrEqual(44);
+    expect(Math.abs(claimBox.y - historyBox.y)).toBeLessThanOrEqual(2);
     await expect(sessionRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
     expect(await sessionRow.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
 

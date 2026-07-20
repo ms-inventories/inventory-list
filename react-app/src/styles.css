@@ -2287,9 +2287,27 @@ button {
 }
 
 .session-item-history-action {
-  width: fit-content;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
   min-height: 44px;
+  flex: 0 0 44px;
   justify-self: start;
+  padding: 0;
+}
+
+.session-item-history-action:hover,
+.session-item-history-action:focus-visible {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.session-completed-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .platform-app {
@@ -14180,7 +14198,7 @@ button {
 }
 
 .session-items-table {
-  --session-queue-columns: minmax(230px, 2fr) minmax(105px, 0.85fr) minmax(105px, 0.85fr) minmax(90px, 0.65fr) minmax(180px, 0.9fr);
+  --session-queue-columns: minmax(230px, 2fr) minmax(105px, 0.85fr) minmax(105px, 0.85fr) minmax(90px, 0.65fr) minmax(224px, 0.9fr);
 }
 
 .session-items-table-head,
