@@ -117,6 +117,25 @@ test("platoon Back navigation returns through workspace pages without reauthenti
     createdAt: "2026-07-19T12:00:00.000Z",
     startedAt: "2026-07-19T12:00:00.000Z"
   };
+  const alternateSession = {
+    ...historySession,
+    id: "alternate-history-session",
+    name: "Alternate navigation inventory",
+    createdAt: "2026-07-19T11:00:00.000Z",
+    startedAt: "2026-07-19T11:00:00.000Z"
+  };
+  const historyItem = {
+    id: "history-session-item",
+    sessionId: historySession.id,
+    packetLine: "HISTORY-NAVIGATION-ITEM",
+    expectedQty: 1,
+    status: "unchecked",
+    assignedTo: null,
+    assignedToEmail: null,
+    assignedToName: null,
+    inventoryItem: null,
+    submissions: []
+  };
 
   await page.route("**/application/o/authorize/**", route => {
     authorizeCount += 1;
@@ -153,11 +172,15 @@ test("platoon Back navigation returns through workspace pages without reauthenti
   }));
   await page.route("**/api/inventory/sessions", route => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ sessions: [historySession] })
+    body: JSON.stringify({ sessions: [alternateSession, historySession] })
+  }));
+  await page.route("**/api/inventory/sessions/alternate-history-session", route => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ session: alternateSession, items: [], importBatches: [] })
   }));
   await page.route("**/api/inventory/sessions/history-session", route => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ session: historySession, items: [], importBatches: [] })
+    body: JSON.stringify({ session: historySession, items: [historyItem], importBatches: [] })
   }));
   await page.route("**/api/inventory/review-queue", route => route.fulfill({
     contentType: "application/json",
@@ -189,18 +212,25 @@ test("platoon Back navigation returns through workspace pages without reauthenti
   await expect(page).toHaveURL(/#\/admin$/);
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
-  await page.getByRole("region", { name: "Active inventory" })
-    .getByRole("button", { name: "Open inventory", exact: true })
-    .click();
-  await expect(page).toHaveURL(/#\/admin\/sessions$/);
-  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const activeInventorySelector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+  await activeInventorySelector.selectOption(historySession.id);
+  await expect(activeInventorySelector.locator("option:checked")).toHaveText(historySession.name);
+  const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+  await expect(inventoryWorkspace).toBeVisible();
+  await expect(inventoryWorkspace.locator(".session-item", { hasText: historyItem.packetLine })).toBeVisible();
+  await expect(page).toHaveURL(/#\/admin$/);
 
+  await page.evaluate(() => { window.location.hash = "/admin/sessions"; });
+  await expect(page).toHaveURL(/#\/admin\/sessions$/);
+  await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+  await expect(inventoryWorkspace).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/#\/admin$/);
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
   await page.goForward();
   await expect(page).toHaveURL(/#\/admin\/sessions$/);
-  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+  await expect(inventoryWorkspace).toBeVisible();
 
   await page.getByRole("button", { name: /^Notifications/ }).click();
   await page.getByRole("region", { name: "Notifications" })
@@ -211,14 +241,19 @@ test("platoon Back navigation returns through workspace pages without reauthenti
   await page.getByRole("dialog", { name: "Review queue", exact: true })
     .getByRole("button", { name: "Open inventories", exact: true })
     .click();
-  await expect(page).toHaveURL(/#\/admin\/sessions$/);
-  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
-  await expect(page).toHaveURL(/#\/admin$/);
-  await page.goBack();
   await expect(page).toHaveURL(/#\/admin$/);
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+  await expect(inventoryWorkspace).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/admin\/sessions$/);
+  await expect(inventoryWorkspace).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL(/#\/admin$/);
+  await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toHaveCount(0);
+
+  await openTenantPage(page, "Dashboard", isMobile);
+  await expect(page).toHaveURL(/#\/admin$/);
 
   await page.getByRole("button", { name: /^Notifications/ }).click();
   await page.getByRole("region", { name: "Notifications" })

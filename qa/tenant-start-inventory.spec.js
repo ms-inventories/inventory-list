@@ -10,77 +10,52 @@ async function signInWithQaPersona(page, personaName) {
 
 async function openInventoryWorkspace(page) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open inventories", exact: true })
-    .click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-  await expect(page.locator(".session-summary")).toBeVisible();
 }
 
-async function openNewInventoryForm(page) {
-  const inventoryCreate = page.locator("details.session-create");
-  await expect(inventoryCreate).toBeVisible();
-  if (!(await inventoryCreate.evaluate(element => element.open))) {
-    await inventoryCreate.locator("summary").click();
-  }
-  await expect(inventoryCreate.getByLabel("Inventory name")).toBeVisible();
-  return inventoryCreate;
-}
-
-async function openPacketUpload(page) {
-  const workspace = page.getByRole("region", { name: "Inventory workspace" });
-  const addItems = workspace.getByRole("button", { name: "Add items from packet", exact: true });
-  const inventoryTools = workspace.locator("details.session-tools");
-  const inventoryToolsSummary = inventoryTools.locator(":scope > summary");
-  const startFromPacket = workspace.getByRole("button", { name: "Start inventory from packet", exact: true });
-  const dialog = page.getByRole("dialog", { name: "Upload packet" });
-
+async function expectSelectedInventory(page, name) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
   await expect.poll(async () => {
-    if (await dialog.isVisible()) return true;
+    if (await selector.count()) return selector.locator("option:checked").textContent();
+    const heading = activeInventory.getByRole("heading", { name, exact: true });
+    return (await heading.count()) ? heading.textContent() : "";
+  }).toContain(name);
+}
 
-    try {
-      if (await addItems.isVisible()) {
-        await addItems.click({ timeout: 1_000 });
-      } else if (await inventoryToolsSummary.isVisible()) {
-        if (!(await inventoryTools.evaluate(element => element.open))) {
-          await inventoryToolsSummary.click({ timeout: 1_000 });
-        }
-        const addPacket = inventoryTools.getByRole("button", { name: "Add packet", exact: true });
-        if (await addPacket.isVisible()) await addPacket.click({ timeout: 1_000 });
-      } else if (await startFromPacket.isVisible()) {
-        await startFromPacket.click({ timeout: 1_000 });
-      }
-    } catch {
-      // The inventory list may replace the empty state during this interaction.
-    }
-
-    return dialog.isVisible();
-  }, { timeout: 15_000, intervals: [100, 200, 500] }).toBe(true);
+async function openNewInventoryForm(page, source) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  await activeInventory.getByRole("button", { name: /^(Start another inventory|Start inventory)$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Start inventory" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("radio", { name: source }).check();
+  const inventoryName = dialog.getByLabel("Inventory name");
+  await expect(inventoryName).toBeVisible();
+  return {
+    dialog,
+    inventoryName,
+    startButton: dialog.getByRole("button", { name: "Start inventory", exact: true })
+  };
 }
 
 test.describe("tenant inventory creation", () => {
-  test("platoon admin can create a blank inventory from Manage inventories", async ({ page }) => {
+  test("platoon admin can create a blank inventory from the dashboard workspace", async ({ page }) => {
     const inventoryName = `QA start ${Date.now()}`;
 
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
     await openInventoryWorkspace(page);
 
-    const inventoryCreate = await openNewInventoryForm(page);
-    await inventoryCreate.getByLabel("Inventory name").fill(inventoryName);
-    await inventoryCreate.getByRole("button", { name: "Start inventory", exact: true }).click();
+    const inventoryCreate = await openNewInventoryForm(page, "Create blank inventory");
+    await inventoryCreate.inventoryName.fill(inventoryName);
+    await inventoryCreate.startButton.click();
 
-    const inventoryRow = page.locator(".session-row", { hasText: inventoryName });
-    await expect(inventoryRow).toHaveCount(1);
-    await inventoryRow.click();
-    await expect(page.locator(".session-summary", { hasText: inventoryName })).toContainText("0 items");
-    await expect(page.getByRole("button", { name: new RegExp(`${inventoryName}.*0 items`) }).first()).toBeVisible();
-    await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
-    await expect(
-      page.getByRole("region", { name: "Active inventory" }),
-      "the newly started inventory should appear on the dashboard without a page reload"
-    ).toContainText(inventoryName);
+    await expect(inventoryCreate.dialog).toBeHidden();
+    await expectSelectedInventory(page, inventoryName);
+    await expect(page.getByRole("region", { name: "Active inventory" })).toContainText("0 items");
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toHaveCount(0);
   });
 
   test("platoon admin can start a new inventory from packet import", async ({ page }) => {
@@ -89,26 +64,30 @@ test.describe("tenant inventory creation", () => {
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
     await openInventoryWorkspace(page);
-    await openPacketUpload(page);
-
+    const inventoryCreate = await openNewInventoryForm(page, "Upload packet now");
+    await inventoryCreate.inventoryName.fill(inventoryName);
+    await inventoryCreate.startButton.click();
+    await expect(inventoryCreate.dialog).toBeHidden();
     const packetDialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(packetDialog).toBeVisible();
-    const newInventoryChoice = packetDialog.locator("label.packet-choice", { hasText: "Start a new inventory" });
-    await newInventoryChoice.getByRole("radio").check();
-    await newInventoryChoice.locator("input.input").fill(inventoryName);
-    await packetDialog.getByRole("button", { name: "Choose source" }).click();
-
     await expect(packetDialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
-    await expect(page.locator(".session-row", { hasText: inventoryName })).toHaveCount(1);
+    await expect(packetDialog.getByText("Inventory", { exact: true })).toHaveCount(0);
+    await expect(packetDialog.getByRole("button", { name: "Choose source" })).toHaveCount(0);
+    await expectSelectedInventory(page, inventoryName);
   });
 
-  test("starting inventory locks the form and retries without duplicate inventories", async ({ page }) => {
+  test("starting inventory locks the form and retries without duplicate inventories", async ({ page }, testInfo) => {
+    const retryInventoryName = `Retry inventory ${testInfo.project.name} ${Date.now()}`;
+    let releaseFirstStart;
+    const firstStartGate = new Promise(resolve => {
+      releaseFirstStart = resolve;
+    });
     let startAttempts = 0;
     await page.route("**/api/inventory/sessions", async route => {
       if (route.request().method() !== "POST") return route.continue();
       startAttempts += 1;
       if (startAttempts === 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await firstStartGate;
         return route.fulfill({
           status: 503,
           contentType: "application/json",
@@ -118,30 +97,31 @@ test.describe("tenant inventory creation", () => {
       return route.fulfill({
         status: 201,
         contentType: "application/json",
-        body: JSON.stringify({ session: { id: "qa-start-retry-session", name: "Retry inventory", status: "active" } })
+        body: JSON.stringify({ session: { id: "qa-start-retry-session", name: retryInventoryName, status: "active" } })
       });
     });
 
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
     await openInventoryWorkspace(page);
-    const inventoryCreate = await openNewInventoryForm(page);
-    const inventoryName = inventoryCreate.getByLabel("Inventory name");
-    await inventoryName.fill("Retry inventory");
-    const startButton = inventoryCreate.getByRole("button", { name: "Start inventory", exact: true });
+    const inventoryCreate = await openNewInventoryForm(page, "Create blank inventory");
+    const inventoryName = inventoryCreate.inventoryName;
+    await inventoryName.fill(retryInventoryName);
+    const startButton = inventoryCreate.startButton;
     await startButton.evaluate(button => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     await expect.poll(() => startAttempts).toBe(1);
-    await expect(inventoryCreate.getByRole("button", { name: "Starting inventory..." })).toBeDisabled();
+    await expect(inventoryCreate.dialog.getByRole("button", { name: "Starting..." })).toBeDisabled();
     await expect(inventoryName).toBeDisabled();
-    await expect(page.locator(".session-panel").getByRole("alert")).toContainText("Temporary inventory start failure");
+    releaseFirstStart();
+    await expect(inventoryCreate.dialog.getByRole("alert")).toContainText("Temporary inventory start failure");
     expect(startAttempts).toBe(1);
 
-    await inventoryCreate.getByRole("button", { name: "Start inventory" }).click();
-    await expect(inventoryCreate.getByLabel("Inventory name")).toBeHidden();
+    await inventoryCreate.dialog.getByRole("button", { name: "Start inventory", exact: true }).click();
+    await expect(inventoryCreate.dialog).toBeHidden();
     expect(startAttempts).toBe(2);
   });
 });

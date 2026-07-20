@@ -300,7 +300,8 @@ test.describe("QA smoke", () => {
     await expect(page.getByRole("button", { name: "Start new inventory" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Upload packet" })).toHaveCount(0);
     const activeInventory = page.getByRole("region", { name: "Active inventory" });
-    await expect(activeInventory.getByRole("button", { name: "Open inventory", exact: true })).toBeVisible();
+    await expect(activeInventory).toBeVisible();
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
     if (await workspaceMenu.isVisible()) {
       await workspaceMenu.click();
@@ -313,11 +314,10 @@ test.describe("QA smoke", () => {
       await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
     }
-    await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toBeVisible();
-    await expect(page.locator(".session-create > summary")).toContainText("New inventory");
-    await expect(page.getByRole("button", { name: "Invite crew", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toHaveCount(0);
+    await expect(page.locator(".session-create")).toHaveCount(0);
+    await expect(activeInventory.getByRole("button", { name: "Invite crew", exact: true })).toBeVisible();
   });
 
   test("platoon admin can open and review packet items", async ({ page }) => {
@@ -327,8 +327,10 @@ test.describe("QA smoke", () => {
 
     const activeInventory = page.getByRole("region", { name: "Active inventory" });
     const inventorySelect = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
-    if (await inventorySelect.isVisible()) await inventorySelect.selectOption({ label: "July sensitive items" });
-    await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+    await expect(inventorySelect).toBeVisible();
+    await inventorySelect.selectOption({ label: "July sensitive items" });
+    await expect(inventorySelect.locator("option:checked")).toHaveText("July sensitive items");
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
     const inventoryTools = page.locator("details.session-tools");
     await inventoryTools.locator(":scope > summary").click();
@@ -336,11 +338,11 @@ test.describe("QA smoke", () => {
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText("Inventory", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Inventory", { exact: true })).toHaveCount(0);
     await expect(dialog.getByText("Source", { exact: true })).toBeVisible();
     await expect(dialog.getByText("Review", { exact: true })).toBeVisible();
-
-    await dialog.getByRole("button", { name: "Choose source" }).click();
+    await expect(dialog.getByText("Done", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Choose source" })).toHaveCount(0);
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
 
     await dialog.locator("textarea").fill([

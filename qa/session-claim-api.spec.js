@@ -49,9 +49,10 @@ function syntheticPlatformAdmin(suffix) {
 }
 
 async function createSessionItem(request, identity, suffix) {
+  const sessionName = `QA claim ${suffix}`;
   const sessionData = await responseJson(await request.post(`${API_URL}/inventory/sessions`, {
     headers: qaHeaders(identity),
-    data: { name: `QA claim ${suffix}`, status: "active" }
+    data: { name: sessionName, status: "active" }
   }));
   const itemData = await responseJson(await request.post(`${API_URL}/inventory/sessions/${sessionData.session.id}/items`, {
     headers: qaHeaders(identity),
@@ -60,6 +61,7 @@ async function createSessionItem(request, identity, suffix) {
 
   return {
     sessionId: sessionData.session.id,
+    sessionName,
     sessionItemId: itemData.sessionItem.id
   };
 }
@@ -94,6 +96,17 @@ async function seedBrowserIdentity(page, identity) {
       qa: true
     }));
   }, identity);
+}
+
+async function selectDashboardInventory(page, scenario) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+  await expect.poll(async () => {
+    if (await selector.count()) return selector.locator(`option[value="${scenario.sessionId}"]`).count();
+    return (await activeInventory.textContent())?.includes(scenario.sessionName) ? 1 : 0;
+  }).toBe(1);
+  if (await selector.count()) await selector.selectOption(scenario.sessionId);
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
 }
 
 async function openReviewQueue(page) {
@@ -213,10 +226,7 @@ test.describe("session claim API", () => {
       await page.goto("http://ms.localhost:5175/#/admin");
       await page.getByRole("heading", { name: "Leader Dashboard" }).waitFor();
 
-      const activeInventory = page.getByRole("region", { name: "Active inventory" });
-      const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
-      await selector.selectOption(scenario.sessionId);
-      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
+      await selectDashboardInventory(page, scenario);
 
       let row = page.locator(".session-item", { hasText: `QA-CLAIM-${suffix.toUpperCase()}` });
       await expect(row).toBeVisible();
@@ -314,8 +324,7 @@ test.describe("session claim API", () => {
       await page.getByRole("heading", { name: "Leader Dashboard" }).waitFor();
 
       const activeInventory = page.getByRole("region", { name: "Active inventory" });
-      await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
-      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
+      await selectDashboardInventory(page, scenario);
 
       let row = page.locator(".session-item", { hasText: packetLine });
       await expect(row).toBeVisible();
@@ -369,7 +378,6 @@ test.describe("session claim API", () => {
         expect(submissionRequests).toBe(1);
       });
 
-      await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
       const dashboardReview = page.getByRole("region", { name: "Dashboard review results" });
       await expect(
         dashboardReview.getByText(packetLine, { exact: true }),
@@ -446,9 +454,7 @@ test.describe("session claim API", () => {
       await page.goto("http://ms.localhost:5175/#/admin");
       await page.getByRole("heading", { name: "Leader Dashboard" }).waitFor();
 
-      const activeInventory = page.getByRole("region", { name: "Active inventory" });
-      await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
-      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
+      await selectDashboardInventory(page, scenario);
 
       let row = page.locator(".session-item", { hasText: packetLine });
       await expect(row).toBeVisible();
@@ -493,7 +499,6 @@ test.describe("session claim API", () => {
       const submitted = await (await submissionResponsePromise).json();
       await expect(proofDialog).toBeHidden();
 
-      await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
       await openReviewQueue(page);
       const reviewCard = page.locator(".review-card", { hasText: packetLine });
       await expect(reviewCard).toBeVisible();

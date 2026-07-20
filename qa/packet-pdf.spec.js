@@ -12,18 +12,13 @@ async function signInWithQaPersona(page, personaName) {
 
 async function openPacketUpload(page) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open inventories", exact: true })
-    .click();
-
   const workspace = page.getByRole("region", { name: "Inventory workspace" });
+  await expect(workspace).toBeVisible();
   await expect(workspace.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 
   const addItems = workspace.getByRole("button", { name: "Add items from packet", exact: true });
   const inventoryTools = workspace.locator("details.session-tools");
   const inventoryToolsSummary = inventoryTools.locator(":scope > summary");
-  const startFromPacket = workspace.getByRole("button", { name: "Start inventory from packet", exact: true });
   const dialog = page.getByRole("dialog", { name: "Upload packet" });
 
   await expect.poll(async () => {
@@ -38,19 +33,21 @@ async function openPacketUpload(page) {
         }
         const addPacket = inventoryTools.getByRole("button", { name: "Add packet", exact: true });
         if (await addPacket.isVisible()) await addPacket.click({ timeout: 1_000 });
-      } else if (await startFromPacket.isVisible()) {
-        await startFromPacket.click({ timeout: 1_000 });
       }
     } catch {
-      // The session list may swap the empty state for a selected inventory mid-click.
+      // The selected inventory may finish loading between checks.
     }
 
     return dialog.isVisible();
   }, { timeout: 15_000, intervals: [100, 200, 500] }).toBe(true);
+  await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
+  await expect(dialog.getByText("Inventory", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Choose source" })).toHaveCount(0);
+  return dialog;
 }
 
 test.describe("PDF packet import", () => {
-  test("uses an open inventory when the inventory list finishes loading after the wizard opens", async ({ page }) => {
+  test("defaults to the active inventory when the inventory list finishes loading", async ({ page }) => {
     let releaseSessionList;
     const sessionListGate = new Promise(resolve => {
       releaseSessionList = resolve;
@@ -70,19 +67,12 @@ test.describe("PDF packet import", () => {
 
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
-    await openPacketUpload(page);
-
-    const dialog = page.getByRole("dialog", { name: "Upload packet" });
-    await expect(dialog).toBeVisible();
     await expect.poll(() => blockedSessionListRequests).toBeGreaterThan(0);
+    await expect(page.getByRole("region", { name: "Active inventory" })).toContainText("Loading inventory...");
     sessionListReleased = true;
     releaseSessionList();
 
-    await expect(dialog.getByText("Use an open inventory")).toBeVisible();
-    const chooseSourceButton = dialog.getByRole("button", { name: "Choose source" });
-    await expect(chooseSourceButton).toBeEnabled();
-    await chooseSourceButton.click();
-
+    const dialog = await openPacketUpload(page);
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
     await expect(page.getByText("Name the inventory first.")).toHaveCount(0);
   });
@@ -93,11 +83,7 @@ test.describe("PDF packet import", () => {
 
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
-    await openPacketUpload(page);
-
-    const dialog = page.getByRole("dialog", { name: "Upload packet" });
-    const chooseSourceButton = dialog.getByRole("button", { name: "Choose source" });
-    await expect(chooseSourceButton).toBeEnabled();
+    const dialog = await openPacketUpload(page);
 
     await page.route("**/api/inventory/sessions/*", async route => {
       const url = new URL(route.request().url());
@@ -110,7 +96,7 @@ test.describe("PDF packet import", () => {
       await route.continue();
     });
 
-    await chooseSourceButton.click();
+    await page.locator(".leader-topbar-refresh").evaluate(button => button.click());
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
     await expect.poll(() => abortedDetailRequests).toBeGreaterThan(0);
     await expect(dialog.getByText("Could not reach the inventory API.", { exact: false })).toHaveCount(0);
@@ -136,7 +122,6 @@ test.describe("PDF packet import", () => {
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Choose source" }).click();
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
 
     const fileChooserPromise = page.waitForEvent("filechooser");
@@ -174,7 +159,6 @@ test.describe("PDF packet import", () => {
     await openPacketUpload(page);
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
-    await dialog.getByRole("button", { name: "Choose source" }).click();
     await page.route("**/*pdf.worker*", async route => {
       const url = new URL(route.request().url());
       if (/pdf\.worker(?:\.min)?[^/]*\.(?:mjs|js)$/i.test(url.pathname)) {
@@ -203,7 +187,6 @@ test.describe("PDF packet import", () => {
     await openPacketUpload(page);
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "Choose source" }).click();
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
 
     const fileChooserPromise = page.waitForEvent("filechooser");
@@ -249,7 +232,6 @@ test.describe("PDF packet import", () => {
     await openPacketUpload(page);
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
-    await dialog.getByRole("button", { name: "Choose source" }).click();
     const sourceText = dialog.getByPlaceholder(/Paste hand-receipt text/);
     await sourceText.fill("000009148 R20684 RADIAC SET: AN/VDR-2");
     await dialog.getByRole("button", { name: "Review items" }).click();
@@ -293,7 +275,6 @@ test.describe("PDF packet import", () => {
     await openPacketUpload(page);
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
-    await dialog.getByRole("button", { name: "Choose source" }).click();
     const sourceText = dialog.getByPlaceholder(/Paste hand-receipt text/);
     await sourceText.fill("000009148 R20684 RADIAC SET: AN/VDR-2");
     await dialog.getByRole("button", { name: "Review items" }).click();

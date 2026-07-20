@@ -328,6 +328,22 @@ button {
   line-height: 1.45;
 }
 
+/* Inventory creation stays available on the dashboard without competing with
+   the daily Invite crew and work-queue actions, especially on phones. */
+.leader-active-inventory-actions .btn.leader-start-another-action {
+  width: auto;
+  min-height: 42px;
+  flex: 0 0 auto;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  padding-inline: 9px;
+}
+
+.leader-active-inventory-actions .btn.leader-start-another-action:hover {
+  background: var(--surface-muted);
+}
+
 .public-info-item strong,
 .public-info-item p,
 .public-info-item a,
@@ -2236,6 +2252,44 @@ button {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.modal-panel.prior-inventory-modal {
+  display: grid;
+  width: min(100%, 720px);
+  max-height: calc(100dvh - 36px);
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.prior-inventory-modal-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.prior-inventory-modal-heading .modal-heading,
+.prior-inventory-modal-heading .modal-heading > div {
+  min-width: 0;
+}
+
+.prior-inventory-modal-heading h2 {
+  margin: 2px 0 0;
+  font-size: 1.25rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.prior-inventory-modal > .prior-inventory-snapshot {
+  padding: 14px;
+}
+
+.session-item-history-action {
+  width: fit-content;
+  min-height: 44px;
+  justify-self: start;
 }
 
 .platform-app {
@@ -5393,12 +5447,21 @@ button {
   margin-bottom: 14px;
 }
 
+.session-panel-dashboard {
+  margin-bottom: 0;
+}
+
 .session-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 0.34fr);
   grid-template-areas: "main sidebar";
   gap: 14px;
   align-items: start;
+}
+
+.session-layout.dashboard {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "main";
 }
 
 .session-sidebar {

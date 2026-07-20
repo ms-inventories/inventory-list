@@ -10,24 +10,30 @@ async function signInWithQaPersona(page, personaName) {
 
 async function openInventoryWorkspace(page) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open inventories", exact: true })
-    .click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 }
 
+async function expectSelectedInventory(page, name) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+  await expect.poll(async () => {
+    if (await selector.count()) return selector.locator("option:checked").textContent();
+    const heading = activeInventory.getByRole("heading", { name, exact: true });
+    return (await heading.count()) ? heading.textContent() : "";
+  }).toContain(name);
+}
+
 async function createBlankInventory(page, inventoryName) {
-  const inventoryCreate = page.locator("details.session-create");
-  if (!(await inventoryCreate.evaluate(element => element.open))) {
-    await inventoryCreate.locator("summary").click();
-  }
-  await inventoryCreate.getByLabel("Inventory name").fill(inventoryName);
-  await inventoryCreate.getByRole("button", { name: "Start inventory", exact: true }).click();
-  const inventoryRow = page.locator(".session-row", { hasText: inventoryName });
-  await expect(inventoryRow).toHaveCount(1);
-  await inventoryRow.click();
-  await expect(page.locator(".session-summary", { hasText: inventoryName })).toBeVisible();
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  await activeInventory.getByRole("button", { name: /^(Start another inventory|Start inventory)$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Start inventory" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("radio", { name: "Create blank inventory" }).check();
+  await dialog.getByLabel("Inventory name").fill(inventoryName);
+  await dialog.getByRole("button", { name: "Start inventory", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expectSelectedInventory(page, inventoryName);
 }
 
 test.describe("tenant inventory cleanup", () => {
@@ -39,7 +45,8 @@ test.describe("tenant inventory cleanup", () => {
     await openInventoryWorkspace(page);
     await createBlankInventory(page, sessionName);
 
-    await expect(page.getByRole("button", { name: new RegExp(`${sessionName}.*0 items`) }).first()).toBeVisible();
+    await expectSelectedInventory(page, sessionName);
+    await expect(page.getByRole("region", { name: "Active inventory" })).toContainText("0 items");
     const inventoryTools = page.locator("details.session-tools");
     if (!(await inventoryTools.evaluate(element => element.open))) {
       await inventoryTools.locator("summary").click();
@@ -52,6 +59,6 @@ test.describe("tenant inventory cleanup", () => {
     await expect(deleteDialog).toBeHidden();
 
     await expect(page.getByText("Internal server error")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: new RegExp(sessionName) })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Active inventory" })).not.toContainText(sessionName);
   });
 });

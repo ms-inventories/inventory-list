@@ -120,15 +120,17 @@ test.describe("Tenant notifications", () => {
 
       await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-      await expect(page.locator(".session-summary")).toBeVisible();
-      const currentInventory = page.getByRole("combobox", { name: "Current inventory", exact: true });
-      if (await currentInventory.count()) {
-        await expect(currentInventory).toBeVisible();
-        await expect(currentInventory).toHaveValue(sessionId);
-        await expect(currentInventory.locator("option:checked")).toHaveText(sessionName);
-      } else {
-        await expect(page.locator(".session-summary-copy > strong")).toHaveText(sessionName);
-      }
+      const activeInventory = page.getByRole("region", { name: "Active inventory" });
+      const currentInventory = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+      await expect.poll(async () => {
+        if (await currentInventory.count()) {
+          return (await currentInventory.inputValue()) === sessionId
+            ? currentInventory.locator("option:checked").textContent()
+            : "";
+        }
+        const heading = activeInventory.getByRole("heading", { name: sessionName, exact: true });
+        return (await heading.count()) ? heading.textContent() : "";
+      }).toBe(sessionName);
       const returnedItem = page.locator(".session-item", { hasText: packetLine });
       await expect(returnedItem).toBeVisible();
       await expect(returnedItem.locator(".session-proof-request", { hasText: requestNote }).first()).toBeVisible();

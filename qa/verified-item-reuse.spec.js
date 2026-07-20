@@ -118,10 +118,6 @@ async function seedBrowserIdentity(page) {
 
 async function openWorkspaceView(page, label, heading) {
   if (label === "Inventory Sessions") {
-    await page.getByRole("button", { name: /^Notifications/ }).click();
-    await page.getByRole("region", { name: "Notifications" })
-      .getByRole("button", { name: "Open inventories", exact: true })
-      .click();
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
     return;
@@ -139,6 +135,25 @@ async function openWorkspaceView(page, label, heading) {
   if (await menu.isVisible()) await menu.click();
   await page.getByRole("button", { name: label, exact: true }).click();
   await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+}
+
+async function selectDashboardInventory(page, sessionId, sessionName) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+  const singleInventoryHeading = activeInventory.getByRole("heading", { name: sessionName, exact: true });
+
+  await expect.poll(async () => {
+    if (await selector.isVisible()) return "selector";
+    if (await singleInventoryHeading.isVisible()) return "heading";
+    return "loading";
+  }, { message: `wait for ${sessionName} to become selectable` }).not.toBe("loading");
+
+  if (await selector.isVisible()) {
+    await selector.selectOption(sessionId);
+    await expect(selector).toHaveValue(sessionId);
+  } else {
+    await expect(singleInventoryHeading).toBeVisible();
+  }
 }
 
 async function expectContained(page, locator) {
@@ -198,9 +213,10 @@ test.describe("verified item reuse UI", () => {
       await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
       await openWorkspaceView(page, "Inventory Sessions", "Work queue");
 
-      const sessionButton = page.locator(".session-row", { hasText: active.sessionName });
-      await expect(sessionButton).toBeVisible();
-      await sessionButton.click();
+      await selectDashboardInventory(page, active.sessionId, active.sessionName);
+      await expect(page.getByRole("button", { name: /^(Open inventory|Open session|Back to dashboard)$/ })).toHaveCount(0);
+      await expect(page.getByRole("combobox", { name: "Current inventory", exact: true })).toHaveCount(0);
+      await expect(page.getByText("Manage inventories", { exact: true })).toHaveCount(0);
 
       const matchBanner = page.locator(".prior-match-banner");
       await expect(matchBanner.getByText("1 possible previous record", { exact: true })).toBeVisible();
@@ -231,10 +247,19 @@ test.describe("verified item reuse UI", () => {
       await expectMinHeight(dismissRecord, touchTargetMinimum);
       await useRecord.click();
       await expect(matchCard).toBeHidden();
-      const previousInventory = row.getByRole("region", { name: `Previous inventory for ${packetLine}` });
-      await expect(previousInventory.getByText("Previous inventory", { exact: true })).toBeVisible();
-      await expect(previousInventory).toContainText("Cage 12, upper shelf");
-      await expect(previousInventory.locator(`[aria-label="Previous inventory photos for ${packetLine}"]`)).toBeVisible();
+      await expect(row.getByRole("region", { name: `Previous inventory for ${packetLine}` })).toHaveCount(0);
+      const historyButton = row.getByRole("button", { name: `View previous inventory history for ${packetLine}` });
+      await expect(historyButton).toBeVisible();
+      await expect(row.getByText("Cage 12, upper shelf", { exact: true }), "linking a prior record should retain its last-known location in the queue").toBeVisible();
+      await historyButton.click();
+      const historyDialog = page.getByRole("dialog", { name: `Previous inventory for ${packetLine}` });
+      await expect(historyDialog).toBeVisible();
+      await expect(historyDialog).toHaveAttribute("aria-modal", "true");
+      await expect(historyDialog).toContainText("Cage 12, upper shelf");
+      await expect(historyDialog.locator(`[aria-label="Previous inventory photos for ${packetLine}"]`)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(historyDialog).toBeHidden();
+      await expect(historyButton).toBeFocused();
 
       await row.getByRole("button", { name: "Add proof" }).click();
       const proofDialog = page.getByRole("dialog", { name: `Add proof for ${packetLine}` });

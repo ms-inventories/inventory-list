@@ -71,17 +71,29 @@ async function seedBrowserIdentity(page, identity) {
   }, identity);
 }
 
+async function selectInventory(page, scenario) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+  await expect.poll(async () => {
+    const heading = activeInventory.getByRole("heading", { name: scenario.sessionName, exact: true });
+    if (await heading.isVisible()) return scenario.sessionName;
+    if (!(await selector.isVisible())) return "";
+    return (await selector.locator(`option[value="${scenario.sessionId}"]`).count()) ? scenario.sessionName : "";
+  }).toBe(scenario.sessionName);
+  if (await selector.isVisible()) await selector.selectOption(scenario.sessionId);
+  await expect.poll(async () => {
+    const heading = activeInventory.getByRole("heading", { name: scenario.sessionName, exact: true });
+    if (await heading.isVisible()) return heading.textContent();
+    return (await selector.isVisible()) ? selector.locator("option:checked").textContent() : "";
+  }).toContain(scenario.sessionName);
+}
+
 async function openProofForm(page, scenario) {
   await page.goto(TENANT_URL);
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open inventories", exact: true })
-    .click();
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Work queue" })).toBeVisible();
-  await page.locator(".session-row", { hasText: scenario.sessionName }).click();
+  await selectInventory(page, scenario);
 
   const workspace = page.getByRole("region", { name: "Inventory workspace" });
   const assignmentLists = workspace.getByRole("group", { name: "Work assignment lists" });

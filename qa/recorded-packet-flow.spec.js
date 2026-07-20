@@ -19,26 +19,31 @@ async function signInAsPlatoonAdmin(page) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 }
 
-async function openSessionsFromNotifications(page) {
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open inventories", exact: true })
-    .click();
+async function openInventoryWorkspace(page) {
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 }
 
+async function expectSelectedInventory(page, name) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+  await expect.poll(async () => {
+    if (await selector.count()) return selector.locator("option:checked").textContent();
+    const heading = activeInventory.getByRole("heading", { name, exact: true });
+    return (await heading.count()) ? heading.textContent() : "";
+  }).toContain(name);
+}
+
 async function createBlankInventory(page, name) {
-  const inventoryCreate = page.locator("details.session-create");
-  if (!(await inventoryCreate.evaluate(element => element.open))) {
-    await inventoryCreate.locator("summary").click();
-  }
-  await inventoryCreate.getByLabel("Inventory name").fill(name);
-  await inventoryCreate.getByRole("button", { name: "Start inventory", exact: true }).click();
-  const inventoryRow = page.locator(".session-row", { hasText: name });
-  await expect(inventoryRow).toHaveCount(1);
-  await inventoryRow.click();
-  await expect(page.locator(".session-summary", { hasText: name })).toBeVisible();
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  await activeInventory.getByRole("button", { name: /^(Start another inventory|Start inventory)$/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Start inventory" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("radio", { name: "Create blank inventory" }).check();
+  await dialog.getByLabel("Inventory name").fill(name);
+  await dialog.getByRole("button", { name: "Start inventory", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expectSelectedInventory(page, name);
 }
 
 async function openInventoryTools(page) {
@@ -74,7 +79,7 @@ test.describe("recorded packet and inventory regression", () => {
     await signInAsPlatoonAdmin(page);
     await captureStep(page, testInfo, "01-dashboard");
 
-    await openSessionsFromNotifications(page);
+    await openInventoryWorkspace(page);
     await createBlankInventory(page, sessionName);
     const sessionResponse = await request.get(`${API_URL}/inventory/sessions`, { headers: QA_HEADERS });
     if (!sessionResponse.ok()) throw new Error(await sessionResponse.text());
@@ -87,9 +92,9 @@ test.describe("recorded packet and inventory regression", () => {
       .click();
     const packetDialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(packetDialog).toBeVisible();
-    await expect(packetDialog.locator("option", { hasText: sessionName })).toHaveCount(1);
-    await packetDialog.getByRole("button", { name: "Choose source" }).click();
     await expect(packetDialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
+    await expect(packetDialog.getByText("Inventory", { exact: true })).toHaveCount(0);
+    await expect(packetDialog.getByRole("button", { name: "Choose source" })).toHaveCount(0);
 
     const fileChooserPromise = page.waitForEvent("filechooser");
     await packetDialog.getByRole("button", { name: "Choose file PDF, CSV, text, or image up to 10MB" }).click();
@@ -112,9 +117,8 @@ test.describe("recorded packet and inventory regression", () => {
     await expect(packetDialog).toBeHidden();
     await expect(page.locator(".session-item-drawer")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-    const selectedSessionSummary = page.locator(".session-summary", { hasText: sessionName });
-    await expect(selectedSessionSummary).toBeVisible();
-    await expect(selectedSessionSummary).toContainText("27 items");
+    await expectSelectedInventory(page, sessionName);
+    await expect(page.getByRole("region", { name: "Active inventory" })).toContainText("27 items");
     const importedRow = page.locator(".session-item", { hasText: "Vault 2, rack 4" });
     await expect(importedRow).toHaveCount(1);
     const inventoryTools = await openInventoryTools(page);
@@ -141,24 +145,31 @@ test.describe("recorded packet and inventory regression", () => {
     await closeDialog.getByRole("button", { name: "Close inventory" }).click();
     await expect(closeDialog).toBeHidden();
     await expect(page.getByText("Internal server error")).toHaveCount(0);
-    await expect(page.locator(".session-list > .session-group .session-row", { hasText: sessionName })).toHaveCount(0);
-
-    await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
-    await expect(page.getByRole("region", { name: "Inventory workspace" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Active inventory" })).not.toContainText(sessionName);
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     await expect(page.getByText("Internal server error")).toHaveCount(0);
     await captureStep(page, testInfo, "05-dashboard-after-closeout");
 
-    await openSessionsFromNotifications(page);
+    const reopenResponse = await request.patch(`${API_URL}/inventory/sessions/${cleanupSessionId}`, {
+      headers: QA_HEADERS,
+      data: { status: "active" }
+    });
+    if (!reopenResponse.ok()) throw new Error(await reopenResponse.text());
+    await page.reload();
+    await openInventoryWorkspace(page);
+    const activeInventory = page.getByRole("region", { name: "Active inventory" });
+    const selector = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+    await expect.poll(async () => {
+      if (await selector.count()) return selector.locator(`option[value="${cleanupSessionId}"]`).count();
+      return (await activeInventory.textContent())?.includes(sessionName) ? 1 : 0;
+    }).toBe(1);
+    if (await selector.count()) await selector.selectOption(cleanupSessionId);
+    await expectSelectedInventory(page, sessionName);
     await expect(page.getByText("Internal server error")).toHaveCount(0);
-    const archive = page.locator(".session-archive");
-    await archive.locator("summary").click();
-    const archivedSession = archive.locator(".session-row", { hasText: sessionName });
-    await expect(archivedSession).toBeVisible();
-    await archivedSession.click();
 
-    const closedInventoryTools = await openInventoryTools(page);
-    const persistedHistoryDisclosure = closedInventoryTools.locator("details.packet-import-history");
+    const persistedInventoryTools = await openInventoryTools(page);
+    const persistedHistoryDisclosure = persistedInventoryTools.locator("details.packet-import-history");
     await expect(persistedHistoryDisclosure).toBeVisible();
     await persistedHistoryDisclosure.locator("summary").click();
     const persistedHistory = page.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
@@ -168,7 +179,7 @@ test.describe("recorded packet and inventory regression", () => {
     await expect(persistedHistory.locator('a[href*="/packet-imports/"]')).toHaveCount(0);
     expect(packetMediaRequests, "normal item and provenance use must never navigate to raw packet media").toHaveLength(0);
     await expect(page.getByText("Internal server error")).toHaveCount(0);
-    await captureStep(page, testInfo, "06-closed-session-history");
+    await captureStep(page, testInfo, "06-persisted-session-history");
     } finally {
       if (cleanupSessionId) {
         await request.patch(`${API_URL}/inventory/sessions/${cleanupSessionId}`, {

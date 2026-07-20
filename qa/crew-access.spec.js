@@ -63,6 +63,23 @@ async function seedAdminBrowserSession(page) {
   }, qaAdmin);
 }
 
+async function selectDashboardInventory(page, session) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+  const singleInventoryHeading = activeInventory.getByRole("heading", { name: session.name, exact: true });
+  await expect.poll(async () => {
+    if (await selector.count()) return selector.locator(`option[value="${session.id}"]`).count();
+    return (await singleInventoryHeading.count()) ? 1 : 0;
+  }).toBe(1);
+  if (await selector.count()) {
+    await selector.selectOption(session.id);
+    await expect(selector).toHaveValue(session.id);
+  } else {
+    await expect(singleInventoryHeading).toBeVisible();
+  }
+  return activeInventory;
+}
+
 test.describe("temporary crew access", () => {
   test("one-time code opens only its inventory and logout returns to join", async ({ page, request }, testInfo) => {
     if (testInfo.project.name === "mobile-chrome") await page.setViewportSize({ width: 320, height: 640 });
@@ -96,7 +113,8 @@ test.describe("temporary crew access", () => {
 
       await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
       const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
-      await expect(inventoryWorkspace).toContainText(session.name);
+      await expect(inventoryWorkspace).toBeVisible();
+      await expect(page.getByRole("region", { name: "Active inventory" })).toContainText(session.name);
       await expect.poll(() => inventoryWorkspace.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
       const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
       const mobileNavigation = await workspaceMenu.isVisible();
@@ -154,14 +172,9 @@ test.describe("temporary crew access", () => {
     try {
       await page.goto(TENANT_URL);
       await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-      const activeInventory = page.getByRole("region", { name: "Active inventory" });
-      const activeInventorySelector = activeInventory.getByRole("combobox", { name: "Active inventory" });
-      if (await activeInventorySelector.isVisible()) await activeInventorySelector.selectOption(session.id);
-      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
+      const activeInventory = await selectDashboardInventory(page, session);
       await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-      await page.locator(".session-row", { hasText: session.name }).click();
-      const summary = page.locator(".session-summary").filter({ hasText: session.name });
-      await summary.getByRole("button", { name: "Invite crew" }).click();
+      await activeInventory.getByRole("button", { name: "Invite crew" }).click();
 
       const dialog = page.getByRole("dialog", { name: "Invite crew" });
       await expect(dialog).toBeVisible();

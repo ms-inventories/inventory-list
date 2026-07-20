@@ -44,6 +44,20 @@ async function openWorkspaceTab(page, name) {
   await tab.click();
 }
 
+async function expectSelectedInventory(page, sessionId, sessionName) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+  await expect.poll(async () => {
+    if (await selector.count()) {
+      return (await selector.inputValue()) === sessionId
+        ? selector.locator("option:checked").textContent()
+        : "";
+    }
+    const heading = activeInventory.getByRole("heading", { name: sessionName, exact: true });
+    return (await heading.count()) ? heading.textContent() : "";
+  }).toBe(sessionName);
+}
+
 test.describe("tenant activity log", () => {
   test("admins can filter human-readable activity and open its related session", async ({ page, request }, testInfo) => {
     const sessionName = `QA activity UI ${testInfo.project.name} ${Date.now()}`;
@@ -51,6 +65,11 @@ test.describe("tenant activity log", () => {
       headers: qaHeaders(),
       data: { name: sessionName, status: "active" }
     }))).session;
+    const packetLine = `HISTORY-ACTIVITY-${Date.now()}`;
+    await responseJson(await request.post(`${API_URL}/inventory/sessions/${session.id}/items`, {
+      headers: qaHeaders(),
+      data: { packetLine, expectedQty: 1 }
+    }));
 
     try {
     await signIn(page, "Platoon admin");
@@ -70,8 +89,13 @@ test.describe("tenant activity log", () => {
     await expect(event).not.toContainText(/metadata|storageKey|mediaUploadIds|inviteToken/i);
 
     await event.getByRole("button", { name: "Open inventory" }).click();
+    await expect(page).toHaveURL(/#\/admin$/);
+    await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-    await expect(page.locator(".session-summary", { hasText: sessionName })).toBeVisible();
+    await expectSelectedInventory(page, session.id, sessionName);
+    const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    await expect(inventoryWorkspace).toBeVisible();
+    await expect(inventoryWorkspace.locator(".session-item", { hasText: packetLine })).toBeVisible();
 
     await openWorkspaceTab(page, "Activity Log");
     await expect(page.getByRole("heading", { name: "Activity Log", exact: true })).toBeVisible();
@@ -142,6 +166,9 @@ test.describe("tenant activity log", () => {
     await openWorkspaceTab(page, "Activity Log");
     await expect(page.getByText("No activity yet", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Open inventories", exact: true }).click();
+    await expect(page).toHaveURL(/#\/admin$/);
+    await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   });
 });

@@ -921,6 +921,52 @@ function PriorInventorySnapshot({ item, onOpenPhoto }) {
   );
 }
 
+function PriorInventoryDialog({ item, onClose, onOpenPhoto, isObscured = false }) {
+  if (!item || !getPriorInventorySnapshot(item)) return null;
+
+  const title = itemDisplayName(item);
+  return (
+    <div
+      className="modal-backdrop prior-inventory-modal-backdrop"
+      role="presentation"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget) onClose?.();
+      }}
+    >
+      <section
+        className="modal-panel prior-inventory-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-hidden={isObscured ? "true" : undefined}
+        aria-labelledby="priorInventoryModalTitle"
+        inert={isObscured ? true : undefined}
+        onKeyDown={event => handleModalKeyDown(event, onClose)}
+      >
+        <div className="prior-inventory-modal-heading">
+          <div className="modal-heading">
+            <span className="modal-icon">
+              <History aria-hidden="true" />
+            </span>
+            <div>
+              <p className="eyebrow">Item history</p>
+              <h2 id="priorInventoryModalTitle">Previous inventory for {title}</h2>
+            </div>
+          </div>
+          <button className="icon-button" type="button" aria-label="Close previous inventory" onClick={onClose} autoFocus>
+            <X aria-hidden="true" />
+          </button>
+        </div>
+
+        <PriorInventorySnapshot item={item} onOpenPhoto={onOpenPhoto} />
+
+        <div className="modal-actions">
+          <button className="btn btn-secondary" type="button" onClick={onClose}>Close</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function sessionProgress(session) {
   const total = Number(session?.itemCount || 0);
   const done = Number(session?.foundCount || 0);
@@ -2022,21 +2068,30 @@ function SessionItemInlineContext({
   onAssign,
   onDirectCheck,
   onResolveMatch,
-  onOpenPriorPhoto,
-  onOpenSavedPhoto,
+  onOpenHistory,
   onOpenSuggestedPhoto,
   onOpenProofPhoto
 }) {
   const title = itemDisplayName(item);
-  const savedRecord = item.inventoryItem || null;
-  const savedPhotos = getInventoryItemPhotos(savedRecord);
   const submissions = item.submissions || [];
   const isAssignmentPending = Boolean(assignmentAction);
   const isDirectCheckPending = Boolean(directCheckAction);
+  const priorSnapshot = getPriorInventorySnapshot(item);
 
   return (
     <div className="session-item-context-stack">
-      {item.priorInventoryHistory ? <PriorInventorySnapshot item={item} onOpenPhoto={onOpenPriorPhoto} /> : null}
+      {priorSnapshot ? (
+        <button
+          className="btn btn-secondary btn-small session-item-history-action"
+          type="button"
+          aria-label={`View previous inventory history for ${title}`}
+          aria-haspopup="dialog"
+          onClick={onOpenHistory}
+        >
+          <History aria-hidden="true" />
+          <span>Previous inventory</span>
+        </button>
+      ) : null}
 
       {canManage && !isClosed && item.suggestedInventoryItem ? (
         <PossiblePriorMatchCard
@@ -2046,26 +2101,6 @@ function SessionItemInlineContext({
           onDismiss={() => onResolveMatch("dismiss")}
           onOpenPhoto={onOpenSuggestedPhoto}
         />
-      ) : null}
-
-      {!item.priorInventoryHistory && savedRecord && (savedRecord.currentLocation || savedPhotos.length) ? (
-        <section className="session-item-context session-item-saved-record" aria-label={`Saved record for ${title}`}>
-          <div className="session-item-context-heading">
-            <h3>Previous inventory</h3>
-            <span>Matched saved record</span>
-          </div>
-          {savedRecord.currentLocation ? (
-            <dl className="session-item-context-facts">
-              <div><dt>Last known location</dt><dd>{savedRecord.currentLocation}</dd></div>
-            </dl>
-          ) : null}
-          <ProofPhotoStrip
-            photos={savedPhotos}
-            compact
-            label={`Saved record photos for ${title}`}
-            onOpen={onOpenSavedPhoto}
-          />
-        </section>
       ) : null}
 
       {submissions.length ? (
@@ -2241,13 +2276,16 @@ function SessionPanel({
   refreshVersion = 0,
   onUploadIntentHandled,
   onSessionChange,
+  onSessionListChanged,
   onInventoryChanged,
   onInviteCrew,
-  onOpenReview
+  onOpenReview,
+  dashboardMode = false
 }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [detail, setDetail] = useState(null);
+  const [detailLoadState, setDetailLoadState] = useState({ sessionId: "", isLoading: false, error: "" });
   const [newSessionName, setNewSessionName] = useState("");
   const [isSessionCreateOpen, setIsSessionCreateOpen] = useState(false);
   const [packetRows, setPacketRows] = useState("");
@@ -2264,6 +2302,7 @@ function SessionPanel({
   const [packetWizardSummary, setPacketWizardSummary] = useState(null);
   const [sessionItemFilter, setSessionItemFilter] = useState("available");
   const [proofItemId, setProofItemId] = useState("");
+  const [historyItemId, setHistoryItemId] = useState("");
   const [detailPhotoViewer, setDetailPhotoViewer] = useState(null);
   const [status, setStatus] = useState({ text: "Loading inventories...", isError: false });
   const [isLoadingSessions, setIsLoadingSessions] = useState(true);
@@ -2281,10 +2320,12 @@ function SessionPanel({
   const [closedSessionLimit, setClosedSessionLimit] = useState(20);
   const [sessionToolsOpenId, setSessionToolsOpenId] = useState("");
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
+  const [packetWizardSessionLocked, setPacketWizardSessionLocked] = useState(false);
   const packetFileInputRef = useRef(null);
   const packetTextareaRef = useRef(null);
   const detailPhotoTriggerRef = useRef(null);
   const proofTriggerRef = useRef(null);
+  const historyTriggerRef = useRef(null);
   const packetWizardTriggerRef = useRef(null);
   const lifecycleDialogTriggerRef = useRef(null);
   const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
@@ -2292,7 +2333,10 @@ function SessionPanel({
   const sessionCreateActionRef = useRef(false);
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
+  const sessionAvailabilityRef = useRef({ tenantSlug: "", fingerprint: "" });
+  const missingPreferredRetryRef = useRef("");
   const sessionLoadContextRef = useRef({ tenantSlug: null, token: null, refreshVersion: null });
+  const preferredSessionIdRef = useRef(preferredSessionId);
   const sessionItemFilterSessionRef = useRef("");
   const directCheckActionRef = useRef(new Map());
   const assignmentActionRef = useRef(new Map());
@@ -2301,6 +2345,7 @@ function SessionPanel({
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
   const isPacketBusy = Boolean(packetAction);
   const isReadingPacket = packetAction === "read";
+  preferredSessionIdRef.current = preferredSessionId;
 
   function beginPacketAction(action) {
     if (packetActionRef.current) return false;
@@ -2317,9 +2362,12 @@ function SessionPanel({
 
   function clearSelectedSessionState() {
     sessionDetailRequestRef.current += 1;
+    missingPreferredRetryRef.current = "";
     setSelectedSessionId("");
     setDetail(null);
+    setDetailLoadState({ sessionId: "", isLoading: false, error: "" });
     setProofItemId("");
+    setHistoryItemId("");
     setDetailPhotoViewer(null);
     setPacketWizardSessionId("");
     setIsPacketImportOpen(false);
@@ -2328,6 +2376,7 @@ function SessionPanel({
 
   async function loadSessions(nextSelectedId = selectedSessionId) {
     const loadingStatusText = "Loading inventories...";
+    const preferredAtRequest = preferredSessionIdRef.current;
     const requestId = sessionListRequestRef.current + 1;
     sessionListRequestRef.current = requestId;
     setIsLoadingSessions(true);
@@ -2338,15 +2387,54 @@ function SessionPanel({
       if (requestId !== sessionListRequestRef.current) return false;
 
       const loaded = sortSessionsByAttention(data.sessions || []);
+      const latestPreferred = preferredSessionIdRef.current;
+      const preferredChangedWhileLoading = latestPreferred !== preferredAtRequest;
+      const requestedSelection = latestPreferred !== preferredAtRequest ? latestPreferred : nextSelectedId;
+      const requestedSession = requestedSelection
+        ? loaded.find(session => session.id === requestedSelection)
+        : null;
+      if (
+        latestPreferred
+        && !requestedSession
+        && (preferredChangedWhileLoading || missingPreferredRetryRef.current !== latestPreferred)
+      ) {
+        missingPreferredRetryRef.current = latestPreferred;
+        void loadSessions(latestPreferred);
+        return false;
+      }
+      if (!latestPreferred || requestedSession) missingPreferredRetryRef.current = "";
+
       setSessions(loaded);
-      const selected = nextSelectedId && loaded.some(session => session.id === nextSelectedId)
-        ? nextSelectedId
-        : loaded.find(session => session.status !== "closed")?.id || "";
+      const availabilityFingerprint = loaded
+        .map(session => `${session.id}:${session.status}:${session.name}`)
+        .join("|");
+      const previousAvailability = sessionAvailabilityRef.current;
+      sessionAvailabilityRef.current = { tenantSlug, fingerprint: availabilityFingerprint };
+      if (
+        previousAvailability.tenantSlug === tenantSlug
+        && previousAvailability.fingerprint
+        && previousAvailability.fingerprint !== availabilityFingerprint
+      ) {
+        onSessionListChanged?.();
+      }
+      const selected = requestedSession && requestedSession.status !== "closed"
+        ? requestedSelection
+        : loaded.find(session => session.status === "active")?.id
+          || loaded.find(session => session.status === "draft")?.id
+          || "";
       setSelectedSessionId(selected);
-      if (selected !== preferredSessionId) onSessionChange?.(selected);
+      const preferredSession = latestPreferred
+        ? loaded.find(session => session.id === latestPreferred)
+        : null;
+      const shouldShareDashboardDefault = dashboardMode
+        && selected !== latestPreferred
+        && (!latestPreferred || !preferredSession || preferredSession.status === "closed");
+      if (selected !== latestPreferred && (!dashboardMode || shouldShareDashboardDefault)) {
+        onSessionChange?.(selected);
+      }
       let detailLoaded = true;
       if (selected) {
-        detailLoaded = await loadSessionDetail(selected, false, requestId);
+        detailLoaded = await loadSessionDetail(selected, false, requestId, false);
       } else {
         clearSelectedSessionState();
       }
@@ -2383,11 +2471,13 @@ function SessionPanel({
   ) {
     if (!sessionId) {
       setDetail(null);
+      setDetailLoadState({ sessionId: "", isLoading: false, error: "" });
       return true;
     }
 
     const requestId = sessionDetailRequestRef.current + 1;
     sessionDetailRequestRef.current = requestId;
+    setDetailLoadState({ sessionId, isLoading: true, error: "" });
     try {
       if (showStatus) setStatus({ text: "Loading inventory...", isError: false });
       const data = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
@@ -2395,11 +2485,13 @@ function SessionPanel({
       if (sessionListRequestId && sessionListRequestId !== sessionListRequestRef.current) return false;
 
       setDetail(data);
+      setDetailLoadState({ sessionId, isLoading: false, error: "" });
       if (showStatus) setStatus({ text: "", isError: false });
       return true;
     } catch (error) {
       if (requestId === sessionDetailRequestRef.current && (!sessionListRequestId || sessionListRequestId === sessionListRequestRef.current)) {
-        if (!reportErrors) return false;
+        const message = getApiErrorMessage(error);
+        setDetailLoadState({ sessionId, isLoading: false, error: message });
         if (error?.status === 404 && !sessionListRequestId) {
           clearSelectedSessionState();
           await loadSessions("");
@@ -2409,7 +2501,7 @@ function SessionPanel({
           });
           return false;
         }
-        setStatus({ text: getApiErrorMessage(error), isError: true });
+        if (reportErrors) setStatus({ text: message, isError: true });
       }
       return false;
     }
@@ -2422,8 +2514,15 @@ function SessionPanel({
       || previousContext.refreshVersion !== refreshVersion;
     sessionLoadContextRef.current = { tenantSlug, token, refreshVersion };
     if (!contextChanged && preferredSessionId && preferredSessionId === selectedSessionId) return;
+    if (dashboardMode && preferredSessionId && preferredSessionId !== selectedSessionId) {
+      setSelectedSessionId(preferredSessionId);
+      setDetail(null);
+      setProofItemId("");
+      setHistoryItemId("");
+      setDetailPhotoViewer(null);
+    }
     loadSessions(preferredSessionId || selectedSessionId);
-  }, [tenantSlug, token, preferredSessionId, refreshVersion]);
+  }, [tenantSlug, token, preferredSessionId, refreshVersion, dashboardMode]);
 
   useEffect(() => {
     if (uploadIntent !== "packet") return;
@@ -2437,6 +2536,7 @@ function SessionPanel({
     sessionItemFilterSessionRef.current = "";
     setSessionItemFilter("available");
     setProofItemId("");
+    setHistoryItemId("");
     setDetailPhotoViewer(null);
   }, [selectedSessionId]);
 
@@ -2464,6 +2564,10 @@ function SessionPanel({
   async function selectSession(sessionId) {
     if (!sessionId) return;
     setStatus({ text: "", isError: false });
+    setDetail(null);
+    setProofItemId("");
+    setHistoryItemId("");
+    setDetailPhotoViewer(null);
     setSelectedSessionId(sessionId);
     onSessionChange?.(sessionId);
     await loadSessionDetail(sessionId);
@@ -2520,6 +2624,7 @@ function SessionPanel({
       setNewSessionName("");
       setIsSessionCreateOpen(false);
       setStatus({ text: `Started ${data.session.name}`, isError: false });
+      if (dashboardMode) onSessionChange?.(data.session.id);
       await loadSessions(data.session.id);
       onInventoryChanged?.();
     } catch (error) {
@@ -2533,10 +2638,12 @@ function SessionPanel({
   function openPacketWizard(sessionId = selectedSessionId) {
     if (!packetWizardOpen) packetWizardTriggerRef.current = document.activeElement;
     const fallbackSessionId = sessionId || selectedSessionId || openSessions[0]?.id || "";
+    const lockToSelectedSession = dashboardMode && Boolean(fallbackSessionId);
     setPacketWizardModeTouched(false);
+    setPacketWizardSessionLocked(lockToSelectedSession);
     clearPacketImport();
     setPacketWizardOpen(true);
-    setPacketWizardStep(1);
+    setPacketWizardStep(lockToSelectedSession ? 2 : 1);
     setPacketWizardSummary(null);
     setPacketWizardMode(fallbackSessionId ? "existing" : "new");
     setPacketWizardSessionId(fallbackSessionId);
@@ -2548,6 +2655,7 @@ function SessionPanel({
   function closePacketWizard() {
     if (packetActionRef.current) return;
     setPacketWizardModeTouched(false);
+    setPacketWizardSessionLocked(false);
     clearPacketImport();
     setPacketWizardOpen(false);
     setPacketWizardStep(1);
@@ -2562,6 +2670,7 @@ function SessionPanel({
 
   async function refreshSessions() {
     await loadSessions(selectedSessionId);
+    onInventoryChanged?.();
   }
 
   function requestDeleteSession(session) {
@@ -2651,6 +2760,7 @@ function SessionPanel({
       setPacketWizardMode("existing");
       setPacketWizardSessionId(data.session.id);
       setSelectedSessionId(data.session.id);
+      if (dashboardMode) onSessionChange?.(data.session.id);
       await loadSessions(data.session.id);
       setPacketWizardStep(2);
       setStatus({ text: `Started ${data.session.name}`, isError: false });
@@ -3050,16 +3160,14 @@ function SessionPanel({
         tenantSlug,
         body: { status: nextStatus }
       });
-      const refreshed = await loadSessions(nextStatus === "closed" ? "" : sessionId);
-      if (refreshed) {
-        const crewAccessRevoked = Number(data.crewAccessRevoked || 0);
-        const message = nextStatus === "closed"
-          ? crewAccessRevoked
-            ? `Inventory closed. ${crewAccessRevoked} temporary crew ${crewAccessRevoked === 1 ? "pass" : "passes"} removed.`
-            : "Inventory closed."
-          : "Inventory reopened.";
-        setStatus({ text: message, isError: false });
-      }
+      await loadSessions(nextStatus === "closed" ? "" : sessionId);
+      const crewAccessRevoked = Number(data.crewAccessRevoked || 0);
+      const message = nextStatus === "closed"
+        ? crewAccessRevoked
+          ? `Inventory closed. ${crewAccessRevoked} temporary crew ${crewAccessRevoked === 1 ? "pass" : "passes"} removed.`
+          : "Inventory closed."
+        : "Inventory reopened.";
+      setStatus({ text: message, isError: false });
       onInventoryChanged?.();
       return true;
     } catch (error) {
@@ -3140,7 +3248,17 @@ function SessionPanel({
     }, 0);
   }
 
-  const selectedSession = sessions.find(session => session.id === selectedSessionId) || detail?.session;
+  const requestedSessionId = dashboardMode && preferredSessionId ? preferredSessionId : selectedSessionId;
+  const selectionMatchesDashboard = !dashboardMode || !preferredSessionId || selectedSessionId === preferredSessionId;
+  const detailIsCurrent = Boolean(
+    selectionMatchesDashboard
+    && requestedSessionId
+    && detail?.session?.id === requestedSessionId
+  );
+  const selectedSession = sessions.find(session => session.id === requestedSessionId) || (detailIsCurrent ? detail?.session : null);
+  const selectedDetailLoadState = detailLoadState.sessionId === requestedSessionId
+    ? detailLoadState
+    : { sessionId: requestedSessionId, isLoading: true, error: "" };
   const assignableMembers = useMemo(
     () => (members || []).filter(member =>
       member.status === "active" && ["tenant_admin", "contributor"].includes(member.role)
@@ -3169,8 +3287,8 @@ function SessionPanel({
     return lookup;
   }, [assignmentOptions]);
   const detailItems = useMemo(
-    () => [...(detail?.items || [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
-    [detail?.items]
+    () => [...(detailIsCurrent ? detail?.items || [] : [])].sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b)),
+    [detailIsCurrent, detail?.items]
   );
   const actionableDetailItems = useMemo(
     () => detailItems.filter(item => !sessionItemIsComplete(item)),
@@ -3208,24 +3326,29 @@ function SessionPanel({
       ? (sessionItemFilterCounts.available ? ["available", "Show unclaimed"] : ["team", "Show others"])
       : (sessionItemFilterCounts.available ? ["available", "Show unclaimed"] : ["mine", "Show mine"]);
   const sessionReport = useMemo(
-    () => selectedSession ? buildSessionReport(selectedSession, detail?.items || []) : null,
-    [selectedSession, detail?.items]
+    () => selectedSession ? buildSessionReport(selectedSession, detailIsCurrent ? detail?.items || [] : []) : null,
+    [selectedSession, detailIsCurrent, detail?.items]
   );
-  const importBatches = detail?.importBatches || [];
+  const importBatches = detailIsCurrent ? detail?.importBatches || [] : [];
   const proofItem = detailItems.find(item => item.id === proofItemId) || null;
+  const historyItem = detailItems.find(item => item.id === historyItemId) || null;
 
   useEffect(() => {
     if (proofItemId && !proofItem) setProofItemId("");
   }, [proofItemId, proofItem]);
 
   useEffect(() => {
-    if (!proofItem && !detailPhotoViewer && !packetWizardOpen && !closeSessionTarget && !deleteSessionTarget) return undefined;
+    if (historyItemId && !historyItem) setHistoryItemId("");
+  }, [historyItemId, historyItem]);
+
+  useEffect(() => {
+    if (!proofItem && !historyItem && !detailPhotoViewer && !packetWizardOpen && !closeSessionTarget && !deleteSessionTarget) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [Boolean(proofItem), Boolean(detailPhotoViewer), packetWizardOpen, Boolean(closeSessionTarget), Boolean(deleteSessionTarget)]);
+  }, [Boolean(proofItem), Boolean(historyItem), Boolean(detailPhotoViewer), packetWizardOpen, Boolean(closeSessionTarget), Boolean(deleteSessionTarget)]);
 
   function openFirstPossibleMatch() {
     const first = possibleMatchItems[0];
@@ -3245,6 +3368,16 @@ function SessionPanel({
   function closeProof() {
     setProofItemId("");
     window.requestAnimationFrame(() => proofTriggerRef.current?.focus?.());
+  }
+
+  function openHistory(itemId) {
+    historyTriggerRef.current = document.activeElement;
+    setHistoryItemId(itemId);
+  }
+
+  function closeHistory() {
+    setHistoryItemId("");
+    window.requestAnimationFrame(() => historyTriggerRef.current?.focus?.());
   }
 
   function openItemPhotoViewer(item, photos, index, submission = null) {
@@ -3302,6 +3435,7 @@ function SessionPanel({
     return [...openSessions, selectedSession];
   }, [openSessions, selectedSession]);
   const packetWizardFallbackSessionId = packetWizardSessionId || selectedSessionId || openSessions[0]?.id || "";
+  const packetWizardTargetSession = sessions.find(session => session.id === packetWizardFallbackSessionId) || null;
   const effectivePacketWizardMode = (
     !packetWizardModeTouched && !packetWizardSessionName.trim() && packetWizardFallbackSessionId
   ) ? "existing" : packetWizardMode;
@@ -3374,7 +3508,7 @@ function SessionPanel({
   }
 
   return (
-    <section className="admin-card session-panel">
+    <section className={`admin-card session-panel ${dashboardMode ? "session-panel-dashboard" : ""}`} aria-label={dashboardMode ? "Inventory workspace" : undefined}>
       <input
         ref={packetFileInputRef}
         hidden
@@ -3400,11 +3534,12 @@ function SessionPanel({
         </button>
       </div>
 
-      <div className="session-layout">
+      <div className={`session-layout ${dashboardMode ? "dashboard" : ""}`}>
         <div className="session-main">
           {selectedSession ? (
-            <>
-              <div className="session-summary">
+            detailIsCurrent ? (
+              <>
+              {!dashboardMode ? <div className="session-summary">
                 <div className="session-summary-copy">
                   <span className="session-current-label">Current inventory</span>
                   {sessionSwitcherOptions.length > 1 ? (
@@ -3436,7 +3571,7 @@ function SessionPanel({
                     </button>
                   ) : null}
                 </div>
-              </div>
+              </div> : null}
 
               {canManage && possibleMatchItems.length && !selectedSessionIsClosed ? (
                 <div className="prior-match-banner">
@@ -3497,7 +3632,8 @@ function SessionPanel({
                     submission.submittedBy === me?.user?.id
                     || (currentUserEmail && String(submission.submittedByEmail || "").trim().toLowerCase() === currentUserEmail)
                   ));
-                  const knownLocation = item.inventoryItem?.currentLocation || "";
+                  const priorSnapshot = getPriorInventorySnapshot(item);
+                  const knownLocation = item.locationHint || priorSnapshot?.location || item.inventoryItem?.currentLocation || "";
                   const assignedName = assignedPerson(item);
                   const assignedToCurrentUser = sessionItemAssignedToUser(item, me);
                   const canClaim = Boolean(canSubmit && !pendingProof && !item.assignedTo && !item.assignedToEmail && !selectedSessionIsClosed);
@@ -3506,7 +3642,6 @@ function SessionPanel({
                   const assignmentAction = assignmentActions.get(item.id) || "";
                   const matchAction = matchActions.get(item.id) || "";
                   const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
-                  const priorSnapshot = getPriorInventorySnapshot(item);
                   const leadingPhoto = priorSnapshot?.photos[0] || getInventoryItemPhotos(item.inventoryItem)[0] || null;
                   const isDirectCheckPending = Boolean(directCheckAction);
                   const isAssignmentPending = Boolean(assignmentAction);
@@ -3523,7 +3658,7 @@ function SessionPanel({
                               {[item.inventoryItem.lin ? `LIN ${item.inventoryItem.lin}` : "", item.inventoryItem.nsn ? `NSN ${item.inventoryItem.nsn}` : ""].filter(Boolean).join(" · ")}
                             </span>
                           ) : item.packetLine && item.packetLine !== itemDisplayName(item) ? <span>{item.packetLine}</span> : null}
-                          {item.locationHint || knownLocation ? <small>{item.locationHint || knownLocation}</small> : null}
+                          {knownLocation ? <small>{knownLocation}</small> : null}
                           {item.inventoryItem ? <small className="session-prior-chip confirmed">Saved record</small> : null}
                           {canManage && item.suggestedInventoryItem ? <small className="session-prior-chip suggested">Possible previous record</small> : null}
                           {submission ? (
@@ -3583,8 +3718,7 @@ function SessionPanel({
                         onAssign={memberId => updateSessionItemAssignment(item.id, memberId)}
                         onDirectCheck={nextStatus => updateDirectCheck(item.id, nextStatus)}
                         onResolveMatch={action => resolvePriorMatch(item.id, action)}
-                        onOpenPriorPhoto={(index, snapshot) => openItemPhotoViewer(item, snapshot.photos, index, snapshot.photoContext || snapshot.history)}
-                        onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
+                        onOpenHistory={() => openHistory(item.id)}
                         onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
                         onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                       />
@@ -3655,8 +3789,7 @@ function SessionPanel({
                           onAssign={() => {}}
                           onDirectCheck={() => {}}
                           onResolveMatch={() => {}}
-                          onOpenPriorPhoto={(index, snapshot) => openItemPhotoViewer(item, snapshot.photos, index, snapshot.photoContext || snapshot.history)}
-                          onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
+                          onOpenHistory={() => openHistory(item.id)}
                           onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
                           onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                         />
@@ -3755,14 +3888,35 @@ function SessionPanel({
                   </div>
                 </details>
               ) : null}
-            </>
+              </>
+            ) : selectedDetailLoadState.error && !selectedDetailLoadState.isLoading ? (
+              <EmptyPanel
+                title="Could not load inventory"
+                body={`${selectedDetailLoadState.error} The rest of the dashboard is still available.`}
+                action={(
+                  <button className="btn btn-secondary btn-small" type="button" onClick={() => loadSessionDetail(requestedSessionId)}>
+                    <RefreshCw aria-hidden="true" />
+                    <span>Retry inventory</span>
+                  </button>
+                )}
+              />
+            ) : (
+              <EmptyPanel
+                title="Loading inventory..."
+                body="Switching the work queue to the selected inventory."
+              />
+            )
           ) : (
             <EmptyPanel
-              title={isPacketUploadIntent ? "Start or select an inventory" : "Select an inventory"}
-              body={isPacketUploadIntent
-                ? "Packet upload lives inside an inventory so imported items stay with the right work."
-                : "Inventory details and items will appear here."}
-              action={canManage ? (
+              title={isLoadingSessions
+                ? "Loading inventory..."
+                : isPacketUploadIntent ? "Start or select an inventory" : "Select an inventory"}
+              body={isLoadingSessions
+                ? "Getting the current inventory and its work queue."
+                : isPacketUploadIntent
+                  ? "Packet upload lives inside an inventory so imported items stay with the right work."
+                  : "Inventory details and items will appear here."}
+              action={canManage && !dashboardMode ? (
                 <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard()}>
                   <FileUp aria-hidden="true" />
                   <span>Start inventory from packet</span>
@@ -3772,7 +3926,7 @@ function SessionPanel({
           )}
         </div>
 
-        <div className="session-sidebar">
+        {!dashboardMode ? <div className="session-sidebar">
           <div className="session-sidebar-heading">
             <strong>Manage inventories</strong>
             <span>Switch inventories or start another one.</span>
@@ -3859,7 +4013,7 @@ function SessionPanel({
               />
             )}
           </div>
-        </div>
+        </div> : null}
       </div>
 
       <SessionProofDialog
@@ -3875,6 +4029,13 @@ function SessionPanel({
           void loadSessions(selectedSessionId).then(() => onInventoryChanged?.());
         }}
         onStatus={setStatus}
+      />
+
+      <PriorInventoryDialog
+        item={historyItem}
+        onClose={closeHistory}
+        onOpenPhoto={(index, snapshot) => openItemPhotoViewer(historyItem, snapshot.photos, index, snapshot.photoContext || snapshot.history)}
+        isObscured={Boolean(detailPhotoViewer)}
       />
 
       <ProofPhotoViewer
@@ -3897,7 +4058,9 @@ function SessionPanel({
                   <div>
                     <p className="eyebrow">Packet import</p>
                     <h2 id="packetWizardTitle" className="modal-title">Upload packet</h2>
-                    <p className="modal-copy">Pick the inventory, add the packet source, review the items, then save them.</p>
+                    <p className="modal-copy">{packetWizardSessionLocked
+                      ? `Add packet items to ${packetWizardTargetSession?.name || "the selected inventory"}, review them, then save.`
+                      : "Pick the inventory, add the packet source, review the items, then save them."}</p>
                   </div>
                 </div>
                 <button className="icon-button" type="button" aria-label="Close packet wizard" disabled={isPacketBusy} onClick={closePacketWizard} autoFocus>
@@ -3906,14 +4069,18 @@ function SessionPanel({
               </div>
 
               <div className="packet-wizard-steps" aria-label="Packet import progress">
-                {[
+                {(packetWizardSessionLocked ? [
+                  [2, "Source"],
+                  [3, "Review"],
+                  [4, "Done"]
+                ] : [
                   [1, "Inventory"],
                   [2, "Source"],
                   [3, "Review"],
                   [4, "Done"]
-                ].map(([step, label]) => (
+                ]).map(([step, label], index) => (
                   <span className={packetWizardStep === step ? "active" : packetWizardStep > step ? "complete" : ""} key={step}>
-                    <strong>{step}</strong>
+                    <strong>{packetWizardSessionLocked ? index + 1 : step}</strong>
                     <small>{label}</small>
                   </span>
                 ))}
@@ -4063,10 +4230,11 @@ function SessionPanel({
                       disabled={isPacketBusy}
                       onClick={() => {
                         setStatus({ text: "", isError: false });
-                        setPacketWizardStep(1);
+                        if (packetWizardSessionLocked) closePacketWizard();
+                        else setPacketWizardStep(1);
                       }}
                     >
-                      <span>Back</span>
+                      <span>{packetWizardSessionLocked ? "Cancel" : "Back"}</span>
                     </button>
                     <button
                       className="btn btn-primary"
@@ -4284,7 +4452,7 @@ function SessionPanel({
                   <p className="eyebrow">Closeout</p>
                   <h2 className="modal-title" id="closeSessionTitle">Close this inventory?</h2>
                   <p className="modal-copy">
-                    This moves {closeSessionTarget.name} out of the active work list. You can reopen it later from the closed archive.
+                    This moves {closeSessionTarget.name} out of the active work list. Its completed results remain available in Reports.
                   </p>
                 </div>
               </div>
@@ -8252,52 +8420,59 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
 function LeaderOverviewPanel({
   token,
   tenantSlug,
-  me,
   query,
   onQueryChange = () => {},
   canManage,
-  canSubmit,
   preferredSessionId,
   refreshVersion = 0,
   onSessionChange,
   onCreateSession,
-  onOpenSessions,
-  onOpenSession,
   onInviteCrew,
   onOpenReview,
-  showWorkQueue = false
+  workQueue = null
 }) {
   const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [sessions, setSessions] = useState([]);
-  const [pendingItems, setPendingItems] = useState([]);
-  const [assignmentList, setAssignmentList] = useState("available");
-  const [claimingItemId, setClaimingItemId] = useState("");
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading dashboard...", isError: false });
   const dashboardRequestRef = useRef(0);
   const dashboardContextRef = useRef({ tenantSlug: null, token: null, canManage: null, refreshVersion: null });
-  const detailRequestRef = useRef(0);
 
   async function loadDashboard() {
     const requestId = dashboardRequestRef.current + 1;
     dashboardRequestRef.current = requestId;
+    const reviewRequest = (canManage
+      ? apiRequest("/inventory/review-queue", { token, tenantSlug })
+      : Promise.resolve({ submissions: [] }))
+      .then(data => ({ data, error: null }))
+      .catch(error => ({ data: null, error }));
     try {
       setStatus({ text: "Loading dashboard...", isError: false });
-      const [sessionData, reviewData] = await Promise.all([
-        apiRequest("/inventory/sessions", { token, tenantSlug }),
-        canManage ? apiRequest("/inventory/review-queue", { token, tenantSlug }) : Promise.resolve({ submissions: [] })
-      ]);
+      const sessionData = await apiRequest("/inventory/sessions", { token, tenantSlug });
       if (requestId !== dashboardRequestRef.current) return;
       const loadedSessions = sortSessionsByAttention(sessionData.sessions || []);
       dashboardContextRef.current = { tenantSlug, token, canManage, refreshVersion };
       setSessions(loadedSessions);
-      setSubmissions(reviewData.submissions || []);
       setStatus({ text: "", isError: false });
     } catch (error) {
       if (requestId === dashboardRequestRef.current) {
         setStatus({ text: getApiErrorMessage(error), isError: true });
       }
+      return;
     }
+
+    const reviewResult = await reviewRequest;
+    if (requestId !== dashboardRequestRef.current) return;
+    if (reviewResult.error) {
+      setSubmissions([]);
+      setStatus({
+        text: `Inventories loaded, but the review queue could not be loaded. ${getApiErrorMessage(reviewResult.error)}`,
+        isError: true
+      });
+      return;
+    }
+    setSubmissions(reviewResult.data?.submissions || []);
+    setStatus({ text: "", isError: false });
   }
 
   useEffect(() => {
@@ -8307,126 +8482,25 @@ function LeaderOverviewPanel({
   const hasSearchQuery = searchTerms(query).length > 0;
   const openSessions = sessions.filter(session => session.status !== "closed");
   const activeSessions = sessions.filter(session => session.status === "active");
+  const draftSessions = sessions.filter(session => session.status === "draft");
+  const selectableSessions = [...activeSessions, ...draftSessions];
   const dashboardContext = dashboardContextRef.current;
-  const dashboardIsCurrent = dashboardContext.tenantSlug === tenantSlug
+  const dashboardHasWorkspaceData = dashboardContext.tenantSlug === tenantSlug
     && dashboardContext.token === token
-    && dashboardContext.canManage === canManage
-    && dashboardContext.refreshVersion === refreshVersion;
-  const selectedSession = activeSessions.find(session => session.id === preferredSessionId)
-    || (dashboardIsCurrent ? activeSessions[0] : null);
+    && dashboardContext.canManage === canManage;
+  const preferredSession = selectableSessions.find(session => session.id === preferredSessionId) || null;
+  const selectedSession = preferredSession
+    || (!preferredSessionId && dashboardHasWorkspaceData ? activeSessions[0] || draftSessions[0] : null);
+  const dashboardIsInitiallyLoading = !dashboardHasWorkspaceData && !status.isError;
+  const dashboardHasInitialError = !dashboardHasWorkspaceData && status.isError;
+  const dashboardSelectionIsLoading = Boolean(preferredSessionId && !preferredSession && !dashboardHasInitialError);
+  const dashboardInventoryIsLoading = dashboardIsInitiallyLoading || dashboardSelectionIsLoading;
   const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
   const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
-  const resolvedRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
+  const resolvedRows = openSessions.reduce((total, session) => total + Number(session.completedCount ?? session.foundCount ?? 0), 0);
+  const openItemCount = Math.max(0, totalRows - resolvedRows);
   const overallProgress = totalRows ? Math.round((resolvedRows / totalRows) * 100) : 0;
-
-  useEffect(() => {
-    const sessionId = selectedSession?.id || "";
-    const requestId = detailRequestRef.current + 1;
-    detailRequestRef.current = requestId;
-    setPendingItems([]);
-
-    if (!sessionId) return undefined;
-    if (preferredSessionId !== sessionId) onSessionChange?.(sessionId);
-
-    let ignore = false;
-    async function loadSelectedSession() {
-      try {
-        setStatus({ text: "Loading active inventory...", isError: false });
-        const detail = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
-        if (ignore || requestId !== detailRequestRef.current) return;
-        const rowSession = detail.session || selectedSession;
-        const rows = (detail.items || [])
-          .filter(item => !sessionItemIsComplete(item))
-          .sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b))
-          .map(item => ({ ...item, session: rowSession }));
-        setPendingItems(rows);
-        setAssignmentList(
-          rows.some(item => sessionItemAssignmentBucket(item, me) === "mine")
-            ? "mine"
-            : rows.some(item => sessionItemAssignmentBucket(item, me) === "available")
-              ? "available"
-              : rows.length ? "team" : "available"
-        );
-        setStatus({ text: "", isError: false });
-      } catch (error) {
-        if (!ignore && requestId === detailRequestRef.current) {
-          setStatus({ text: getApiErrorMessage(error), isError: true });
-        }
-      }
-    }
-
-    loadSelectedSession();
-    return () => {
-      ignore = true;
-    };
-  }, [selectedSession?.id, tenantSlug, token, refreshVersion, onSessionChange, me?.user?.id, me?.user?.email]);
-
-  function itemTitle(item) {
-    return item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Inventory item";
-  }
-
-  function itemLocation(item) {
-    return item.locationHint || item.inventoryItem?.currentLocation || "";
-  }
-
-  async function claimDashboardItem(item) {
-    if (!item?.id || claimingItemId) return;
-    setClaimingItemId(item.id);
-    try {
-      setStatus({ text: "Claiming item...", isError: false });
-      await apiRequest(`/session-items/${item.id}/assignment`, {
-        method: "PATCH",
-        token,
-        tenantSlug,
-        body: { memberId: "self" }
-      });
-      const sessionId = item.session?.id || selectedSession?.id;
-      if (sessionId) {
-        const nextDetail = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
-        const rowSession = nextDetail.session || selectedSession;
-        setPendingItems((nextDetail.items || [])
-          .filter(row => !sessionItemIsComplete(row))
-          .sort((a, b) => sessionItemPriority(a) - sessionItemPriority(b))
-          .map(row => ({ ...row, session: rowSession })));
-      }
-      setAssignmentList("mine");
-      setStatus({ text: "Item claimed. It is now in Mine.", isError: false });
-    } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
-    } finally {
-      setClaimingItemId("");
-    }
-  }
-
-  const assignmentListOptions = [
-    ["available", "Unclaimed"],
-    ["mine", "Mine"],
-    ["team", "Others"]
-  ];
-  const assignmentCounts = {
-    available: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "available").length,
-    mine: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "mine").length,
-    team: pendingItems.filter(item => sessionItemAssignmentBucket(item, me) === "team").length
-  };
   const dashboardPreviewLimit = isMobileViewport ? 3 : 5;
-  const visiblePendingItems = pendingItems
-    .filter(item => sessionItemAssignmentBucket(item, me) === assignmentList)
-    .filter(item => matchesSearch([
-      itemTitle(item),
-      item.packetLine,
-      itemLocation(item),
-      item.inventoryItem?.armyName,
-      item.inventoryItem?.lin,
-      item.inventoryItem?.nsn,
-      item.inventoryItem?.description,
-      item.priorInventoryHistory?.sessionName,
-      item.priorInventoryHistory?.locationText,
-      item.priorInventoryHistory?.inventoriedAt,
-      item.status,
-      item.session?.name,
-      assignedPerson(item)
-    ], query))
-    .slice(0, dashboardPreviewLimit);
   const matchingSubmissions = submissions.filter(submission => matchesSearch([
     submission.sessionItem?.packetLine,
     submission.session?.name,
@@ -8455,14 +8529,6 @@ function LeaderOverviewPanel({
           <h1>{canManage ? "Leader Dashboard" : "Inventory Dashboard"}</h1>
           <p>{canManage ? "Manage active inventories and review submitted proof." : "Claim inventory work and submit proof from one place."}</p>
         </div>
-        {!canManage && !selectedSession ? (
-          <div className="leader-page-actions">
-            <button className="btn btn-primary" type="button" onClick={onOpenSessions}>
-              <ListChecks aria-hidden="true" />
-              <span>Open inventory</span>
-            </button>
-          </div>
-        ) : null}
       </div>
 
       <div className={`leader-metric-strip ${canManage ? "" : "contributor"}`} aria-label="Inventory overview">
@@ -8471,7 +8537,7 @@ function LeaderOverviewPanel({
           <span>Open inventories</span>
         </div>
         <div>
-          <strong>{pendingItems.length}</strong>
+          <strong>{openItemCount}</strong>
           <span>Open items</span>
         </div>
         {canManage ? (
@@ -8492,38 +8558,46 @@ function LeaderOverviewPanel({
             <ListChecks aria-hidden="true" />
           </span>
           <div>
-            <p className="eyebrow">Active inventory</p>
-            {activeSessions.length > 1 ? (
+            <p className="eyebrow">Current inventory</p>
+            {selectableSessions.length > 1 && selectedSession ? (
               <select
                 className="select leader-active-inventory-select"
                 value={selectedSession?.id || ""}
                 aria-label="Active inventory"
                 onChange={event => onSessionChange?.(event.target.value)}
               >
-                {activeSessions.map(session => (
-                  <option value={session.id} key={session.id}>{session.name}</option>
+                {selectableSessions.map(session => (
+                  <option value={session.id} key={session.id}>
+                    {session.name}{session.status === "draft" ? " (Draft)" : ""}
+                  </option>
                 ))}
               </select>
             ) : (
-              <h2>{selectedSession?.name || "No active inventory"}</h2>
+              <h2>{selectedSession?.name
+                || (dashboardInventoryIsLoading ? "Loading inventory..." : dashboardHasInitialError ? "Inventory unavailable" : "No active inventory")}</h2>
             )}
             <p>{selectedSession
-              ? `${countLabel(selectedSession.itemCount || 0, "item")} - ${sessionProgress(selectedSession)}% complete`
-              : "Start an inventory to put current work on the dashboard."}</p>
+              ? `${selectedSession.status === "draft" ? "Draft - " : ""}${countLabel(selectedSession.itemCount || 0, "item")} - ${sessionProgress(selectedSession)}% complete`
+              : dashboardInventoryIsLoading
+                ? "Getting the current inventory and its work queue."
+                : dashboardHasInitialError
+                  ? "Refresh the workspace to try loading inventories again."
+                  : "Start an inventory to put current work on the dashboard."}</p>
           </div>
-          {selectedSession ? (
+          {selectedSession && canManage ? (
             <div className="leader-active-inventory-actions">
-              <button className="btn btn-primary" type="button" onClick={() => onOpenSession(selectedSession.id)}>
-                <span>Open inventory</span>
-              </button>
-              {canManage && onInviteCrew ? (
+              {selectedSession.status === "active" && onInviteCrew ? (
                 <button className="btn btn-secondary" type="button" onClick={() => onInviteCrew(selectedSession)}>
                   <UserPlus aria-hidden="true" />
                   <span>Invite crew</span>
                 </button>
               ) : null}
+              <button className="btn btn-subtle btn-small leader-start-another-action" type="button" onClick={onCreateSession}>
+                <Plus aria-hidden="true" />
+                <span>Start another inventory</span>
+              </button>
             </div>
-          ) : canManage ? (
+          ) : !selectedSession && canManage && !dashboardInventoryIsLoading && !dashboardHasInitialError ? (
             <button className="btn btn-primary" type="button" onClick={onCreateSession}>
               <Plus aria-hidden="true" />
               <span>Start inventory</span>
@@ -8532,100 +8606,9 @@ function LeaderOverviewPanel({
         </div>
       </section>
 
-      <div className={`leader-dashboard-grid ${!canManage || !showWorkQueue ? "single" : ""}`}>
-        {showWorkQueue ? (
-        <section className="leader-card" aria-label="Pending inventory results">
-          <div className="leader-card-header">
-            <span className="leader-card-icon">
-              <Search aria-hidden="true" />
-            </span>
-            <div>
-              <h2>Work queue</h2>
-              <p>{selectedSession ? selectedSession.name : "No active inventory selected."}</p>
-            </div>
-            <button className="btn btn-secondary btn-small" type="button" onClick={() => selectedSession ? onOpenSession(selectedSession.id) : onOpenSessions()}>
-              <span>Open inventory</span>
-            </button>
-          </div>
+      {workQueue ? <div className="leader-dashboard-workspace">{workQueue}</div> : null}
 
-          {selectedSession ? (
-            <div className="session-filter-strip leader-work-tabs" role="group" aria-label="Dashboard work assignment lists">
-              {assignmentListOptions.map(([value, label]) => (
-                <button className={assignmentList === value ? "active" : ""} type="button" key={value} aria-pressed={assignmentList === value} onClick={() => setAssignmentList(value)}>
-                  <span>{label}</span>
-                  <strong>{assignmentCounts[value]}</strong>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="leader-table">
-            {visiblePendingItems.length ? visiblePendingItems.map(item => {
-              const priorSnapshot = getPriorInventorySnapshot(item);
-              const imageUrls = priorSnapshot?.photos.length
-                ? priorSnapshot.photos.map(photo => photo.url)
-                : getInventoryItemImages(item.inventoryItem);
-              const currentLocation = itemLocation(item);
-              const assignedName = assignedPerson(item);
-              const canClaimItem = Boolean(canSubmit && !item.assignedTo && !item.assignedToEmail && sessionItemAssignmentBucket(item, me) === "available");
-              return (
-                <article className="leader-table-row" key={item.id}>
-                  <div className="leader-item-cell">
-                    <span className="leader-thumb">
-                      {imageUrls[0] ? <ProtectedMediaImage src={imageUrls[0]} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
-                    </span>
-                    <div>
-                      <strong>{itemTitle(item)}</strong>
-                      <span>{item.session?.name || "Inventory"}</span>
-                      <small>{assignedName ? `Assigned to ${assignedName}` : "Unassigned"}</small>
-                    </div>
-                  </div>
-                  {currentLocation && currentLocation !== priorSnapshot?.location ? <span>{currentLocation}</span> : null}
-                  <PriorInventorySnapshot item={item} />
-                  <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
-                  {canClaimItem ? (
-                    <button className="btn btn-primary btn-small" type="button" disabled={Boolean(claimingItemId)} onClick={() => claimDashboardItem(item)}>
-                      <UserPlus aria-hidden="true" />
-                      <span>{claimingItemId === item.id ? "Claiming..." : "Claim item"}</span>
-                    </button>
-                  ) : null}
-                </article>
-              );
-            }) : (
-              <EmptyPanel
-                title={hasSearchQuery
-                  ? "No matching work"
-                  : assignmentList === "available"
-                    ? "Nothing unclaimed"
-                    : assignmentList === "mine"
-                      ? "Nothing assigned to you"
-                      : "Nothing assigned to others"}
-                body={hasSearchQuery
-                  ? "Clear the dashboard search or try a different item or location."
-                  : selectedSession
-                    ? "Choose another assignment list or open the inventory to see completed items."
-                    : "Start or reopen an inventory to see current work."}
-                action={hasSearchQuery ? (
-                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onQueryChange("")}>
-                    <RefreshCw aria-hidden="true" />
-                    <span>Reset dashboard search</span>
-                  </button>
-                ) : selectedSession ? (
-                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(selectedSession.id)}>
-                    <span>Browse inventory work</span>
-                  </button>
-                ) : canManage ? (
-                  <button className="btn btn-primary btn-small" type="button" onClick={onCreateSession}>
-                    <Plus aria-hidden="true" />
-                    <span>Start inventory</span>
-                  </button>
-                ) : null}
-              />
-            )}
-          </div>
-        </section>
-        ) : null}
-
+      <div className="leader-dashboard-grid single">
         {canManage ? (
           <section className="leader-card" aria-label="Dashboard review results">
           <div className="leader-card-header">
@@ -9814,7 +9797,7 @@ function activityDateBoundary(value, endOfDay = false) {
   return date.toISOString();
 }
 
-function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions, onOpenPeople, onOpenSettings }) {
+function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions, onOpenReports, onOpenPeople, onOpenSettings }) {
   const emptyFilters = { category: "", actor: "", action: "", entityType: "", from: "", to: "" };
   const [events, setEvents] = useState([]);
   const [nextCursor, setNextCursor] = useState("");
@@ -9980,6 +9963,8 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
       <section className="activity-timeline" aria-label="Workspace activity">
         {events.length ? events.map(event => {
           const category = activityCategoryFor(event);
+          const completedInventoryEvent = event.action === "inventory_session.updated"
+            && String(event.details?.status || "").toLowerCase() === "closed";
           const safeDetails = Object.entries(event.details || {}).filter(([key, value]) => (
             ACTIVITY_DETAIL_LABELS[key] && value !== "" && value !== null && value !== undefined
           ));
@@ -10012,7 +9997,13 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
               </div>
               <div className="activity-event-actions">
                 {event.context?.sessionId ? (
-                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(event.context.sessionId)}>Open inventory</button>
+                  <button
+                    className="btn btn-secondary btn-small"
+                    type="button"
+                    onClick={() => completedInventoryEvent ? onOpenReports() : onOpenSession(event.context.sessionId)}
+                  >
+                    {completedInventoryEvent ? "Open reports" : "Open inventory"}
+                  </button>
                 ) : null}
                 {category === "access" ? (
                   <button className="btn btn-secondary btn-small" type="button" onClick={onOpenPeople}>Open people</button>
@@ -10554,7 +10545,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     const requestedTab = tenantRouteFromLocation().tab;
     return isTenantAdmin || requestedTab === "dashboard" ? requestedTab : "dashboard";
   });
-  const [isSessionWorkspaceOpen, setIsSessionWorkspaceOpen] = useState(() => isCrew || tenantRouteFromLocation().panel === "sessions");
   const [isReviewWorkspaceOpen, setIsReviewWorkspaceOpen] = useState(() => isTenantAdmin && tenantRouteFromLocation().panel === "review");
   const [reviewSubmissionId, setReviewSubmissionId] = useState("");
   const [reviewModalRevision, setReviewModalRevision] = useState(0);
@@ -10614,10 +10604,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const userName = me?.user?.display_name || me?.user?.displayName || me?.user?.email || "Signed in";
   const userRole = isCrew ? "Crew member" : me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
-  const tenantSearch = isReviewWorkspaceOpen ? null : activeTab === "dashboard" ? (isSessionWorkspaceOpen ? {
+  const tenantSearch = isReviewWorkspaceOpen ? null : activeTab === "dashboard" ? {
     label: "Search inventory items",
     placeholder: "Search items, LIN, NSN, or location..."
-  } : null) : ({
+  } : ({
     equipment: {
       label: "Search equipment",
       placeholder: "Search equipment, LIN, NSN, or reported location..."
@@ -10643,7 +10633,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const tenantSearchContext = isReviewWorkspaceOpen
     ? "review"
     : activeTab === "dashboard"
-      ? isSessionWorkspaceOpen ? "inventory" : "overview"
+      ? "inventory"
       : activeTab;
 
   useEffect(() => {
@@ -10731,7 +10721,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   function selectTenantTab(tabId) {
     if (tabId !== activeTab) setLeaderQuery("");
     setActiveTab(tabId);
-    setIsSessionWorkspaceOpen(isCrew);
     setIsReviewWorkspaceOpen(false);
     navigateAppHash(tenantTabHashes[tabId] || tenantTabHashes.dashboard);
     closeTenantSidebar(false);
@@ -10757,7 +10746,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     if (currentPath && currentPath !== "/admin/review") {
       reviewReturnPathRef.current = currentPath;
     } else if (!currentPath) {
-      reviewReturnPathRef.current = isSessionWorkspaceOpen ? "/admin/sessions" : tenantTabHashes[activeTab] || tenantTabHashes.dashboard;
+      reviewReturnPathRef.current = tenantTabHashes[activeTab] || tenantTabHashes.dashboard;
     }
     setReviewSubmissionId(submissionId || "");
     setLeaderQuery("");
@@ -10896,7 +10885,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       if (route.panel === "review" && isTenantAdmin) {
         setIsReviewWorkspaceOpen(true);
       } else {
-        setIsSessionWorkspaceOpen(isCrew || route.panel === "sessions");
         setIsReviewWorkspaceOpen(false);
         setReviewSubmissionId("");
       }
@@ -11311,24 +11299,55 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
 
   function openSessions(intent = "", { navigate = true, replace = false } = {}) {
     setSessionIntent(intent);
-    setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
     setIsReviewWorkspaceOpen(false);
     setIsNotificationsOpen(false);
     setIsUserMenuOpen(false);
-    if (navigate) navigateAppHash("/admin/sessions", { replace });
+    if (navigate) navigateAppHash(tenantTabHashes.dashboard, { replace });
     closeTenantSidebar(false);
   }
 
-  function openActivitySession(sessionId) {
+  function openCompletedInventoryRecord() {
+    setIsNotificationsOpen(false);
+    setIsUserMenuOpen(false);
+    if (isTenantAdmin) {
+      setStatus({ text: "", isError: false });
+      selectTenantTab("reports");
+      return;
+    }
+    setStatus({
+      text: "That inventory is closed. Ask a platoon admin for the completed report.",
+      isError: false
+    });
+  }
+
+  async function openActivitySession(sessionId) {
+    if (!sessionId) return;
+    setStatus({ text: "Opening inventory...", isError: false });
+    try {
+      const data = await apiRequest("/inventory/sessions", { token, tenantSlug });
+      const target = (data.sessions || []).find(session => session.id === sessionId);
+      if (!target || target.status === "closed") {
+        openCompletedInventoryRecord();
+        return;
+      }
+    } catch (error) {
+      setStatus({
+        text: `Could not open that inventory. ${getApiErrorMessage(error)}`,
+        isError: true
+      });
+      return;
+    }
+
     setPreferredSessionId(sessionId || "");
     setSessionIntent("");
-    setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
     setIsReviewWorkspaceOpen(false);
     setIsNotificationsOpen(false);
     setIsUserMenuOpen(false);
-    navigateAppHash("/admin/sessions");
+    setStatus({ text: "", isError: false });
+    refreshInventoryWorkspace();
+    navigateAppHash(tenantTabHashes.dashboard);
     closeTenantSidebar(false);
   }
 
@@ -11365,7 +11384,13 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       startInventoryActionRef.current = true;
       setIsStartingInventory(true);
       setStartInventoryStatus({ text: "Starting inventory...", isError: false });
-      const data = await apiRequest("/inventory/sessions", {
+      const sessionData = await apiRequest("/inventory/sessions", { token, tenantSlug });
+      const existingSession = (sessionData.sessions || []).find(session => (
+        session.status !== "closed"
+        && Number(session.itemCount || 0) === 0
+        && normalizeSessionName(session.name) === normalizeSessionName(name)
+      ));
+      const data = existingSession ? { session: existingSession } : await apiRequest("/inventory/sessions", {
         method: "POST",
         token,
         tenantSlug,
@@ -11376,11 +11401,15 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setSessionIntent(startInventoryForm.source === "packet" ? "packet" : "");
       setStartInventoryForm({ name: defaultInventorySessionName(), source: startInventoryForm.source });
       setIsStartInventoryOpen(false);
-      setIsSessionWorkspaceOpen(true);
       setIsReviewWorkspaceOpen(false);
       setActiveTab("dashboard");
-      navigateAppHash("/admin/sessions");
-      setStatus({ text: `Started ${data.session?.name || name}`, isError: false });
+      navigateAppHash(tenantTabHashes.dashboard);
+      setStatus({
+        text: existingSession
+          ? `Opened existing inventory ${data.session?.name || name}.`
+          : `Started ${data.session?.name || name}`,
+        isError: false
+      });
       markInventoryChanged();
     } catch (error) {
       setStartInventoryStatus({ text: getApiErrorMessage(error), isError: true });
@@ -11395,6 +11424,11 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     const tab = action.tab;
     if (tab === "review" && isTenantAdmin) {
       openReviewWorkspace(action.submissionId || notification?.submissionId || "");
+      return;
+    }
+
+    if (notification?.type === "session_closed" || tab === "reports") {
+      openCompletedInventoryRecord();
       return;
     }
 
@@ -11710,59 +11744,41 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
           <StatusLine status={status} />
 
           {activeTab === "dashboard" ? (
-            <>
-              {!isSessionWorkspaceOpen ? (
-                <LeaderOverviewPanel
+            <LeaderOverviewPanel
+              token={token}
+              tenantSlug={tenantSlug}
+              query={leaderQuery}
+              onQueryChange={setLeaderQuery}
+              canManage={isTenantAdmin}
+              preferredSessionId={preferredSessionId}
+              refreshVersion={inventoryRevision + reviewModalRevision}
+              onSessionChange={setPreferredSessionId}
+              onCreateSession={() => openStartInventoryWizard("packet")}
+              onInviteCrew={session => setCrewDialogSession(session)}
+              onOpenReview={openReviewWorkspace}
+              workQueue={(
+                <SessionPanel
                   token={token}
                   tenantSlug={tenantSlug}
                   me={me}
-                  query={leaderQuery}
-                  onQueryChange={setLeaderQuery}
+                  members={members}
                   canManage={isTenantAdmin}
                   canSubmit={canSubmitProof}
+                  query={leaderQuery}
+                  onQueryChange={setLeaderQuery}
+                  uploadIntent={sessionIntent}
                   preferredSessionId={preferredSessionId}
-                  refreshVersion={inventoryRevision + reviewModalRevision}
+                  refreshVersion={inventoryRefreshRevision + reviewModalRevision}
+                  onUploadIntentHandled={() => setSessionIntent("")}
                   onSessionChange={setPreferredSessionId}
-                  onCreateSession={() => openStartInventoryWizard("packet")}
-                  onOpenSessions={() => openSessions()}
-                  onOpenSession={openActivitySession}
+                  onSessionListChanged={markInventoryChanged}
+                  onInventoryChanged={markInventoryChanged}
                   onInviteCrew={session => setCrewDialogSession(session)}
                   onOpenReview={openReviewWorkspace}
-                  showWorkQueue={false}
+                  dashboardMode
                 />
-              ) : null}
-
-              {isSessionWorkspaceOpen ? (
-                <section className="embedded-workspace-panel" aria-label="Inventory workspace">
-                  {!isCrew ? (
-                    <div className="embedded-workspace-nav">
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => {
-                        setIsSessionWorkspaceOpen(false);
-                        navigateAppHash(tenantTabHashes.dashboard, { replace: true });
-                      }}><Home aria-hidden="true" /><span>Back to dashboard</span></button>
-                    </div>
-                  ) : null}
-                  <SessionPanel
-                    token={token}
-                    tenantSlug={tenantSlug}
-                    me={me}
-                    members={members}
-                    canManage={isTenantAdmin}
-                    canSubmit={canSubmitProof}
-                    query={leaderQuery}
-                    onQueryChange={setLeaderQuery}
-                    uploadIntent={sessionIntent}
-                    preferredSessionId={preferredSessionId}
-                    refreshVersion={inventoryRefreshRevision}
-                    onUploadIntentHandled={() => setSessionIntent("")}
-                    onSessionChange={setPreferredSessionId}
-                    onInventoryChanged={markInventoryChanged}
-                    onInviteCrew={session => setCrewDialogSession(session)}
-                    onOpenReview={openReviewWorkspace}
-                  />
-                </section>
-              ) : null}
-            </>
+              )}
+            />
           ) : null}
 
           {activeTab === "reports" && isTenantAdmin ? (
@@ -11819,6 +11835,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               tenantSlug={tenantSlug}
               onOpenSession={openActivitySession}
               onOpenSessions={() => openSessions()}
+              onOpenReports={openCompletedInventoryRecord}
               onOpenPeople={() => selectTenantTab("people")}
               onOpenSettings={() => selectTenantTab("settings")}
             />
@@ -11897,7 +11914,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 onQueryChange={setLeaderQuery}
                 onClearSearch={clearReviewSearch}
                 onOpenSessions={() => {
-                  closeReviewWorkspace({ restoreFocus: false, nextPath: "/admin/sessions" });
+                  closeReviewWorkspace({ restoreFocus: false, nextPath: tenantTabHashes.dashboard });
                   openSessions("", { navigate: false });
                 }}
                 onInventoryChanged={() => {

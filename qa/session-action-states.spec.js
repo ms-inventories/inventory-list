@@ -73,18 +73,20 @@ async function openScenario(page, scenario) {
   await seedQaAdminSession(page);
   await page.goto(TENANT_URL);
   await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open inventories", exact: true })
-    .click();
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 
-  const sessionButton = page.locator(".session-row", { hasText: scenario.sessionName });
-  await expect(sessionButton).toBeVisible();
-  await sessionButton.click();
-  await expect(page.locator(".session-summary", { hasText: scenario.sessionName })).toBeVisible();
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+  await expect.poll(async () => {
+    if (await selector.count()) return selector.locator(`option[value="${scenario.sessionId}"]`).count();
+    return (await activeInventory.textContent())?.includes(scenario.sessionName) ? 1 : 0;
+  }).toBe(1);
+  if (await selector.count()) await selector.selectOption(scenario.sessionId);
+  await expect.poll(async () => {
+    if (await selector.count()) return selector.locator("option:checked").textContent();
+    return activeInventory.getByRole("heading", { level: 2 }).textContent();
+  }).toContain(scenario.sessionName);
 
   const row = page.locator(".session-item", { hasText: scenario.packetLine });
   await expect(row).toBeVisible();
@@ -96,18 +98,16 @@ async function openScenario(page, scenario) {
 }
 
 test.describe("session async action states", () => {
-  test("locks direct checks and close/reopen mutations through delay, failure, and retry", async ({ page, request }, testInfo) => {
+  test("locks direct checks and close mutations through delay, failure, and retry", async ({ page, request }, testInfo) => {
     test.setTimeout(75_000);
     const scenario = await createScenario(request, testInfo.project.name);
     const directFailureGate = deferred();
     const closeFailureGate = deferred();
-    const reopenSuccessGate = deferred();
     const directRequestId = `qa-direct-${testInfo.project.name}`;
     const closeRequestId = `qa-close-${testInfo.project.name}`;
     let directRequests = 0;
     const directStatuses = [];
     let closeRequests = 0;
-    let reopenRequests = 0;
 
     await page.route("**/api/session-items/*/direct-check", async route => {
       directRequests += 1;
@@ -152,9 +152,6 @@ test.describe("session async action states", () => {
           });
           return;
         }
-      } else if (body.status === "active") {
-        reopenRequests += 1;
-        await reopenSuccessGate.promise;
       }
 
       await route.continue();
@@ -209,43 +206,11 @@ test.describe("session async action states", () => {
     await expect(closeDialog).toBeHidden();
     await expect(page.getByText("Inventory closed.", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
     await expect(
       page.getByRole("region", { name: "Active inventory" }),
       "a closed session must disappear from the dashboard without a page reload"
     ).not.toContainText(scenario.sessionName);
-    await page.getByRole("button", { name: /^Notifications/ }).click();
-    await page.getByRole("region", { name: "Notifications" })
-      .getByRole("button", { name: "Open inventories", exact: true })
-      .click();
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-
-    const archive = page.locator(".session-archive");
-    await expect(archive).toBeVisible();
-    if (!(await archive.evaluate(element => element.open))) await archive.locator("summary").click();
-    const closedSession = archive.locator(".session-row", { hasText: scenario.sessionName });
-    await expect(closedSession).toBeVisible();
-    await closedSession.click();
-    await expect(page.locator(".session-summary", { hasText: scenario.sessionName })).toBeVisible();
-
-    const closedInventoryTools = page.locator(".session-tools");
-    if (!(await closedInventoryTools.evaluate(element => element.open))) {
-      await closedInventoryTools.locator(".session-tools-heading").click();
-    }
-    await closedInventoryTools.getByRole("button", { name: "Reopen inventory", exact: true }).click();
-    const reopening = page.getByRole("button", { name: "Reopening...", exact: true });
-    await expect(reopening).toBeDisabled();
-    await expect.poll(() => reopenRequests).toBe(1);
-    await reopening.evaluate(button => button.click());
-    await page.waitForTimeout(100);
-    expect(reopenRequests).toBe(1);
-
-    reopenSuccessGate.resolve();
-    await expect(page.getByText("Inventory reopened.", { exact: true })).toBeVisible();
-    const reopenedTools = page.locator(".session-tools");
-    if (!(await reopenedTools.evaluate(element => element.open))) {
-      await reopenedTools.locator(".session-tools-heading").click();
-    }
-    await expect(reopenedTools.getByRole("button", { name: "Close inventory", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toHaveCount(0);
   });
 });

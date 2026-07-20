@@ -310,12 +310,11 @@ test.describe("mobile layout audit", () => {
     await activeInventorySelect.selectOption({ label: "July sensitive items" });
     await expect(activeInventorySelect.locator("option:checked")).toHaveText("July sensitive items");
     await expect(page.getByRole("region", { name: "Pending inventory results", exact: true })).toHaveCount(0);
-    await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
     await expectWithinViewport(page, page.getByRole("searchbox", { name: "Search inventory items" }));
-    await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toBeVisible();
     const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    await expect(inventoryWorkspace).toBeVisible();
     const assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
     for (const name of [/^Unclaimed\b/, /^Mine\b/, /^Others\b/]) {
       await expectMinTargetSize(assignmentLists.getByRole("button", { name }), { height: 48 });
@@ -333,9 +332,8 @@ test.describe("mobile layout audit", () => {
     await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Assign to" }), { height: 44 });
     await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Set result" }), { height: 44 });
     const sessionMain = inventoryWorkspace.locator(".session-main");
-    const sessionSidebar = inventoryWorkspace.locator(".session-sidebar");
-    const [mainBox, sidebarBox] = await Promise.all([sessionMain.boundingBox(), sessionSidebar.boundingBox()]);
-    expect(mainBox.y).toBeLessThan(sidebarBox.y);
+    await expectInsideHorizontally(inventoryWorkspace, sessionMain);
+    await expect(inventoryWorkspace.locator(".session-layout")).toHaveClass(/dashboard/);
     const toolsSummary = inventoryWorkspace.locator(".session-tools > summary");
     const [rowBox, toolsBox] = await Promise.all([sessionRow.boundingBox(), toolsSummary.boundingBox()]);
     expect(rowBox.y).toBeLessThan(toolsBox.y);
@@ -349,7 +347,7 @@ test.describe("mobile layout audit", () => {
 
     await page.goto(TENANT_URL);
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-    await expect(page.getByRole("searchbox")).toHaveCount(0);
+    await expectWithinViewport(page, page.getByRole("searchbox", { name: "Search inventory items" }));
     for (const control of [
       page.getByRole("button", { name: "Open workspace menu" }),
       page.getByRole("button", { name: "Open user menu" })
@@ -519,37 +517,36 @@ test.describe("intermediate inventory layout", () => {
 
     await page.setViewportSize({ width: 1280, height: 900 });
 
-    await page.getByRole("button", { name: /^Notifications/ }).click();
-    await page.getByRole("region", { name: "Notifications" }).getByRole("button", { name: "Open inventories", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-    const session = page.locator(".session-row", { hasText: "Search behavior fixture" });
-    await expect(session).toBeVisible();
-    await session.click();
-    const currentInventory = page.getByRole("combobox", { name: "Current inventory", exact: true });
-    if (await currentInventory.isVisible()) {
-      await expect(currentInventory.locator("option:checked")).toHaveText("Search behavior fixture");
+    const activeInventorySelect = activeInventoryCard.getByRole("combobox", { name: "Active inventory", exact: true });
+    const singleInventoryHeading = activeInventoryCard.getByRole("heading", { name: "Search behavior fixture", exact: true });
+    await expect.poll(async () => {
+      if (await activeInventorySelect.isVisible()) return "selector";
+      if (await singleInventoryHeading.isVisible()) return "heading";
+      return "loading";
+    }).not.toBe("loading");
+    if (await activeInventorySelect.isVisible()) {
+      await activeInventorySelect.selectOption({ label: "Search behavior fixture" });
+      await expect(activeInventorySelect.locator("option:checked")).toHaveText("Search behavior fixture");
     } else {
-      await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
+      await expect(singleInventoryHeading).toBeVisible();
     }
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
     const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    await expect(inventoryWorkspace).toBeVisible();
     await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Unclaimed\b/ }).click();
 
     const row = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
     const actions = row.locator(".session-item-actions");
     const inlineControls = row.locator(".session-item-inline-manage");
     const sessionMain = inventoryWorkspace.locator(".session-main");
-    const sessionSidebar = inventoryWorkspace.locator(".session-sidebar");
-    const sessionSummary = inventoryWorkspace.locator(".session-summary");
-    const sessionSummaryActions = sessionSummary.locator(".session-summary-actions");
-    const sessionList = inventoryWorkspace.locator(".session-list");
     const topbar = page.locator(".leader-topbar");
     const topbarSearch = topbar.locator(".leader-search");
     const topbarActions = topbar.locator(".leader-user-actions");
     const topbarRefresh = topbar.getByRole("button", { name: "Refresh workspace", exact: true });
     const topbarNotifications = topbar.getByRole("button", { name: /^Notifications/ });
     const topbarUserTrigger = topbar.getByRole("button", { name: "Open user menu", exact: true });
-    const [wideMainBox, wideSidebarBox] = await Promise.all([sessionMain.boundingBox(), sessionSidebar.boundingBox()]);
-    expect(wideMainBox.x).toBeLessThan(wideSidebarBox.x);
+    await expectInsideHorizontally(inventoryWorkspace, sessionMain);
+    await expect(inventoryWorkspace.locator(".session-layout")).toHaveClass(/dashboard/);
 
     for (const width of [1100, 1025, 1024, 900, 869, 861]) {
       await page.setViewportSize({ width, height: 900 });
@@ -563,12 +560,8 @@ test.describe("intermediate inventory layout", () => {
       await expectMinTargetSize(topbarUserTrigger, { width: 44, height: 44 });
       const [searchBox, topbarActionsBox] = await Promise.all([topbarSearch.boundingBox(), topbarActions.boundingBox()]);
       expect(searchBox.x + searchBox.width).toBeLessThanOrEqual(topbarActionsBox.x - 4);
-      await expectInsideHorizontally(sessionSummary, sessionSummaryActions);
-      await expect(sessionSummary).toHaveCSS("flex-direction", "column");
-      await expect(sessionSummary.getByRole("button", { name: "Invite crew", exact: true })).toHaveCount(1);
-      await expect(sessionSummary.getByRole("button", { name: /Close out|Close inventory|Delete draft|Reopen/i })).toHaveCount(0);
-      await expect(sessionList).toHaveCSS("max-height", "none");
-      await expect(sessionList).toHaveCSS("overflow-y", "visible");
+      await expectInsideHorizontally(activeInventoryCard, activeInventoryActions);
+      await expect(activeInventoryActions.getByRole("button", { name: "Invite crew", exact: true })).toHaveCount(1);
       await expectInsideHorizontally(row, actions);
       await expect(row.getByRole("button", { name: "Found", exact: true })).toHaveCount(0);
       await expect(row.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
@@ -576,8 +569,7 @@ test.describe("intermediate inventory layout", () => {
       await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
       await expect(inlineControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
       await expectInsideHorizontally(row, inlineControls);
-      const [mainBox, sidebarBox] = await Promise.all([sessionMain.boundingBox(), sessionSidebar.boundingBox()]);
-      expect(mainBox.y).toBeLessThan(sidebarBox.y);
+      await expectInsideHorizontally(inventoryWorkspace, sessionMain);
     }
 
     await expect(page.getByRole("dialog"), "resizing inline inventory work must not open a dialog").toHaveCount(0);
@@ -626,6 +618,42 @@ test.describe("intermediate inventory layout", () => {
   });
 
   test("keeps the Users table readable without horizontal panning on compact desktops", async ({ page }) => {
+    const tenant = {
+      id: "33333333-3333-4333-8333-333333333333",
+      slug: "ms",
+      name: "MS Platoon",
+      status: "active",
+      memberCount: 1,
+      adminCount: 0,
+      activeSessionCount: 0,
+      activeTemporaryCrewCount: 0,
+      latestActiveSession: null
+    };
+    await page.route("**/api/platform/tenants", route => route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ tenants: [tenant], provisioningAvailable: true, setup: { tenants: {} } })
+    }));
+    await page.route("**/api/platform/users**", route => route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        users: [{
+          id: "11111111-1111-4111-8111-111111111111",
+          email: "compact-user@876en.test",
+          displayName: "Compact Layout User",
+          accountType: "permanent",
+          hasSignedIn: true,
+          memberships: [{
+            id: "22222222-2222-4222-8222-222222222222",
+            tenantId: tenant.id,
+            tenantSlug: tenant.slug,
+            tenantName: tenant.name,
+            role: "contributor",
+            status: "active"
+          }]
+        }],
+        management: { mutationsAvailable: true }
+      })
+    }));
     await page.setViewportSize({ width: 1024, height: 900 });
     await seedQaRootSession(page);
     await page.goto(ADMIN_URL);

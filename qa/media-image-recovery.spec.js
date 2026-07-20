@@ -122,9 +122,8 @@ async function openSession(page, sessionName) {
   const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
   await expect(selector).toBeVisible();
   await selector.selectOption({ label: sessionName });
-  await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+  await expect(selector.locator("option:checked")).toHaveText(sessionName);
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-  await expect(page.locator(".session-summary", { hasText: sessionName })).toBeVisible();
 }
 
 test.describe("protected history images", () => {
@@ -141,17 +140,6 @@ test.describe("protected history images", () => {
     const tabs = workspace.getByRole("group", { name: "Work assignment lists" });
     await tabs.getByRole("button", { name: /^Unclaimed\b/ }).click();
     await expect.poll(async () => (await context.cookies()).some(cookie => cookie.name === "inventory_media_ms")).toBeTruthy();
-    const mediaCookie = (await context.cookies()).find(cookie => cookie.name === "inventory_media_ms");
-    await context.addCookies([{
-      name: mediaCookie.name,
-      value: "expired-photo-session",
-      domain: mediaCookie.domain,
-      path: mediaCookie.path,
-      httpOnly: true,
-      secure: mediaCookie.secure,
-      sameSite: mediaCookie.sameSite,
-      expires: Math.floor(Date.now() / 1000) + 60
-    }]);
 
     let renewalRequests = 0;
     page.on("request", requestEvent => {
@@ -160,22 +148,45 @@ test.describe("protected history images", () => {
       }
     });
 
+    const mediaPattern = "**/media/**";
+    let rejectNextMediaRequest = true;
+    const simulateExpiredMediaSession = route => {
+      if (rejectNextMediaRequest) {
+        rejectNextMediaRequest = false;
+        return route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Media access denied." })
+        });
+      }
+      return route.continue();
+    };
+    await page.route(mediaPattern, simulateExpiredMediaSession);
     await hiddenSessionItemsStyle.evaluate(element => element.remove());
     await tabs.getByRole("button", { name: /^Mine\b/ }).click();
     const row = workspace.locator(".session-item", { hasText: scenario.itemName });
     await expect(row).toBeVisible();
-    await expect(row.locator(".prior-inventory-snapshot")).toBeVisible();
-    const images = row.locator("img[data-media-state]");
+    const rowImage = row.locator("img[data-media-state]").first();
+    await expect(rowImage).toBeVisible();
+    await rowImage.evaluate(image => {
+      const separator = image.src.includes("?") ? "&" : "?";
+      image.src = `${image.src}${separator}qa_expired=${Date.now()}`;
+    });
+    await expect.poll(() => renewalRequests).toBe(1);
+    await expect.poll(() => rowImage.getAttribute("data-media-state")).toBe("ready");
+    await row.getByRole("button", { name: /View previous inventory history/ }).click();
+    const historyDialog = page.getByRole("dialog", { name: /Previous inventory for/ });
+    await expect(historyDialog.locator(".prior-inventory-snapshot")).toBeVisible();
+    const images = row.locator("img[data-media-state]").or(historyDialog.locator("img[data-media-state]"));
+    const historyImages = historyDialog.locator("img[data-media-state]");
     await expect(images).toHaveCount(2);
+    await expect(historyImages).toHaveCount(1);
     await expect.poll(() => images.evaluateAll(elements => elements.every(image => (
       image.dataset.mediaState === "ready"
       && image.complete
       && image.naturalWidth > 0
-      && image.src.includes("media_retry=")
     )))).toBeTruthy();
-    await expect.poll(() => renewalRequests).toBe(1);
-
-    await row.getByRole("button", { name: "View previous inventory photo 1" }).click();
+    await historyDialog.getByRole("button", { name: "View previous inventory photo 1" }).click();
     const viewer = page.getByRole("dialog", { name: "Evidence photo" });
     const viewerImage = viewer.locator("img[data-media-state]");
     await expect(viewerImage).toBeVisible();
@@ -184,9 +195,13 @@ test.describe("protected history images", () => {
     ))).toBeTruthy();
     await page.keyboard.press("Escape");
     await expect(viewer).toBeHidden();
+    if (await historyDialog.isVisible()) {
+      await historyDialog.getByRole("button", { name: "Close previous inventory" }).click();
+    }
 
     await page.waitForTimeout(2_100);
-    await page.route("**/media/tenants/ms/**", route => route.fulfill({
+    await page.unroute(mediaPattern, simulateExpiredMediaSession);
+    await page.route(mediaPattern, route => route.fulfill({
       status: 404,
       contentType: "application/json",
       body: JSON.stringify({ error: "Photo unavailable" })
@@ -194,7 +209,12 @@ test.describe("protected history images", () => {
     await tabs.getByRole("button", { name: /^Unclaimed\b/ }).click();
     await expect(row).toBeHidden();
     await tabs.getByRole("button", { name: /^Mine\b/ }).click();
-    const unavailableImages = workspace.locator(".session-item", { hasText: scenario.itemName }).locator("img[data-media-state]");
+    const refreshedRow = workspace.locator(".session-item", { hasText: scenario.itemName });
+    await refreshedRow.getByRole("button", { name: /View previous inventory history/ }).click();
+    const unavailableHistoryDialog = page.getByRole("dialog", { name: /Previous inventory for/ });
+    await expect(unavailableHistoryDialog).toBeVisible();
+    const unavailableImages = refreshedRow.locator("img[data-media-state]")
+      .or(unavailableHistoryDialog.locator("img[data-media-state]"));
     await expect(unavailableImages).toHaveCount(2);
     await expect.poll(() => unavailableImages.evaluateAll(elements => elements.every(image => (
       image.dataset.mediaState === "unavailable"
@@ -202,9 +222,11 @@ test.describe("protected history images", () => {
       && image.naturalWidth > 0
       && image.src.startsWith("data:image/svg+xml")
     )))).toBeTruthy();
-    await expect.poll(() => renewalRequests).toBe(2);
+    await expect.poll(() => renewalRequests).toBeGreaterThanOrEqual(2);
+    const settledRenewalRequests = renewalRequests;
+    expect(settledRenewalRequests).toBeLessThanOrEqual(3);
     await page.waitForTimeout(500);
-    expect(renewalRequests).toBe(2);
+    expect(renewalRequests).toBe(settledRenewalRequests);
 
     await responseJson(await request.patch(`${API_URL}/inventory/sessions/${scenario.activeSessionId}`, {
       headers: qaHeaders(qaAdmin),

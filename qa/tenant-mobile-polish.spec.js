@@ -59,12 +59,25 @@ async function openWorkspaceView(page, name) {
   await item.click();
 }
 
-async function openSessionsFromNotifications(page) {
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open inventories", exact: true })
-    .click();
-  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+async function selectDashboardInventory(page, session) {
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+  const singleInventoryHeading = activeInventory.getByRole("heading", { name: session.name, exact: true });
+
+  await expect.poll(async () => {
+    if (await selector.isVisible()) return "selector";
+    if (await singleInventoryHeading.isVisible()) return "heading";
+    return "loading";
+  }, { message: `wait for ${session.name} to become selectable` }).not.toBe("loading");
+
+  if (await selector.isVisible()) {
+    await selector.selectOption(session.id);
+    await expect(selector).toHaveValue(session.id);
+  } else {
+    await expect(singleInventoryHeading).toBeVisible();
+  }
+
+  return activeInventory;
 }
 
 async function expectContained(locator) {
@@ -206,7 +219,7 @@ test.describe("tenant mobile and tablet polish", () => {
     }
   });
 
-  test("mobile dashboard keeps inventory work behind Open inventory and limits the review preview to three items", async ({ page, request }, testInfo) => {
+  test("mobile dashboard keeps the selected work queue open and limits the review preview to three items", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     await page.setViewportSize({ width: 360, height: 740 });
     const suffix = scenarioSuffix(testInfo, "dashboard-preview");
@@ -270,12 +283,14 @@ test.describe("tenant mobile and tablet polish", () => {
       }
       await expectContained(page.locator("main"));
 
-      await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
       const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
       await expect(inventoryWorkspace).toBeVisible();
-      await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^(Open inventory|Open session|Back to dashboard)$/ })).toHaveCount(0);
+      await expect(page.getByRole("combobox", { name: "Current inventory", exact: true })).toHaveCount(0);
+      await expect(page.getByText("Manage inventories", { exact: true })).toHaveCount(0);
+      await expect(inventoryWorkspace.locator(".session-sidebar")).toHaveCount(0);
       await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" })
         .getByRole("button", { name: /^Mine\b/ })
         .click();
@@ -301,14 +316,6 @@ test.describe("tenant mobile and tablet polish", () => {
       expect(fallbackThumbAlignment.display).toBe("grid");
       expect(fallbackThumbAlignment.horizontalOffset).toBeLessThanOrEqual(1);
       expect(fallbackThumbAlignment.verticalOffset).toBeLessThanOrEqual(1);
-      const [mainBox, sidebarBox, rowBox, toolsBox] = await Promise.all([
-        inventoryWorkspace.locator(".session-main").boundingBox(),
-        inventoryWorkspace.locator(".session-sidebar").boundingBox(),
-        sessionRow.boundingBox(),
-        inventoryWorkspace.locator(".session-tools > summary").boundingBox()
-      ]);
-      expect(mainBox.y).toBeLessThan(sidebarBox.y);
-      expect(rowBox.y).toBeLessThan(toolsBox.y);
       await expectContained(sessionRow);
       await expectInsideHorizontally(inventoryWorkspace, sessionRow);
     } finally {
@@ -324,8 +331,6 @@ test.describe("tenant mobile and tablet polish", () => {
     const packetLine = `QA-MOBILE-TOUCH-${suffix.toUpperCase()}`;
     const item = await createItem(request, session.id, packetLine);
     await assignItem(request, item.id, qaAdmin);
-    const archivedSession = await createSession(request, `QA archived mobile ${suffix}`);
-    await closeSession(request, archivedSession.id);
 
     try {
       await seedBrowserIdentity(page);
@@ -345,22 +350,13 @@ test.describe("tenant mobile and tablet polish", () => {
       await manage.click();
       await expectMinTargetSize(page.locator(".team-member-manage .member-role-select").first());
 
-      await openSessionsFromNotifications(page);
+      await openWorkspaceView(page, "Dashboard");
+      await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-      const sessionList = page.locator(".session-list");
-      await expect(sessionList).toBeVisible();
-      const sessionListStyle = await sessionList.evaluate(element => ({
-        overflowY: getComputedStyle(element).overflowY,
-        maxHeight: getComputedStyle(element).maxHeight
-      }));
-      expect(["auto", "scroll"]).not.toContain(sessionListStyle.overflowY);
-      expect(sessionListStyle.maxHeight).toBe("none");
-
-      const archiveSummary = page.locator(".session-archive > summary").first();
-      await expectMinTargetSize(archiveSummary);
-
       const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
-      await inventoryWorkspace.locator(".session-row", { hasText: session.name }).click();
+      await selectDashboardInventory(page, session);
+      await expect(inventoryWorkspace.locator(".session-item", { hasText: packetLine })).toBeVisible();
+      await expect(inventoryWorkspace.locator(".session-sidebar")).toHaveCount(0);
       const assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
       await assignmentLists.getByRole("button", { name: /^Mine\b/ }).click();
       const row = inventoryWorkspace.locator(".session-item", { hasText: packetLine });
