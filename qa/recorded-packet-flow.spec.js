@@ -22,20 +22,42 @@ async function signInAsPlatoonAdmin(page) {
 async function openSessionsFromNotifications(page) {
   await page.getByRole("button", { name: /^Notifications/ }).click();
   await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open sessions", exact: true })
+    .getByRole("button", { name: "Open inventories", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+}
+
+async function createBlankInventory(page, name) {
+  const inventoryCreate = page.locator("details.session-create");
+  if (!(await inventoryCreate.evaluate(element => element.open))) {
+    await inventoryCreate.locator("summary").click();
+  }
+  await inventoryCreate.getByLabel("Inventory name").fill(name);
+  await inventoryCreate.getByRole("button", { name: "Start inventory", exact: true }).click();
+  const inventoryRow = page.locator(".session-row", { hasText: name });
+  await expect(inventoryRow).toHaveCount(1);
+  await inventoryRow.click();
+  await expect(page.locator(".session-summary", { hasText: name })).toBeVisible();
+}
+
+async function openInventoryTools(page) {
+  const tools = page.locator("details.session-tools");
+  await expect(tools).toBeVisible();
+  if (!(await tools.evaluate(element => element.open))) {
+    await tools.locator(":scope > summary").click();
+  }
+  return tools;
 }
 
 async function captureStep(page, testInfo, name) {
   const screenshotPath = testInfo.outputPath(`${name}.png`);
-  await page.screenshot({ path: screenshotPath, fullPage: true });
+  await page.screenshot({ path: screenshotPath });
   await testInfo.attach(name, { path: screenshotPath, contentType: "image/png" });
 }
 
-test.describe("recorded packet and session regression", () => {
-  test("packet provenance stays readable without exposing the stored source", async ({ page, request }, testInfo) => {
+test.describe("recorded packet and inventory regression", () => {
+  test("packet import history stays readable without exposing the stored source", async ({ page, request }, testInfo) => {
     test.setTimeout(90_000);
     const sessionName = `QA recorded flow ${testInfo.project.name} ${Date.now()}`;
     let cleanupSessionId = "";
@@ -52,17 +74,17 @@ test.describe("recorded packet and session regression", () => {
     await signInAsPlatoonAdmin(page);
     await captureStep(page, testInfo, "01-dashboard");
 
-    await page.getByRole("button", { name: "Start new inventory" }).click();
-    const startDialog = page.getByRole("dialog", { name: "Start inventory" });
-    await expect(startDialog).toBeVisible();
-    await startDialog.getByLabel("Session name").fill(sessionName);
-    await startDialog.getByRole("button", { name: "Start session" }).click();
+    await openSessionsFromNotifications(page);
+    await createBlankInventory(page, sessionName);
     const sessionResponse = await request.get(`${API_URL}/inventory/sessions`, { headers: QA_HEADERS });
     if (!sessionResponse.ok()) throw new Error(await sessionResponse.text());
     const sessionPayload = await sessionResponse.json();
     cleanupSessionId = sessionPayload.sessions?.find(session => session.name === sessionName)?.id || "";
     expect(cleanupSessionId).toBeTruthy();
 
+    await page.getByRole("region", { name: "Inventory workspace" })
+      .getByRole("button", { name: "Add items from packet", exact: true })
+      .click();
     const packetDialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(packetDialog).toBeVisible();
     await expect(packetDialog.locator("option", { hasText: sessionName })).toHaveCount(1);
@@ -82,23 +104,21 @@ test.describe("recorded packet and session regression", () => {
     await locationHints.first().fill("Vault 2, rack 4");
     await captureStep(page, testInfo, "02-packet-review");
 
-    await packetDialog.getByRole("button", { name: "Import 27 rows" }).click();
+    await packetDialog.getByRole("button", { name: "Import 27 items" }).click();
     await expect(packetDialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
     await captureStep(page, testInfo, "03-import-complete");
-    await packetDialog.getByRole("button", { name: /^(Open session|Review matches)$/ }).click();
+    await packetDialog.getByRole("button", { name: /^(Open inventory|Review matches)$/ }).click();
 
     await expect(packetDialog).toBeHidden();
     await expect(page.locator(".session-item-drawer")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
     const selectedSessionSummary = page.locator(".session-summary", { hasText: sessionName });
     await expect(selectedSessionSummary).toBeVisible();
-    await expect(selectedSessionSummary).toContainText("27 packet rows");
+    await expect(selectedSessionSummary).toContainText("27 items");
     const importedRow = page.locator(".session-item", { hasText: "Vault 2, rack 4" });
     await expect(importedRow).toHaveCount(1);
-    const rowProvenance = importedRow.locator(".session-item-provenance");
-    await expect(rowProvenance).toContainText("Imported from army-packet-clean.pdf");
-    await expect(rowProvenance.locator("a")).toHaveCount(0);
-    const importHistoryDisclosure = page.locator("details.packet-import-history");
+    const inventoryTools = await openInventoryTools(page);
+    const importHistoryDisclosure = inventoryTools.locator("details.packet-import-history");
     await expect(importHistoryDisclosure).toBeVisible();
     await importHistoryDisclosure.locator("summary").click();
     const importHistory = page.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
@@ -115,15 +135,15 @@ test.describe("recorded packet and session regression", () => {
     await expect(packetDialog).toBeHidden();
     await captureStep(page, testInfo, "04-session-with-source-history");
 
-    await page.getByRole("button", { name: "Close out" }).click();
-    const closeDialog = page.getByRole("dialog", { name: "Close this session?" });
+    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    const closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
     await expect(closeDialog).toBeVisible();
-    await closeDialog.getByRole("button", { name: "Close session" }).click();
+    await closeDialog.getByRole("button", { name: "Close inventory" }).click();
     await expect(closeDialog).toBeHidden();
     await expect(page.getByText("Internal server error")).toHaveCount(0);
     await expect(page.locator(".session-list > .session-group .session-row", { hasText: sessionName })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Close work queue", exact: true }).click();
+    await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     await expect(page.getByText("Internal server error")).toHaveCount(0);
@@ -137,7 +157,8 @@ test.describe("recorded packet and session regression", () => {
     await expect(archivedSession).toBeVisible();
     await archivedSession.click();
 
-    const persistedHistoryDisclosure = page.locator("details.packet-import-history");
+    const closedInventoryTools = await openInventoryTools(page);
+    const persistedHistoryDisclosure = closedInventoryTools.locator("details.packet-import-history");
     await expect(persistedHistoryDisclosure).toBeVisible();
     await persistedHistoryDisclosure.locator("summary").click();
     const persistedHistory = page.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();

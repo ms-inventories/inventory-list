@@ -52,6 +52,7 @@ test.describe("tenant activity log", () => {
       data: { name: sessionName, status: "active" }
     }))).session;
 
+    try {
     await signIn(page, "Platoon admin");
     await openWorkspaceTab(page, "Activity Log");
     await expect(page.getByRole("heading", { name: "Activity Log", exact: true })).toBeVisible();
@@ -68,8 +69,8 @@ test.describe("tenant activity log", () => {
     await expect(event.getByText("Inventory Session Created", { exact: true })).toBeVisible();
     await expect(event).not.toContainText(/metadata|storageKey|mediaUploadIds|inviteToken/i);
 
-    await event.getByRole("button", { name: "Open session" }).click();
-    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await event.getByRole("button", { name: "Open inventory" }).click();
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
     await expect(page.locator(".session-summary", { hasText: sessionName })).toBeVisible();
 
     await openWorkspaceTab(page, "Activity Log");
@@ -97,7 +98,8 @@ test.describe("tenant activity log", () => {
     });
     await page.getByRole("form", { name: "Activity filters" }).getByLabel("Category").selectOption("workflow");
     await page.getByRole("form", { name: "Activity filters" }).getByRole("button", { name: "Apply filters" }).click();
-    await expect(page.getByRole("alert")).toContainText("qa-activity-filter-failure");
+    await expect(page.getByRole("alert")).toHaveText("Internal server error");
+    await expect(page.getByText("qa-activity-filter-failure", { exact: false })).toHaveCount(0);
     await expect(page.locator(".activity-event")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Load older activity" })).toHaveCount(0);
     await expect(page.getByText("No matching activity", { exact: true })).toHaveCount(0);
@@ -110,10 +112,12 @@ test.describe("tenant activity log", () => {
       expect(await firstEvent.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
     }
 
-    await responseJson(await request.patch(`${API_URL}/inventory/sessions/${session.id}`, {
-      headers: qaHeaders(),
-      data: { status: "closed" }
-    }));
+    } finally {
+      await request.patch(`${API_URL}/inventory/sessions/${session.id}`, {
+        headers: qaHeaders(),
+        data: { status: "closed" }
+      }).catch(() => {});
+    }
   });
 
   test("contributors do not see the activity navigation", async ({ page }) => {
@@ -137,7 +141,7 @@ test.describe("tenant activity log", () => {
     await signIn(page, "Platoon admin");
     await openWorkspaceTab(page, "Activity Log");
     await expect(page.getByText("No activity yet", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Open inventory sessions", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Open inventories", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
   });
 });

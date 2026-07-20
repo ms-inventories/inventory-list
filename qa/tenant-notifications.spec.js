@@ -63,13 +63,13 @@ test.describe("Tenant notifications", () => {
     await expect(panel).toBeVisible();
     await expect(panel.getByText("Notifications", { exact: true })).toBeVisible();
     await expect(panel.getByRole("button", { name: "Refresh alerts" })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "Open sessions" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Open inventories" })).toBeVisible();
     await expect(panel.getByRole("button", { name: "Open review queue" })).toBeVisible();
 
-    await panel.getByRole("button", { name: "Open sessions" }).click();
+    await panel.getByRole("button", { name: "Open inventories" }).click();
     await expect(panel).toBeHidden();
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Work queue" })).toBeVisible();
 
     await page.getByRole("button", { name: "Notifications" }).click();
     await page.getByRole("region", { name: "Notifications" }).getByRole("button", { name: "Open review queue" }).click();
@@ -77,7 +77,7 @@ test.describe("Tenant notifications", () => {
     await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
   });
 
-  test("rejections kept with the submitter open the exact assigned session item", async ({ page, request }, testInfo) => {
+  test("rejections kept with the submitter open the exact assigned inventory item", async ({ page, request }, testInfo) => {
     const suffix = `${testInfo.project.name}-${Date.now()}`;
     const sessionName = `QA notification ${suffix}`;
     const packetLine = `QA-NOTIFICATION-${suffix.toUpperCase()}`;
@@ -119,8 +119,16 @@ test.describe("Tenant notifications", () => {
       await notification.click();
 
       await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-      await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
-      await expect(page.locator(".session-summary").getByText(sessionName, { exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+      await expect(page.locator(".session-summary")).toBeVisible();
+      const currentInventory = page.getByRole("combobox", { name: "Current inventory", exact: true });
+      if (await currentInventory.count()) {
+        await expect(currentInventory).toBeVisible();
+        await expect(currentInventory).toHaveValue(sessionId);
+        await expect(currentInventory.locator("option:checked")).toHaveText(sessionName);
+      } else {
+        await expect(page.locator(".session-summary-copy > strong")).toHaveText(sessionName);
+      }
       const returnedItem = page.locator(".session-item", { hasText: packetLine });
       await expect(returnedItem).toBeVisible();
       await expect(returnedItem.locator(".session-proof-request", { hasText: requestNote }).first()).toBeVisible();

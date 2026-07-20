@@ -65,22 +65,18 @@ async function signInAsRoot(page, testInfo) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 }
 
-function createSessionControl(page) {
-  return page.getByRole("button", { name: /^(Start new inventory|Create session)$/ });
-}
-
 function createSessionDialog(page) {
   return page.getByRole("dialog", { name: /^(Start inventory|Create inventory session)$/ });
 }
 
-async function expectSessionsPageWithoutCreateDialog(page) {
+async function expectWorkQueueWithoutCreateDialog(page) {
   await expect(
     page.getByRole("region", { name: "Inventory workspace" }),
     "the dashboard action should expand the inventory workspace"
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Sessions", exact: true }),
-    "the expanded inventory workspace should show the session controls"
+    page.getByRole("heading", { name: "Work queue", exact: true }),
+    "the expanded inventory workspace should show the work queue"
   ).toBeVisible();
   await expect(
     createSessionDialog(page),
@@ -89,13 +85,24 @@ async function expectSessionsPageWithoutCreateDialog(page) {
 }
 
 test.describe("dashboard action destinations", () => {
-  test("Create session opens the new-session wizard", async ({ page }, testInfo) => {
+  test("new inventory creation is secondary inside Manage inventories", async ({ page }, testInfo) => {
     await signInAsRoot(page, testInfo);
 
-    await createSessionControl(page).click();
+    await expect(page.getByRole("button", { name: /^(Start new inventory|Create session)$/ })).toHaveCount(0);
+    await page.getByRole("region", { name: "Active inventory" })
+      .getByRole("button", { name: "Open inventory", exact: true })
+      .click();
+    await expectWorkQueueWithoutCreateDialog(page);
 
-    await expect(createSessionDialog(page)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toHaveCount(0);
+    const manageInventories = page.locator(".session-sidebar", { hasText: "Manage inventories" });
+    await expect(manageInventories).toBeVisible();
+    const newInventory = manageInventories.locator(".session-create");
+    if (!(await newInventory.evaluate(element => element.open))) {
+      await newInventory.locator("summary").click();
+    }
+    await expect(newInventory.getByLabel("Inventory name")).toBeVisible();
+    await expect(newInventory.getByRole("button", { name: "Start inventory", exact: true })).toBeVisible();
+    await expect(createSessionDialog(page)).toHaveCount(0);
   });
 
   test("active inventory selector continues the exact selected session", async ({ page, request }, testInfo) => {
@@ -117,15 +124,45 @@ test.describe("dashboard action destinations", () => {
       await sessionSelector.selectOption(createdSession.id);
       await expect(sessionSelector).toHaveValue(createdSession.id);
 
-      await activeInventory.getByRole("button", { name: "Open session" }).click();
+      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
 
-      await expectSessionsPageWithoutCreateDialog(page);
+      await expectWorkQueueWithoutCreateDialog(page);
       await expect(
-        page.locator(".session-summary").getByText(createdSession.name, { exact: true }),
-        "Open session should preserve the selected active session id"
-      ).toBeVisible();
+        page.locator(".session-summary").getByRole("combobox", { name: "Current inventory" }),
+        "Open inventory should preserve the selected active inventory id"
+      ).toHaveValue(createdSession.id);
     } finally {
       await deleteEmptySession(request, testInfo, createdSession.id);
+    }
+  });
+
+  test("Refresh workspace reloads inventory summaries without remounting the dashboard", async ({ page, request }, testInfo) => {
+    const createdSession = await createActiveSession(request, testInfo);
+
+    try {
+      await signInAsRoot(page, testInfo);
+      const activeInventory = page.getByRole("region", { name: "Active inventory" });
+      const sessionSelector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+      await sessionSelector.selectOption(createdSession.id);
+      await expect(activeInventory).toContainText("0 items - 0% complete");
+
+      await responseJson(await request.post(`${API_URL}/inventory/sessions/${createdSession.id}/items`, {
+        headers: qaHeaders(testInfo),
+        data: { packetLine: `QA-REFRESH-${Date.now()} TEST ITEM`, expectedQty: 1 }
+      }));
+
+      const visibleRefreshButton = page.getByRole("button", { name: "Refresh workspace", exact: true });
+      if (!(await visibleRefreshButton.isVisible())) {
+        await page.getByRole("button", { name: "Open user menu", exact: true }).click();
+      }
+      await page.getByRole("button", { name: "Refresh workspace", exact: true }).click();
+      await expect(activeInventory).toContainText("1 item - 0% complete");
+      await expect(sessionSelector).toHaveValue(createdSession.id);
+    } finally {
+      await request.patch(`${API_URL}/inventory/sessions/${createdSession.id}`, {
+        headers: qaHeaders(testInfo),
+        data: { status: "closed" }
+      });
     }
   });
 
@@ -165,8 +202,8 @@ test.describe("dashboard action destinations", () => {
       const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
       if (await selector.isVisible()) await selector.selectOption(sessionId);
 
-      await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
-      await expectSessionsPageWithoutCreateDialog(page);
+      await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+      await expectWorkQueueWithoutCreateDialog(page);
       const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
       const assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
       await assignmentLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
@@ -224,13 +261,12 @@ test.describe("dashboard action destinations", () => {
         await route.continue();
         return;
       }
-      const response = await route.fetch();
-      const detail = await response.json();
       await route.fulfill({
-        response,
-        json: {
-          ...detail,
-          items: (detail.items || []).map(item => item.id === historyItem.id ? {
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...originalDetail,
+          items: (originalDetail.items || []).map(item => item.id === historyItem.id ? {
             ...item,
             packetLine: "Quiet Generator",
             inventoryItem: null,
@@ -276,7 +312,7 @@ test.describe("dashboard action destinations", () => {
               ]
             }
           } : item)
-        }
+        })
       });
     });
 
@@ -287,8 +323,8 @@ test.describe("dashboard action destinations", () => {
 
     await expect(page.getByRole("region", { name: "Pending inventory results" })).toHaveCount(0);
 
-    await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
-    await expectSessionsPageWithoutCreateDialog(page);
+    await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+    await expectWorkQueueWithoutCreateDialog(page);
     const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
     await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" })
       .getByRole("button", { name: /^Unclaimed\b/ })
@@ -328,10 +364,10 @@ test.describe("dashboard action destinations", () => {
 
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toHaveCount(0);
     await page.getByRole("region", { name: "Active inventory" })
-      .getByRole("button", { name: "Open session", exact: true })
+      .getByRole("button", { name: "Open inventory", exact: true })
       .click();
-    await expectSessionsPageWithoutCreateDialog(page);
-    await page.getByRole("button", { name: "Close work queue", exact: true }).click();
+    await expectWorkQueueWithoutCreateDialog(page);
+    await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
   });

@@ -183,10 +183,10 @@ async function signInAsContributor(page) {
 async function openSessions(page) {
   await page.getByRole("button", { name: /^Notifications/ }).click();
   await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open sessions", exact: true })
+    .getByRole("button", { name: "Open inventories", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 }
 
 async function selectSession(page, scenario, { closed = false } = {}) {
@@ -248,7 +248,7 @@ test.describe("inline session item work", () => {
     }));
   });
 
-  test("shows saved relationships, provenance, proof history, and leader actions inline", async ({ page, request }, testInfo) => {
+  test("shows saved relationships, proof history, and leader actions inline without technical links", async ({ page, request }, testInfo) => {
     test.setTimeout(90_000);
     const scenario = await createInlineScenario(request, testInfo.project.name);
 
@@ -266,17 +266,15 @@ test.describe("inline session item work", () => {
     await expect(page.locator(".session-item-drawer")).toHaveCount(0);
     await expect(page.getByRole("dialog"), "the complete item context should be visible in the row").toHaveCount(0);
     const knownItem = row.getByRole("region", { name: `Saved record for ${scenario.title}` });
-    await expect(knownItem.getByRole("heading", { name: "Saved record" })).toBeVisible();
-    await expect(knownItem.getByText(scenario.armyName, { exact: true })).toBeVisible();
-    await expect(knownItem).toContainText(scenario.lin);
+    await expect(knownItem.getByRole("heading", { name: "Previous inventory" })).toBeVisible();
+    await expect(row).toContainText(scenario.lin);
     await expect(knownItem).toContainText("Cage 9, radio shelf");
     const knownImage = knownItem.locator("img").first();
     await expect(knownImage).toBeVisible();
     await expect.poll(() => knownImage.evaluate(image => image.complete && image.naturalWidth > 0)).toBeTruthy();
 
-    const provenance = row.locator(".session-item-provenance");
-    await expect(provenance).toContainText(`Imported from ${scenario.sourceName}`);
-    await expect(provenance.locator("a"), "packet provenance must be readable text, not a raw media link").toHaveCount(0);
+    await expect(row.locator(".session-item-provenance")).toHaveCount(0);
+    await expect(row).not.toContainText(scenario.sourceName);
     await expect(row.getByRole("link", { name: /Open source|Source/i })).toHaveCount(0);
     await expect(row.locator('a[href*="/packet-imports/"]')).toHaveCount(0);
 
@@ -313,10 +311,10 @@ test.describe("inline session item work", () => {
     const assignment = leaderTools.getByRole("combobox", { name: "Assign to" });
     await expect(assignment).toHaveValue(scenario.ncoMemberId);
     await assignment.selectOption("");
-    await expect(page.locator(".session-panel").getByRole("status")).toContainText("Row assignment cleared.");
+    await expect(page.locator(".session-panel").getByRole("status")).toContainText("Item assignment cleared.");
     await expect(assignment).toHaveValue("");
     await assignment.selectOption(scenario.ncoMemberId);
-    await expect(page.locator(".session-panel").getByRole("status")).toContainText("Row assigned.");
+    await expect(page.locator(".session-panel").getByRole("status")).toContainText("Item assigned.");
 
     expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy();
     if (testInfo.project.name === "mobile-chrome") {
@@ -359,8 +357,8 @@ test.describe("inline session item work", () => {
     }
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-    await openSessions(page);
+    await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
     await selectSession(page, scenario, { closed: true });
     const completedItems = page.locator(".session-completed-items");
     if (!(await completedItems.evaluate(element => element.open))) {
@@ -371,7 +369,7 @@ test.describe("inline session item work", () => {
     await expect(completedRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
     await expect(completedRow.getByRole("region", { name: `Saved record for ${scenario.title}` })).toBeVisible();
     await expect(completedRow.getByRole("region", { name: `Proof history for ${scenario.title}` })).toContainText(scenario.note);
-    await expect(completedRow.locator(".session-item-provenance")).toContainText(scenario.sourceName);
+    await expect(completedRow.locator(".session-item-provenance")).toHaveCount(0);
     await expect(completedRow.locator('a[href*="/packet-imports/"]')).toHaveCount(0);
     await expect(completedRow.getByRole("region", { name: `Manage ${scenario.title}` })).toHaveCount(0);
     await expect(completedRow.getByRole("button", { name: "Review proof" })).toHaveCount(0);

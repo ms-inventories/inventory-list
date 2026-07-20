@@ -52,6 +52,8 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
   const dialogRef = useRef(null);
   const nameInputRef = useRef(null);
   const copyInviteRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  const closeBlockedRef = useRef(false);
   const [crew, setCrew] = useState([]);
   const [limit, setLimit] = useState(0);
   const [displayName, setDisplayName] = useState("");
@@ -69,6 +71,15 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
     `Code: ${created.code}`,
     `For ${created.access?.displayName || displayName}. This code works once${created.access?.expiresAt ? ` and expires ${formatDate(created.access.expiresAt)}` : ""}.`
   ].join("\n") : "", [created, displayName, joinUrl, tenant?.name, tenantSlug]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  function requestClose() {
+    if (closeBlockedRef.current) return;
+    onCloseRef.current?.();
+  }
 
   async function loadCrew({ quiet = false } = {}) {
     if (!session?.id) return;
@@ -97,7 +108,7 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
     function handleKeyDown(event) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose?.();
+        requestClose();
         return;
       }
       if (event.key !== "Tab") return;
@@ -121,7 +132,7 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
       document.body.style.overflow = previousOverflow;
       window.requestAnimationFrame(() => previousFocusRef.current?.focus?.());
     };
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
     if (created?.code) window.requestAnimationFrame(() => copyInviteRef.current?.focus());
@@ -133,6 +144,7 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
     if (name.length < 2 || isCreating) return;
 
     try {
+      closeBlockedRef.current = true;
       setIsCreating(true);
       setStatus("Generating code...");
       const data = await apiRequest(`/inventory/sessions/${encodeURIComponent(session.id)}/crew-access`, {
@@ -152,6 +164,7 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
     } catch (error) {
       setStatus(getApiErrorMessage(error));
     } finally {
+      closeBlockedRef.current = false;
       setIsCreating(false);
     }
   }
@@ -178,6 +191,7 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
   async function removeAccess(access) {
     if (!access?.id || actionId) return;
     try {
+      closeBlockedRef.current = true;
       setActionId(access.id);
       setStatus(`Removing access for ${access.displayName || "crew member"}...`);
       await apiRequest(`/inventory/sessions/${encodeURIComponent(session.id)}/crew-access/${encodeURIComponent(access.id)}/revoke`, {
@@ -191,6 +205,7 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
     } catch (error) {
       setStatus(getApiErrorMessage(error));
     } finally {
+      closeBlockedRef.current = false;
       setActionId("");
     }
   }
@@ -201,11 +216,11 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
         <header className="crew-access-heading">
           <span className="modal-icon"><UserPlus aria-hidden="true" /></span>
           <div>
-            <p className="eyebrow">{session?.name || "Inventory session"}</p>
+            <p className="eyebrow">{session?.name || "Inventory"}</p>
             <h2 id="crewAccessTitle">Invite crew</h2>
             <p>Give each helper their own private link and one-time PIN.</p>
           </div>
-          <button className="icon-button" type="button" aria-label="Close crew invite" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label="Close crew invite" disabled={isCreating || Boolean(actionId)} onClick={requestClose}>
             <X aria-hidden="true" />
           </button>
         </header>
@@ -276,15 +291,15 @@ export default function CrewAccessDialog({ session, tenant, token, tenantSlug, o
                   </button>
                 ) : null}
               </article>
-            )) : <p className="crew-access-empty">No crew codes for this session yet.</p>}
+            )) : <p className="crew-access-empty">No crew invitations for this inventory yet.</p>}
           </div>
         </details>
 
         <footer className="crew-access-footer">
-          <button className="btn btn-secondary" type="button" disabled={isLoading} onClick={() => loadCrew()}>
+          <button className="btn btn-secondary" type="button" disabled={isLoading || isCreating || Boolean(actionId)} onClick={() => loadCrew()}>
             <RefreshCw aria-hidden="true" /><span>Refresh</span>
           </button>
-          <button className="btn btn-secondary" type="button" onClick={onClose}><span>Done</span></button>
+          <button className="btn btn-secondary" type="button" disabled={isCreating || Boolean(actionId)} onClick={requestClose}><span>Done</span></button>
         </footer>
       </section>
     </div>

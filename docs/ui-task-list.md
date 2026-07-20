@@ -4,6 +4,8 @@ This list is based on the current React UI and the recorded user flow from July 
 
 Use this as the working backlog before turning individual items into implementation subtasks.
 
+The July 19 production walkthrough, demonstration-data manifest, release blockers, and mobile hierarchy findings are recorded in [Production UI Audit — July 19, 2026](production-ui-audit-2026-07-19.md).
+
 ## Priority Rules
 
 - P0: blocks the core inventory workflow or causes users to land in the wrong place.
@@ -234,7 +236,7 @@ Use this as the working backlog before turning individual items into implementat
 - [x] **UI-030: Standardize action labels**
   - Current issue: similar actions use mixed labels: `Open`, `View all`, `Inventory`, `Admin view`, `Continue`.
   - Desired behavior: labels map to clear destinations: `Open workspace`, `Open session`, `Review queue`, `Import packet`, `Launch app`.
-  - Status: complete, 2026-07-14. Existing-work destinations consistently say `Open session`, `Open item`, or `Open workspace`; assignment lists use `Unclaimed`, `Mine`, and `Others`; proof shortcuts say `Review proof` or `Open review queue`; proof entry says `Submit proof`; packet setup says `Choose source`, the exact `Import N row(s)` action, and `Review again`; platform navigation says `Open platoons`; and newsletter administration uses `homepage update`/`Write newsletter` instead of technical implementation labels. Session summary labels now distinguish `Open rows` and `Needs review`.
+  - Status: complete, 2026-07-20. Existing-work destinations consistently say `Open inventory` or `Open workspace`; assignment lists use `Unclaimed`, `Mine`, and `Others`; proof shortcuts say `Review proof` or `Open review queue`; proof entry says `Submit proof`; packet setup uses item-oriented import language; platform navigation says `Open platoons`; and newsletter administration uses `homepage update`/`Write newsletter` instead of technical implementation labels. Inventory summary labels now distinguish `Open inventories`, `Open items`, and `Needs review`.
 
 - [x] **UI-031: Mobile-first toolbar cleanup**
   - Current issue: desktop layout is improving, but mobile needs repeated inspection.
@@ -256,14 +258,12 @@ Use this as the working backlog before turning individual items into implementat
   - Status: implemented locally, awaiting ACP, 2026-07-10. Current and historical evidence now use labeled thumbnails; the responsive viewer provides zoom, keyboard/touch-sized navigation, captions, submitter/location/serial/note details, and the prior request context for resubmitted proof. Desktop/mobile QA coverage passes.
 
 - [x] **UI-035: Search behavior audit**
-  - Desired behavior: tenant search filters dashboard tables, sessions, rows, proof submissions, and member views consistently.
-  - Status: implemented locally, awaiting ACP, 2026-07-11, through `SEARCH-001`. A shared normalized multi-term matcher now drives page-scoped dashboard, session/proof-history, review, people/invitation, reports, platform/newsletter, and legacy-lookup search with clear/reset, query-aware empty states, focus behavior, and desktop/mobile coverage.
+  - Desired behavior: search appears only where it can filter a visible collection, uses clear context-specific wording, and never changes an unrelated dashboard or modal.
+  - Status: complete, 2026-07-20, through `SEARCH-001`. The misleading overview/global search is removed. Inventory items and the review queue have independent page-scoped searches, while people, reports, platform/newsletter, and legacy lookup retain their own normalized multi-term filters with clear/reset, query-aware empty states, focus behavior, and desktop/mobile coverage.
 
 - [x] **UI-036: Loading and error states**
   - Desired behavior: every async button has loading text, disabled state, success state, and a useful failure message.
-  - Status: in progress, 2026-07-13. Assignment and claim actions now use row-scoped pending locks and `Claiming...`/saving feedback without freezing unrelated rows. Session lifecycle/direct-check actions already have scoped locks; remaining upload, people, and newsletter actions still need a systematic pass.
-  - Status: in progress, 2026-07-14, through `UX-003`. Session direct-check and close/reopen mutations have duplicate guards, conflicting-control locks, loading labels, failure references, and retry QA; proof submit/remove/cancel, leader start/session/packet-import, Review Queue decision/request/match, newsletter content/issue/subscriber actions, and Platform create/refresh actions use synchronous duplicate guards, lock only conflicting fields and controls, fence stale responses, and expose action-specific labels on desktop and mobile. Platform creation keeps failures and entered values inside the modal, while load failures and refreshes recover without stale responses. Newsletter publish is single-shot in the API, published issue content is read-only, local editor/list feedback survives refresh, and unrelated subscriber rows remain usable. Packet failures remain visible inside the wizard and retry without reselecting source data. Public unsubscribe and legacy viewer login also lock while pending. Team provisioning polls recover with bounded backoff, member operations remain row-scoped, and legacy copy/resend/revoke actions identify the exact in-progress operation. Remaining lower-frequency platform/admin actions still need a systematic pass.
-  - Status: complete, 2026-07-15. Workspace, alert, settings, reports, activity, sign-in, access refresh, and sign-out actions reject same-tick duplicate taps, name the exact work in progress, disable only conflicting controls, preserve usable prior data on failure, and provide retryable feedback. Desktop/Pixel 7 regression coverage double-dispatches actions before React can disable them and proves one request. Local-only copy/export utilities are intentionally outside mutation fencing because they do not create remote records or duplicate server work.
+  - Status: complete, 2026-07-20, through `UX-003`. Server mutations reject duplicate taps, identify the active operation, lock only conflicting controls, preserve usable prior data or clear stale editable rows on failure, and provide retryable feedback. This covers assignment, claiming, inventory lifecycle/import, proof/review, people, newsletter, platform, settings, reports, activity, authentication refresh, and sign-out on desktop and Pixel-sized mobile. Local-only copy/export utilities remain outside mutation fencing because they do not create remote records.
 
 ## P3: Later SaaS Depth
 

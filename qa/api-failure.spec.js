@@ -68,7 +68,7 @@ test.describe("API failure states", () => {
     expect(response.headers()["x-request-id"]).toBe(body.requestId);
   });
 
-  test("tenant error state shows a safe message with a support reference ID", async ({ page }) => {
+  test("tenant error state stays friendly while retaining support diagnostics", async ({ page }) => {
     const requestId = "qa-request-12345678";
     await page.route("**/api/me**", route => route.fulfill({
       status: 500,
@@ -83,7 +83,8 @@ test.describe("API failure states", () => {
     await seedQaSessionBeforeLoad(page);
     await page.goto(TENANT_URL);
 
-    await expect(page.getByText(`The server could not complete this request. Reference ID: ${requestId}.`)).toBeVisible();
+    await expect(page.getByText("The server could not complete this request.", { exact: true })).toBeVisible();
+    await expect(page.getByText(requestId)).toHaveCount(0);
     await expect(page.getByText(/stack|postgres|password/i)).toHaveCount(0);
   });
 });

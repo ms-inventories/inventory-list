@@ -120,7 +120,7 @@ async function openWorkspaceView(page, label, heading) {
   if (label === "Inventory Sessions") {
     await page.getByRole("button", { name: /^Notifications/ }).click();
     await page.getByRole("region", { name: "Notifications" })
-      .getByRole("button", { name: "Open sessions", exact: true })
+      .getByRole("button", { name: "Open inventories", exact: true })
       .click();
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
@@ -196,7 +196,7 @@ test.describe("verified item reuse UI", () => {
       await seedBrowserIdentity(page);
       await page.goto(TENANT_URL);
       await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-      await openWorkspaceView(page, "Inventory Sessions", "Sessions");
+      await openWorkspaceView(page, "Inventory Sessions", "Work queue");
 
       const sessionButton = page.locator(".session-row", { hasText: active.sessionName });
       await expect(sessionButton).toBeVisible();
@@ -215,7 +215,14 @@ test.describe("verified item reuse UI", () => {
       await expect(page.getByRole("dialog"), "reviewing a relationship should remain inline").toHaveCount(0);
       const matchCard = row.locator(".prior-match-card");
       await expect(matchCard.getByText("Cage 12, upper shelf", { exact: false })).toBeVisible();
-      await expect(matchCard.getByRole("link", { name: "Open previous photo 1" })).toBeVisible();
+      const previousPhoto = matchCard.getByRole("button", { name: "Show previous photo 1" });
+      await expect(previousPhoto).toBeVisible();
+      await previousPhoto.click();
+      const previousPhotoViewer = page.getByRole("dialog", { name: "Evidence photo" });
+      await expect(previousPhotoViewer).toBeVisible();
+      await expect(previousPhotoViewer).toContainText(packetLine);
+      await previousPhotoViewer.getByRole("button", { name: "Close evidence viewer" }).click();
+      await expect(previousPhotoViewer).toBeHidden();
       await expectContained(page, matchCard);
 
       const useRecord = matchCard.getByRole("button", { name: "Use this record" });

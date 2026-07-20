@@ -118,13 +118,12 @@ async function signInAsNco(page) {
 }
 
 async function openSession(page, sessionName) {
-  await page.getByRole("button", { name: /^Notifications/ }).click();
-  await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open sessions", exact: true })
-    .click();
-  const sessionButton = page.locator(".session-row", { hasText: sessionName });
-  await expect(sessionButton).toBeVisible();
-  await sessionButton.click();
+  const activeInventory = page.getByRole("region", { name: "Active inventory" });
+  const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
+  await expect(selector).toBeVisible();
+  await selector.selectOption({ label: sessionName });
+  await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
   await expect(page.locator(".session-summary", { hasText: sessionName })).toBeVisible();
 }
 

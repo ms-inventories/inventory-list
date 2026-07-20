@@ -12,6 +12,7 @@ const longLinkLabel = `Open-${"RegistrationResource".repeat(8)}`;
 const longRequestError = `Request-${"ReferenceToken".repeat(14)}`;
 
 const viewports = [
+  { width: 320, height: 568 },
   { width: 320, height: 700 },
   { width: 360, height: 740 },
   { width: 412, height: 820 }
@@ -88,7 +89,7 @@ async function expectTextToWrap(locator, label) {
 }
 
 for (const viewport of viewports) {
-  test(`public newsletter stays within a ${viewport.width}px phone viewport`, async ({ page }) => {
+  test(`public newsletter stays within a ${viewport.width}x${viewport.height} phone viewport`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.route("**/api/newsletter/public", async route => {
       if (route.request().method() !== "GET") {
@@ -155,6 +156,9 @@ for (const viewport of viewports) {
     const dialog = page.getByRole("dialog", { name: "Request company updates" });
     await expect(dialog).toBeVisible();
     await expectHorizontallyContained(dialog, "Newsletter request dialog", viewport.width);
+    const dialogBounds = await dialog.boundingBox();
+    expect(dialogBounds.y).toBeGreaterThanOrEqual(-1);
+    expect(dialogBounds.y + dialogBounds.height).toBeLessThanOrEqual(viewport.height + 1);
     await dialog.getByLabel("Name").fill("Mobile Test User");
     await dialog.getByLabel("Email address").fill("mobile-overflow@876en.test");
     await dialog.getByLabel("Connection").fill("Family");

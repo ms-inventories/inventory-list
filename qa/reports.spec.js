@@ -109,7 +109,7 @@ async function signInAndOpenReports(page) {
   await expect(page.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
 }
 
-test.describe("cross-session reports", () => {
+test.describe("cross-inventory reports", () => {
   test("filters outcomes and proof work, exports safe CSV, and prints the selected report", async ({ page, request }, testInfo) => {
     test.setTimeout(75_000);
     const suffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "-")}-${Date.now()}`;
@@ -162,16 +162,23 @@ test.describe("cross-session reports", () => {
     expect(closedTiming?.durationToCompletionSeconds).toBeGreaterThanOrEqual(0);
 
     await signInAndOpenReports(page);
-    const results = page.getByRole("region", { name: "Report results" });
+    const results = page.getByRole("table", { name: "Report results" });
     await expect(results.getByText(foundMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(approvedMissingMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(foreignMarker, { exact: true })).toHaveCount(0);
     await expect(results.locator(".reports-table-row", { hasText: foundMarker }).getByText(qaAdmin.name, { exact: true })).toBeVisible();
-    const sessionTiming = page.getByRole("region", { name: "Session timing" });
-    await expect(sessionTiming.getByText(closedName, { exact: true })).toBeVisible();
-    await expect(sessionTiming.getByText("Time to 100%", { exact: true })).toBeVisible();
+    const inventoryTiming = page.getByRole("region", { name: "Inventory timing" });
+    const closedTimingRow = inventoryTiming.getByRole("row").filter({ hasText: closedName });
+    await expect(closedTimingRow.getByRole("rowheader", { name: closedName, exact: true })).toBeVisible();
+    if (testInfo.project.name === "mobile-chrome") {
+      const durationCell = closedTimingRow.getByRole("cell").last();
+      await expect(durationCell).toBeVisible();
+      expect(await durationCell.evaluate(element => getComputedStyle(element, "::before").content)).toBe('"Time to 100%"');
+    } else {
+      await expect(inventoryTiming.getByRole("columnheader", { name: "Time to 100%", exact: true })).toBeVisible();
+    }
 
-    await page.getByRole("combobox", { name: "Session", exact: true }).selectOption(active.id);
+    await page.getByRole("combobox", { name: "Inventory", exact: true }).selectOption(active.id);
     await expect(results.getByText(foundMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(approvedMissingMarker, { exact: true })).toHaveCount(0);
 
@@ -201,11 +208,11 @@ test.describe("cross-session reports", () => {
     await expect(results.getByText(missingMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(foundMarker, { exact: true })).toHaveCount(0);
 
-    await page.getByRole("combobox", { name: "Session", exact: true }).selectOption(closed.id);
+    await page.getByRole("combobox", { name: "Inventory", exact: true }).selectOption(closed.id);
     await expect(results.getByText(approvedMissingMarker, { exact: true })).toBeVisible();
     await expect(results.getByText("Not found", { exact: true }).first()).toBeVisible();
 
-    await page.getByRole("combobox", { name: "Session", exact: true }).selectOption(active.id);
+    await page.getByRole("combobox", { name: "Inventory", exact: true }).selectOption(active.id);
     await filters.getByRole("button", { name: /Proof work/ }).click();
     await expect(results.getByText(pendingMarker, { exact: true })).toBeVisible();
     await expect(results.getByText(foundMarker, { exact: true })).toHaveCount(0);
@@ -233,12 +240,12 @@ test.describe("cross-session reports", () => {
 
     await page.setViewportSize({ width: 869, height: 960 });
     await signInAndOpenReports(page);
-    await page.getByRole("combobox", { name: "Session", exact: true }).selectOption(session.id);
+    await page.getByRole("combobox", { name: "Inventory", exact: true }).selectOption(session.id);
 
     const reportPage = page.locator(".reports-page");
     await expect(page.locator(".leader-sidebar")).toBeVisible();
     await expect(reportPage.locator(".reports-table-header")).toBeHidden();
-    await expect(reportPage.getByText("Session", { exact: true }).last()).toBeVisible();
+    await expect(reportPage.getByText("Inventory", { exact: true }).last()).toBeVisible();
     await expect(reportPage.locator(".reports-session-timing-head")).toBeHidden();
 
     const layout = await reportPage.evaluate(element => {

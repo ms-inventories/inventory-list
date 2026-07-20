@@ -106,6 +106,17 @@ test("platform Back and Forward navigation stays inside the signed-in app", asyn
 test("platoon Back navigation returns through workspace pages without reauthentication", async ({ page }, testInfo) => {
   const isMobile = Boolean(testInfo.project.use.isMobile);
   let authorizeCount = 0;
+  const historySession = {
+    id: "history-session",
+    name: "History navigation inventory",
+    status: "active",
+    itemCount: 0,
+    completedCount: 0,
+    foundCount: 0,
+    needsReviewCount: 0,
+    createdAt: "2026-07-19T12:00:00.000Z",
+    startedAt: "2026-07-19T12:00:00.000Z"
+  };
 
   await page.route("**/application/o/authorize/**", route => {
     authorizeCount += 1;
@@ -142,7 +153,11 @@ test("platoon Back navigation returns through workspace pages without reauthenti
   }));
   await page.route("**/api/inventory/sessions", route => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ sessions: [] })
+    body: JSON.stringify({ sessions: [historySession] })
+  }));
+  await page.route("**/api/inventory/sessions/history-session", route => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ session: historySession, items: [], importBatches: [] })
   }));
   await page.route("**/api/inventory/review-queue", route => route.fulfill({
     contentType: "application/json",
@@ -173,6 +188,58 @@ test("platoon Back navigation returns through workspace pages without reauthenti
   await page.goBack();
   await expect(page).toHaveURL(/#\/admin$/);
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+
+  await page.getByRole("region", { name: "Active inventory" })
+    .getByRole("button", { name: "Open inventory", exact: true })
+    .click();
+  await expect(page).toHaveURL(/#\/admin\/sessions$/);
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/admin$/);
+  await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL(/#\/admin\/sessions$/);
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open review queue", exact: true })
+    .click();
+  await expect(page).toHaveURL(/#\/admin\/review$/);
+  await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
+  await page.getByRole("dialog", { name: "Review queue", exact: true })
+    .getByRole("button", { name: "Open inventories", exact: true })
+    .click();
+  await expect(page).toHaveURL(/#\/admin\/sessions$/);
+  await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
+  await expect(page).toHaveURL(/#\/admin$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/admin$/);
+  await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open review queue", exact: true })
+    .click();
+  await expect(page).toHaveURL(/#\/admin\/review$/);
+  await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(/#\/admin$/);
+  await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL(/#\/admin\/review$/);
+  await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close review", exact: true }).click();
+  await expect(page).toHaveURL(/#\/admin$/);
+  await page.goForward();
+  await expect(page).toHaveURL(/#\/admin\/review$/);
+  await expect(page.getByRole("dialog", { name: "Review queue", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close review", exact: true }).click();
+  await expect(page).toHaveURL(/#\/admin$/);
 
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   expect(authorizeCount).toBe(0);

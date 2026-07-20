@@ -101,7 +101,7 @@ test.describe("tenant settings", () => {
       await expect(page.getByRole("heading", { name: "Workspace profile" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Notification preferences" })).toBeVisible();
       await expect(page.getByText(`http://${tenantSlug}.localhost:5175/`, { exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Copy workspace URL" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
 
       await expect(page.locator(".leader-nav").getByText("Inventory Guidance", { exact: true })).toHaveCount(0);
       await expect(page.getByLabel("Guidance", { exact: true })).toHaveCount(0);
@@ -112,7 +112,7 @@ test.describe("tenant settings", () => {
       await expect(page.getByText("876en-platoon-admin", { exact: true })).toHaveCount(0);
 
       await page.getByLabel("Display name", { exact: true }).fill(displayName);
-      await page.getByLabel("Open rows").uncheck();
+      await page.getByLabel("Open items").uncheck();
       await page.getByLabel("Packet imports").uncheck();
       await page.getByLabel("Email proof requests").uncheck();
       await page.getByRole("button", { name: "Save settings" }).click();
@@ -158,7 +158,7 @@ test.describe("tenant settings", () => {
           displayName: baseline.displayName,
           notificationPreferences: baseline.notificationPreferences
         }
-      });
+      }).catch(() => {});
     }
   });
 

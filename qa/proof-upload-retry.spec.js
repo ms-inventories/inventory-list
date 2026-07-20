@@ -77,10 +77,10 @@ async function openProofForm(page, scenario) {
 
   await page.getByRole("button", { name: /^Notifications/ }).click();
   await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open sessions", exact: true })
+    .getByRole("button", { name: "Open inventories", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Work queue" })).toBeVisible();
   await page.locator(".session-row", { hasText: scenario.sessionName }).click();
 
   const workspace = page.getByRole("region", { name: "Inventory workspace" });

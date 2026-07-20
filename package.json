@@ -19,11 +19,13 @@
     "build:frontend": "npm --prefix react-app run build",
     "check:packet": "node --test scripts/packet-parser.test.mjs",
     "check:search": "node --test scripts/search.test.mjs",
+    "check:qa-targets": "node --test scripts/qa-targets.test.mjs",
+    "check:frontend-auth-config": "npm --prefix react-app run test:auth-config",
     "check:frontend-assets": "node --test scripts/frontend-build-assets.test.mjs",
     "check:api": "npm --prefix backend run check",
     "check:frontend-lock": "npm --prefix react-app ci --workspaces=false --audit=false --fund=false",
     "check:static": "node --check ocr.js && node --check script.js && node --check admin.js && node --check scripts/production-authentik-smoke.mjs && node --check scripts/production-auth-session.mjs && node --check scripts/production-demo-seed.mjs && node --check scripts/production-legacy-baseline.mjs && node --check scripts/production-tenant-reset.mjs",
-    "check": "npm run check:static && npm run check:frontend-lock && npm run check:api && npm run check:packet && npm run check:search && npm run build:frontend && npm run check:frontend-assets"
+    "check": "npm run check:static && npm run check:frontend-lock && npm run check:api && npm run check:packet && npm run check:search && npm run check:qa-targets && npm run check:frontend-auth-config && npm run build:frontend && npm run check:frontend-assets"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1"

@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 const TENANT_URL = process.env.QA_TENANT_URL || "http://ms.localhost:5175/#/admin";
 const ADMIN_URL = process.env.QA_ADMIN_URL || "http://admin.localhost:5175/#/admin";
 const ADMIN_LAUNCH_URL = process.env.QA_ADMIN_LAUNCH_URL || "http://admin.localhost:5175/#/launch";
+const NEWSLETTER_URL = process.env.QA_NEWSLETTER_URL || "http://admin.localhost:5175/#/newsletter/issues";
 
 test("an unauthorized API response clears the rejected browser session", async ({ page }) => {
   await page.route("**/api/me**", route => route.fulfill({
@@ -111,8 +112,10 @@ test("a near-expiry OIDC session renews silently before loading the workspace", 
   await expect(page.getByText("Your sign-in expired. Try again.")).toHaveCount(0);
 });
 
-test("a notification 401 renews once without replacing the signed-in dashboard", async ({ page }) => {
+test("notification renewal and reconnect keep the signed-in dashboard and draft in place", async ({ page }) => {
   let rejectNextNotification = false;
+  let rejectedNotificationToken = "notification-access-token";
+  let rejectNextRefresh = false;
   let notificationRequests = 0;
   let refreshCount = 0;
   let authorizeCount = 0;
@@ -124,6 +127,17 @@ test("a notification 401 renews once without replacing the signed-in dashboard",
   await page.route("**/api/auth/oidc/refresh", async route => {
     refreshCount += 1;
     await new Promise(resolve => setTimeout(resolve, 350));
+    if (rejectNextRefresh) {
+      rejectNextRefresh = false;
+      return route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "The renewable sign-in session is no longer valid.",
+          code: "oidc_refresh_rejected"
+        })
+      });
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -150,7 +164,7 @@ test("a notification 401 renews once without replacing the signed-in dashboard",
   await page.route("**/api/tenant/notifications", route => {
     notificationRequests += 1;
     const authorization = route.request().headers().authorization || "";
-    if (rejectNextNotification && authorization === "Bearer notification-access-token") {
+    if (rejectNextNotification && authorization === `Bearer ${rejectedNotificationToken}`) {
       rejectNextNotification = false;
       return route.fulfill({
         status: 401,
@@ -209,6 +223,211 @@ test("a notification 401 renews once without replacing the signed-in dashboard",
   await expect(page.getByLabel("Opening Shadow Tracer")).toHaveCount(0);
   await expect(page.getByText("Reconnect to continue", { exact: true })).toHaveCount(0);
   expect(authorizeCount).toBe(0);
+
+  await page.getByRole("button", { name: "Notifications", exact: true }).click();
+  await page.getByRole("button", { name: "Start inventory", exact: true }).click();
+  const draftDialog = page.locator(".start-inventory-modal");
+  const draftNameInput = draftDialog.locator("#startInventoryName");
+  const draftName = "Inventory draft survives renewal";
+  await draftNameInput.fill(draftName);
+  await expect(draftNameInput).toBeFocused();
+  const urlBeforeReconnect = page.url();
+
+  rejectedNotificationToken = "renewed-notification-token";
+  rejectNextNotification = true;
+  rejectNextRefresh = true;
+  await page.evaluate(async () => {
+    const { apiRequest } = await import("/src/lib/api.js");
+    const session = JSON.parse(localStorage.getItem("inventory.auth.session") || "null");
+    try {
+      await apiRequest("/tenant/notifications", {
+        token: session?.accessToken || "",
+        tenantSlug: "ms"
+      });
+    } catch {
+      // The page-level reconnect prompt is the behavior under test.
+    }
+  });
+
+  const reconnectDialog = page.getByRole("alertdialog", { name: "Reconnect to continue" });
+  const reconnectButton = reconnectDialog.getByRole("button", { name: "Reconnect", exact: true });
+  await expect(reconnectDialog).toBeVisible();
+  await expect(reconnectButton).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(reconnectButton).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(reconnectButton).toBeFocused();
+  expect(page.url()).toBe(urlBeforeReconnect);
+  await expect(page.locator(".leader-app")).toHaveAttribute("inert", "");
+  await expect(draftDialog).toBeVisible();
+  await expect(draftNameInput).toHaveValue(draftName);
+
+  await reconnectButton.click();
+  await expect.poll(() => refreshCount).toBe(3);
+  await expect(reconnectDialog).toHaveCount(0);
+  await expect(dashboardHeading).toBeVisible();
+  await expect(draftDialog).toBeVisible();
+  await expect(draftNameInput).toHaveValue(draftName);
+  await expect(draftNameInput).toBeFocused();
+  expect(page.url()).toBe(urlBeforeReconnect);
+  expect(authorizeCount).toBe(0);
+
+  rejectNextNotification = true;
+  rejectNextRefresh = true;
+  await page.evaluate(async () => {
+    const { apiRequest } = await import("/src/lib/api.js");
+    const session = JSON.parse(localStorage.getItem("inventory.auth.session") || "null");
+    try {
+      await apiRequest("/tenant/notifications", {
+        token: session?.accessToken || "",
+        tenantSlug: "ms"
+      });
+    } catch {
+      // A rejected automatic refresh should preserve the current page and draft.
+    }
+  });
+
+  await expect.poll(() => refreshCount).toBe(4);
+  await expect(reconnectDialog).toBeVisible();
+  rejectNextRefresh = true;
+  await reconnectDialog.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect.poll(() => refreshCount).toBe(5);
+  const signInAgainButton = reconnectDialog.getByRole("button", { name: "Sign in again", exact: true });
+  await expect(signInAgainButton).toBeVisible();
+  await expect(signInAgainButton).toBeFocused();
+  await expect(draftNameInput).toHaveValue(draftName);
+  expect(page.url()).toBe(urlBeforeReconnect);
+  expect(authorizeCount).toBe(0);
+
+  await reconnectDialog.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect.poll(() => refreshCount).toBe(6);
+  await expect(reconnectDialog).toHaveCount(0);
+  await expect(draftNameInput).toHaveValue(draftName);
+  await expect(draftNameInput).toBeFocused();
+  expect(page.url()).toBe(urlBeforeReconnect);
+  expect(authorizeCount).toBe(0);
+});
+
+test("reconnect stays above the newsletter editor and preserves an unsaved issue", async ({ page }) => {
+  let rejectNextNewsletter = false;
+  let rejectNextRefresh = false;
+  let refreshCount = 0;
+  let authorizeCount = 0;
+  let newsletterWrites = 0;
+
+  await page.route("**/application/o/authorize/**", route => {
+    authorizeCount += 1;
+    return route.abort();
+  });
+  await page.route("**/api/auth/oidc/refresh", route => {
+    refreshCount += 1;
+    if (rejectNextRefresh) {
+      rejectNextRefresh = false;
+      return route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Session ended", code: "oidc_refresh_rejected" })
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        access_token: "renewed-newsletter-token",
+        refresh_available: true,
+        expires_in: 3600
+      })
+    });
+  });
+  await page.route("**/api/me**", route => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      user: { id: "qa-root", email: "qa-root@876en.test", display_name: "QA Root Admin" },
+      identity: { subject: "qa-root", email: "qa-root@876en.test", displayName: "QA Root Admin" },
+      groups: ["876en-admins"],
+      isPlatformAdmin: true,
+      isFrgAdmin: true,
+      workspaces: []
+    })
+  }));
+  await page.route("**/api/newsletter/**", route => {
+    if (route.request().method() !== "GET") {
+      newsletterWrites += 1;
+      return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Unexpected write" }) });
+    }
+    if (new URL(route.request().url()).pathname !== "/api/newsletter/admin") {
+      return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "Unexpected newsletter request" }) });
+    }
+    if (rejectNextNewsletter) {
+      rejectNextNewsletter = false;
+      return route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Authentication required", code: "token_rejected" })
+      });
+    }
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        issues: [],
+        contentBlocks: [],
+        subscribers: [],
+        deliveries: [],
+        subscriberStats: { pending: 0, active: 0, rejected: 0, unsubscribed: 0, total: 0 },
+        deliverySettings: { emailConfigured: false }
+      })
+    });
+  });
+
+  await page.addInitScript(() => {
+    localStorage.setItem("inventory.auth.session", JSON.stringify({
+      accessToken: "newsletter-access-token",
+      refreshAvailable: true,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      createdAt: Date.now()
+    }));
+  });
+
+  await page.goto(NEWSLETTER_URL);
+  await expect(page.getByRole("heading", { name: "Newsletter issues", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create issue", exact: true }).click();
+  const issueEditor = page.locator(".newsletter-issue-modal");
+  const issueTitle = issueEditor.locator("#newsletterTitle");
+  const issueBody = issueEditor.locator("#newsletterBody");
+  await issueTitle.fill("Unsaved reconnect issue");
+  await issueBody.fill("This unsaved newsletter body must survive a secure session renewal.");
+  await expect(issueBody).toBeFocused();
+  const urlBeforeReconnect = page.url();
+
+  rejectNextNewsletter = true;
+  rejectNextRefresh = true;
+  await page.evaluate(async () => {
+    const { apiRequest } = await import("/src/lib/api.js");
+    const session = JSON.parse(localStorage.getItem("inventory.auth.session") || "null");
+    try {
+      await apiRequest("/newsletter/admin", { token: session?.accessToken || "" });
+    } catch {
+      // The reconnect dialog should appear without unmounting the editor.
+    }
+  });
+
+  const reconnectDialog = page.getByRole("alertdialog", { name: "Reconnect to continue" });
+  await expect(reconnectDialog).toBeVisible();
+  await expect(issueTitle).toHaveValue("Unsaved reconnect issue");
+  await expect(issueBody).toHaveValue("This unsaved newsletter body must survive a secure session renewal.");
+  expect(page.url()).toBe(urlBeforeReconnect);
+  expect(authorizeCount).toBe(0);
+  expect(newsletterWrites).toBe(0);
+
+  await reconnectDialog.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect.poll(() => refreshCount).toBe(2);
+  await expect(reconnectDialog).toHaveCount(0);
+  await expect(issueTitle).toHaveValue("Unsaved reconnect issue");
+  await expect(issueBody).toHaveValue("This unsaved newsletter body must survive a secure session renewal.");
+  await expect(issueBody).toBeFocused();
+  expect(page.url()).toBe(urlBeforeReconnect);
+  expect(authorizeCount).toBe(0);
+  expect(newsletterWrites).toBe(0);
 });
 
 test("explicit sign out blocks a renewal that starts while logout is pending", async ({ page }) => {

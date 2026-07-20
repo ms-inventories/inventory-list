@@ -98,23 +98,27 @@ async function expectTextCenteredInBox(locator) {
 }
 
 async function openPlatformView(page, name) {
-  const toggle = page.getByRole("button", { name: "Open platform menu" });
+  const toggle = page.locator('button[aria-label="Open platform menu"]');
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("main.platform-main")).toHaveAttribute("aria-hidden", "true");
   const item = page.getByRole("button", { name, exact: true });
   await item.scrollIntoViewIfNeeded();
   await item.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("main.platform-main")).not.toHaveAttribute("aria-hidden", "true");
 }
 
 async function openWorkspaceView(page, name) {
-  const toggle = page.getByRole("button", { name: "Open workspace menu" });
+  const toggle = page.locator('button[aria-label="Open workspace menu"]');
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("main.leader-main")).toHaveAttribute("aria-hidden", "true");
   const item = page.getByRole("button", { name, exact: true });
   await item.scrollIntoViewIfNeeded();
   await item.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("main.leader-main")).not.toHaveAttribute("aria-hidden", "true");
 }
 
 test.describe("mobile layout audit", () => {
@@ -140,17 +144,18 @@ test.describe("mobile layout audit", () => {
     const platoonGrid = page.getByRole("region", { name: "Platoon workspaces" });
     const platoonCard = page.locator(".platform-platoon-card").filter({ hasText: "MS Platoon" }).first();
     await expect(platoonCard).toBeVisible();
-    await expectMinFontSize(platoonCard.locator(".platform-platoon-card-heading strong"), 17);
+    await expectMinFontSize(platoonCard.getByRole("heading", { name: "MS Platoon" }), 17);
     await expectTextCenteredInBox(platoonCard.locator(".tenant-avatar"));
     await expectChipTextCentered(platoonCard.locator(".status-pill"));
     await expectMinTargetSize(platoonCard.getByRole("button", { name: "Copy link for MS Platoon" }), { width: 44, height: 44 });
-    await expectMinTargetSize(platoonCard.getByRole("link", { name: /Enter ms\.localhost workspace/ }), { height: 48 });
+    await expectMinTargetSize(platoonCard.getByRole("link", { name: /Enter MS Platoon workspace/i }), { height: 48 });
     await expectContained(platoonGrid);
     await expectContained(platoonCard);
     await expectContained(page.locator("main"));
 
     const navToggle = page.getByRole("button", { name: "Open platform menu" });
     await navToggle.click();
+    await expect(page.locator("main.platform-main")).toHaveAttribute("aria-hidden", "true");
     const supportNavItem = page.getByRole("button", { name: "Support", exact: true });
     await expectMinTargetSize(supportNavItem, { height: 54 });
     await expectMinFontSize(supportNavItem, 16);
@@ -199,6 +204,10 @@ test.describe("mobile layout audit", () => {
     await expectMinTargetSize(accessRow.getByRole("combobox", { name: /Status for/ }), { height: 44 });
     await expect(accessRow.getByRole("link", { name: "Open platoon" })).toHaveCount(0);
     expect(await accessRow.evaluate(row => Math.ceil(row.getBoundingClientRect().height))).toBeLessThanOrEqual(220);
+    await page.setViewportSize({ width: 320, height: 740 });
+    await expect(accessRow).toBeVisible();
+    expect(await accessRow.evaluate(row => getComputedStyle(row).gridTemplateColumns.split(" ").length)).toBe(1);
+    await expectInsideHorizontally(page.getByRole("table", { name: "Platform users" }), accessRow);
     await expectContained(page.locator("main"));
   });
 
@@ -215,7 +224,7 @@ test.describe("mobile layout audit", () => {
     await expect(addTeammate).not.toHaveAttribute("open", "");
     await addTeammate.locator(".add-teammate-summary").click();
     await expect(page.getByText("Permanent account setup is not connected yet.", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open inventory sessions" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open inventories" })).toBeVisible();
     await expect(page.getByLabel("Name", { exact: true })).toHaveCount(0);
 
     const peoplePanel = page.locator(".people-panel");
@@ -256,12 +265,12 @@ test.describe("mobile layout audit", () => {
     const grid = page.getByRole("region", { name: "Platoon workspaces" });
     const card = page.locator(".platform-platoon-card").filter({ hasText: "MS Platoon" }).first();
     await expectInsideHorizontally(grid, card);
-    await expectMinTargetSize(card.getByRole("link", { name: /Enter ms\.localhost workspace/ }), { height: 44 });
+    await expectMinTargetSize(card.getByRole("link", { name: /Enter MS Platoon workspace/i }), { height: 44 });
     await expectMinTargetSize(card.getByRole("button", { name: "Copy link for MS Platoon" }), { height: 44 });
     await expectContained(page.locator("main"));
   });
 
-  test("tenant toolbar, drawer navigation, reports, and session cards stay usable", async ({ page }) => {
+  test("tenant toolbar, drawer navigation, reports, and inventory cards stay usable", async ({ page }) => {
     await seedQaRootSession(page);
     await page.goto(TENANT_URL);
 
@@ -270,9 +279,8 @@ test.describe("mobile layout audit", () => {
     await expectWithinViewport(page, page.locator(".leader-topbar"));
     await expectContained(page.locator("main"));
 
-    const uploadPacket = page.getByRole("button", { name: "Upload packet" });
-    await expect(uploadPacket).toBeVisible();
-    await expectMinTargetSize(uploadPacket, { height: 44 });
+    await expect(page.getByRole("button", { name: "Upload packet" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Start new inventory" })).toHaveCount(0);
 
     await openWorkspaceView(page, "Workspace Settings");
     await expect(page.getByRole("heading", { name: "Workspace Settings" })).toBeVisible();
@@ -282,7 +290,7 @@ test.describe("mobile layout audit", () => {
     await expect(page.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
     const reportRow = page.locator(".reports-table-row").first();
     await expect(reportRow).toBeVisible();
-    for (const label of ["Session", "Item", "Outcome", "Proof status", "Location / serial"]) {
+    for (const label of ["Inventory", "Item", "Outcome", "Proof status", "Location / serial"]) {
       await expect(reportRow.locator(".mobile-field-label").getByText(label, { exact: true })).toBeVisible();
     }
     await expectContained(page.locator("main"));
@@ -294,8 +302,11 @@ test.describe("mobile layout audit", () => {
     await activeInventorySelect.selectOption({ label: "July sensitive items" });
     await expect(activeInventorySelect.locator("option:checked")).toHaveText("July sensitive items");
     await expect(page.getByRole("region", { name: "Pending inventory results", exact: true })).toHaveCount(0);
-    await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+    await expectWithinViewport(page, page.getByRole("searchbox", { name: "Search inventory items" }));
+    await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toBeVisible();
     const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
     const assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });
     for (const name of [/^Unclaimed\b/, /^Mine\b/, /^Others\b/]) {
@@ -308,11 +319,18 @@ test.describe("mobile layout audit", () => {
     await expect(sessionRow.getByRole("button", { name: "Claim item" })).toBeVisible();
     await expectMinTargetSize(sessionRow.getByRole("button", { name: "Claim item" }), { height: 44 });
     await expect(sessionRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-    await expect(page.getByRole("dialog"), "session rows should not require a generic item dialog").toHaveCount(0);
+    await expect(page.getByRole("dialog"), "inventory items should not require a generic item dialog").toHaveCount(0);
     const inlineControls = sessionRow.locator(".session-item-inline-manage");
     await expect(inlineControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
     await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Assign to" }), { height: 44 });
     await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Set result" }), { height: 44 });
+    const sessionMain = inventoryWorkspace.locator(".session-main");
+    const sessionSidebar = inventoryWorkspace.locator(".session-sidebar");
+    const [mainBox, sidebarBox] = await Promise.all([sessionMain.boundingBox(), sessionSidebar.boundingBox()]);
+    expect(mainBox.y).toBeLessThan(sidebarBox.y);
+    const toolsSummary = inventoryWorkspace.locator(".session-tools > summary");
+    const [rowBox, toolsBox] = await Promise.all([sessionRow.boundingBox(), toolsSummary.boundingBox()]);
+    expect(rowBox.y).toBeLessThan(toolsBox.y);
     await expectContained(sessionRow);
     await expectContained(page.locator("main"));
   });
@@ -323,9 +341,9 @@ test.describe("mobile layout audit", () => {
 
     await page.goto(TENANT_URL);
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
+    await expect(page.getByRole("searchbox")).toHaveCount(0);
     for (const control of [
       page.getByRole("button", { name: "Open workspace menu" }),
-      page.getByRole("searchbox", { name: "Search dashboard" }),
       page.getByRole("button", { name: "Open user menu" })
     ]) {
       await expectWithinViewport(page, control);
@@ -371,7 +389,7 @@ test.describe("mobile layout audit", () => {
     await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
 
     const topbar = page.locator(".newsletter-shell .platform-topbar");
-    const menuToggle = page.getByRole("button", { name: "Open newsletter menu" });
+    const menuToggle = page.locator('button[aria-label="Open newsletter menu"]');
     await expectContained(topbar);
     await expectWithinViewport(page, menuToggle);
     await expectWithinViewport(page, page.locator(".newsletter-user-card"));
@@ -380,11 +398,13 @@ test.describe("mobile layout audit", () => {
 
     await menuToggle.click();
     await expect(menuToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator("main.platform-main")).toHaveAttribute("aria-hidden", "true");
     await expect(page.getByRole("button", { name: "Close newsletter menu" }).last()).toBeFocused();
     const subscribersNav = page.getByRole("button", { name: "Subscribers", exact: true });
     await expectMinTargetSize(subscribersNav, { height: 54 });
     await subscribersNav.click();
     await expect(menuToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator("main.platform-main")).not.toHaveAttribute("aria-hidden", "true");
     await expect(page.locator(".newsletter-sidebar")).toHaveAttribute("aria-hidden", "true");
     await expect(page.getByRole("heading", { name: "Subscribers", exact: true, level: 1 })).toBeVisible();
 
@@ -435,29 +455,39 @@ test.describe("mobile layout audit", () => {
   });
 });
 
-test.describe("intermediate session layout", () => {
+test.describe("intermediate inventory layout", () => {
   test.beforeEach(({}, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Intermediate desktop widths are covered once in Chromium.");
   });
 
-  test("keeps session rows and actions inside 900px and 1024px viewports", async ({ page }) => {
-    await page.setViewportSize({ width: 1024, height: 900 });
+  test("keeps inventory hierarchy and actions usable from 900px through 1280px", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
     await seedQaRootSession(page);
     await page.goto("http://qa-search-desktop.localhost:5175/#/admin");
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Open session", exact: true }).first().click();
-    await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Notifications", exact: true }).click();
+    await page.getByRole("region", { name: "Notifications" }).getByRole("button", { name: "Open inventories", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
     const session = page.locator(".session-row", { hasText: "Search behavior fixture" });
     await expect(session).toBeVisible();
     await session.click();
-    await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
+    const currentInventory = page.getByRole("combobox", { name: "Current inventory", exact: true });
+    if (await currentInventory.isVisible()) {
+      await expect(currentInventory.locator("option:checked")).toHaveText("Search behavior fixture");
+    } else {
+      await expect(page.locator(".session-summary").getByText("Search behavior fixture", { exact: true })).toBeVisible();
+    }
     const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
     await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" }).getByRole("button", { name: /^Unclaimed\b/ }).click();
 
     const row = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
     const actions = row.locator(".session-item-actions");
     const inlineControls = row.locator(".session-item-inline-manage");
+    const sessionMain = inventoryWorkspace.locator(".session-main");
+    const sessionSidebar = inventoryWorkspace.locator(".session-sidebar");
+    const [wideMainBox, wideSidebarBox] = await Promise.all([sessionMain.boundingBox(), sessionSidebar.boundingBox()]);
+    expect(wideMainBox.x).toBeLessThan(wideSidebarBox.x);
 
     for (const width of [1024, 900]) {
       await page.setViewportSize({ width, height: 900 });
@@ -470,8 +500,30 @@ test.describe("intermediate session layout", () => {
       await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
       await expect(inlineControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
       await expectInsideHorizontally(row, inlineControls);
+      const [mainBox, sidebarBox] = await Promise.all([sessionMain.boundingBox(), sessionSidebar.boundingBox()]);
+      expect(mainBox.y).toBeLessThan(sidebarBox.y);
     }
 
-    await expect(page.getByRole("dialog"), "resizing inline session work must not open a dialog").toHaveCount(0);
+    await expect(page.getByRole("dialog"), "resizing inline inventory work must not open a dialog").toHaveCount(0);
+  });
+
+  test("keeps the Users table readable without horizontal panning on compact desktops", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await seedQaRootSession(page);
+    await page.goto(ADMIN_URL);
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Users", exact: true }).click();
+
+    const userTable = page.getByRole("table", { name: "Platform users" });
+    await expect(userTable).toBeVisible();
+    for (const width of [1024, 900]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBeTruthy();
+      await expect.poll(() => userTable.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+      const firstUserRow = userTable.locator(".platform-table-row").first();
+      await expect(firstUserRow).toBeVisible();
+      await expect(firstUserRow.locator(".mobile-field-label").getByText("Role", { exact: true })).toBeVisible();
+      await expect(firstUserRow.locator(".mobile-field-label").getByText("Status", { exact: true })).toBeVisible();
+    }
   });
 });

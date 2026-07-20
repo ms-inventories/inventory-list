@@ -216,7 +216,7 @@ test.describe("session claim API", () => {
       const activeInventory = page.getByRole("region", { name: "Active inventory" });
       const selector = activeInventory.getByRole("combobox", { name: "Active inventory" });
       await selector.selectOption(scenario.sessionId);
-      await activeInventory.getByRole("button", { name: "Open session" }).click();
+      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
 
       let row = page.locator(".session-item", { hasText: `QA-CLAIM-${suffix.toUpperCase()}` });
       await expect(row).toBeVisible();
@@ -315,7 +315,7 @@ test.describe("session claim API", () => {
 
       const activeInventory = page.getByRole("region", { name: "Active inventory" });
       await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
-      await activeInventory.getByRole("button", { name: "Open session" }).click();
+      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
 
       let row = page.locator(".session-item", { hasText: packetLine });
       await expect(row).toBeVisible();
@@ -369,12 +369,19 @@ test.describe("session claim API", () => {
         expect(submissionRequests).toBe(1);
       });
 
+      await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
+      const dashboardReview = page.getByRole("region", { name: "Dashboard review results" });
+      await expect(
+        dashboardReview.getByText(packetLine, { exact: true }),
+        "submitting proof should refresh the dashboard review preview without a page reload"
+      ).toBeVisible();
+
       await test.step("approve while saving zero reference photos", async () => {
         await openReviewQueue(page);
 
         const reviewCard = page.locator(".review-card", { hasText: packetLine });
         await expect(reviewCard).toBeVisible();
-        await expect(reviewCard.getByText("Accountability note", { exact: true })).toBeVisible();
+        await expect(reviewCard.getByText("No photo attached", { exact: true })).toBeVisible();
         await expect(reviewCard.getByText(accountabilityNote, { exact: true })).toBeVisible();
         await expect(reviewCard.locator(".proof-photo-thumbnail")).toHaveCount(0);
 
@@ -413,6 +420,15 @@ test.describe("session claim API", () => {
         await expect(page.getByText(`Approved proof for ${packetLine}.`, { exact: true })).toBeVisible();
         await expect(reviewCard).toHaveCount(0);
       });
+
+      const reviewDialog = page.getByRole("dialog", { name: "Review queue", exact: true });
+      await reviewDialog.getByRole("button", { name: "Close review", exact: true }).click();
+      await expect(reviewDialog).toBeHidden();
+      await expect(
+        dashboardReview.getByText(packetLine, { exact: true }),
+        "approving proof should remove it from the dashboard preview without a page reload"
+      ).toHaveCount(0);
+      await expect(activeInventory).toContainText("100% complete");
     } finally {
       await closeSession(request, scenario, platformAdmin);
     }
@@ -432,7 +448,7 @@ test.describe("session claim API", () => {
 
       const activeInventory = page.getByRole("region", { name: "Active inventory" });
       await activeInventory.getByRole("combobox", { name: "Active inventory" }).selectOption(scenario.sessionId);
-      await activeInventory.getByRole("button", { name: "Open session" }).click();
+      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
 
       let row = page.locator(".session-item", { hasText: packetLine });
       await expect(row).toBeVisible();
@@ -477,6 +493,7 @@ test.describe("session claim API", () => {
       const submitted = await (await submissionResponsePromise).json();
       await expect(proofDialog).toBeHidden();
 
+      await page.getByRole("button", { name: "Back to dashboard", exact: true }).click();
       await openReviewQueue(page);
       const reviewCard = page.locator(".review-card", { hasText: packetLine });
       await expect(reviewCard).toBeVisible();

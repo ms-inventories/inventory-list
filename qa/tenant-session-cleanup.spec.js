@@ -8,33 +8,47 @@ async function signInWithQaPersona(page, personaName) {
   await page.getByRole("button", { name: personaName }).click();
 }
 
-async function createBlankSessionFromDashboard(page, sessionName) {
+async function openInventoryWorkspace(page) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-  await page.getByRole("button", { name: "Start new inventory" }).click();
-
-  const dialog = page.getByRole("dialog", { name: "Start inventory" });
-  await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Session name").fill(sessionName);
-  await dialog.getByText("Create blank session").click();
-  await dialog.getByRole("button", { name: "Start session" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open inventories", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 }
 
-test.describe("tenant session cleanup", () => {
-  test("platoon admin can delete an abandoned empty session without stale errors", async ({ page }) => {
+async function createBlankInventory(page, inventoryName) {
+  const inventoryCreate = page.locator("details.session-create");
+  if (!(await inventoryCreate.evaluate(element => element.open))) {
+    await inventoryCreate.locator("summary").click();
+  }
+  await inventoryCreate.getByLabel("Inventory name").fill(inventoryName);
+  await inventoryCreate.getByRole("button", { name: "Start inventory", exact: true }).click();
+  const inventoryRow = page.locator(".session-row", { hasText: inventoryName });
+  await expect(inventoryRow).toHaveCount(1);
+  await inventoryRow.click();
+  await expect(page.locator(".session-summary", { hasText: inventoryName })).toBeVisible();
+}
+
+test.describe("tenant inventory cleanup", () => {
+  test("platoon admin can delete an abandoned empty inventory without stale errors", async ({ page }) => {
     const sessionName = `QA cleanup ${Date.now()}`;
 
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
-    await createBlankSessionFromDashboard(page, sessionName);
+    await openInventoryWorkspace(page);
+    await createBlankInventory(page, sessionName);
 
-    await expect(page.getByRole("button", { name: new RegExp(`${sessionName}.*0 rows`) }).first()).toBeVisible();
-    await page.getByRole("button", { name: "Delete draft" }).click();
+    await expect(page.getByRole("button", { name: new RegExp(`${sessionName}.*0 items`) }).first()).toBeVisible();
+    const inventoryTools = page.locator("details.session-tools");
+    if (!(await inventoryTools.evaluate(element => element.open))) {
+      await inventoryTools.locator("summary").click();
+    }
+    await inventoryTools.getByRole("button", { name: "Delete empty inventory" }).click();
 
-    const deleteDialog = page.getByRole("dialog", { name: "Delete draft session?" });
+    const deleteDialog = page.getByRole("dialog", { name: "Delete empty inventory?" });
     await expect(deleteDialog).toBeVisible();
-    await deleteDialog.getByRole("button", { name: "Delete session" }).click();
+    await deleteDialog.getByRole("button", { name: "Delete inventory" }).click();
     await expect(deleteDialog).toBeHidden();
 
     await expect(page.getByText("Internal server error")).toHaveCount(0);

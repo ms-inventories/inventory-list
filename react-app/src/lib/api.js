@@ -220,10 +220,7 @@ export function renewMediaSession({ token = "", tenantSlug = "" } = {}) {
 
 export function getApiErrorMessage(error) {
   if (error instanceof ApiError) {
-    const message = error.message || "Request failed";
-    return error.requestId && !message.includes(error.requestId)
-      ? `${message.replace(/[.\s]+$/, "")}. Reference ID: ${error.requestId}.`
-      : message;
+    return error.message || "Request failed";
   }
   const message = typeof error === "string" ? error : error?.message || error?.text || "";
   if (/failed to fetch|networkerror|load failed/i.test(message)) return API_NETWORK_MESSAGE;

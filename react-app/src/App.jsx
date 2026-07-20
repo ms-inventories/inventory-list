@@ -39,6 +39,45 @@ const BUCKET_BASE_URL = String(appConfig.legacyBucketBaseUrl || "").replace(/\/+
 const INDEX_URL = BUCKET_BASE_URL ? `${BUCKET_BASE_URL}/inventories/index.json` : "";
 const IMAGE_BASE_URL = BUCKET_BASE_URL ? `${BUCKET_BASE_URL}/` : "/";
 
+function handleDialogKeyDown(event, onEscape) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    onEscape?.();
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const focusable = [...event.currentTarget.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )].filter(element => element.getClientRects().length);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function useModalPageLock(enabled = true, initialFocusRef = null) {
+  const previousFocusRef = useRef(null);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    previousFocusRef.current = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => initialFocusRef?.current?.focus?.());
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => previousFocusRef.current?.focus?.());
+    };
+  }, [enabled, initialFocusRef]);
+}
+
 const SEARCH_NOISE_TERMS = new Set([
   "buom",
   "ciic",
@@ -560,7 +599,7 @@ function getLaunchStatusFromError(error) {
   if (code.startsWith("token_exchange")) {
     return {
       code,
-      text: "Sign-in reached the app, but the inventory API did not finish the callback. Try again or ask an admin to check API routing."
+      text: "Sign-in started, but the workspace did not finish opening. Try again or ask an admin for help."
     };
   }
 
@@ -605,7 +644,7 @@ function getLaunchStatusFromHealth(health, fallback = {}) {
   if (code === "token_missing" || code === "token_rejected") {
     return {
       code,
-      text: "Your sign-in token was not accepted. Sign out, then sign back in."
+      text: "Your sign-in could not be verified. Sign out, then sign back in."
     };
   }
 
@@ -620,8 +659,8 @@ function getLaunchStatusFromHealth(health, fallback = {}) {
     return {
       code,
       text: requestedSlug
-        ? `The ${requestedSlug}.${appConfig.baseDomain} workspace does not exist yet. Ask a platform admin to create it or check the subdomain.`
-        : "That workspace does not exist yet. Ask a platform admin to create it or check the subdomain."
+        ? `The ${requestedSlug}.${appConfig.baseDomain} workspace does not exist yet. Ask a platform admin to create it or check the workspace link.`
+        : "That workspace does not exist yet. Ask a platform admin to create it or check the workspace link."
     };
   }
 
@@ -913,14 +952,18 @@ function LaunchRouter() {
                 <dt>Account</dt>
                 <dd>{signedInLabel}</dd>
               </div>
-              <div>
-                <dt>Subject</dt>
-                <dd>{identitySubject || "not provided"}</dd>
-              </div>
-              <div>
-                <dt>Email</dt>
-                <dd>{me.identity?.email || me.user?.email || "not provided"}</dd>
-              </div>
+              {identitySubject ? (
+                <div>
+                  <dt>Subject</dt>
+                  <dd>{identitySubject}</dd>
+                </div>
+              ) : null}
+              {me.identity?.email || me.user?.email ? (
+                <div>
+                  <dt>Email</dt>
+                  <dd>{me.identity?.email || me.user?.email}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Platform admin</dt>
                 <dd>{me.isPlatformAdmin ? "yes" : "no"}</dd>
@@ -981,6 +1024,7 @@ function PublicHome() {
   });
   const [newsletterStatus, setNewsletterStatus] = useState({ text: "Loading latest newsletter...", isError: false });
   const [isSubscriberSubmitting, setIsSubscriberSubmitting] = useState(false);
+  const subscriberModalTriggerRef = useRef(null);
 
   useEffect(() => {
     let ignore = false;
@@ -1006,13 +1050,29 @@ function PublicHome() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isSubscriberModalOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isSubscriberModalOpen]);
+
   function updateSubscriberForm(key, value) {
     setSubscriberForm(current => ({ ...current, [key]: value }));
   }
 
   function openSubscriberModal() {
+    subscriberModalTriggerRef.current = document.activeElement;
     setStatus({ text: "", isError: false });
     setIsSubscriberModalOpen(true);
+  }
+
+  function closeSubscriberModal({ force = false } = {}) {
+    if (isSubscriberSubmitting && !force) return;
+    setIsSubscriberModalOpen(false);
+    window.requestAnimationFrame(() => subscriberModalTriggerRef.current?.focus?.());
   }
 
   async function submitNewsletter(event) {
@@ -1046,7 +1106,7 @@ function PublicHome() {
       });
       const isApproved = data.subscriber?.status === "active";
       setSubscriberForm({ displayName: "", email: "", platoon: "", supervisorName: "" });
-      setIsSubscriberModalOpen(false);
+      closeSubscriberModal({ force: true });
       setStatus({
         text: isApproved
           ? "You are already approved for the Black Shadow Company newsletter."
@@ -1207,9 +1267,9 @@ function PublicHome() {
 
       {isSubscriberModalOpen ? (
         <div className="modal-backdrop public-newsletter-modal-backdrop" role="presentation" onClick={event => {
-          if (event.target === event.currentTarget) setIsSubscriberModalOpen(false);
+          if (event.target === event.currentTarget) closeSubscriberModal();
         }}>
-          <section className="modal-panel public-newsletter-modal" role="dialog" aria-modal="true" aria-labelledby="newsletterRequestTitle">
+          <section className="modal-panel public-newsletter-modal" role="dialog" aria-modal="true" aria-labelledby="newsletterRequestTitle" onKeyDown={event => handleDialogKeyDown(event, closeSubscriberModal)}>
             <div className="modal-heading">
               <span className="modal-icon"><ShieldCheck aria-hidden="true" /></span>
               <div>
@@ -1219,7 +1279,8 @@ function PublicHome() {
               <button
                 className="icon-button"
                 type="button"
-                onClick={() => setIsSubscriberModalOpen(false)}
+                disabled={isSubscriberSubmitting}
+                onClick={closeSubscriberModal}
                 aria-label="Close newsletter request"
               >
                 <X aria-hidden="true" />
@@ -1233,6 +1294,7 @@ function PublicHome() {
                 className="input"
                 type="text"
                 value={subscriberForm.displayName}
+                autoFocus
                 placeholder="Your full name"
                 onChange={event => updateSubscriberForm("displayName", event.target.value)}
                 required
@@ -1278,7 +1340,7 @@ function PublicHome() {
                   <Mail aria-hidden="true" />
                   <span>{isSubscriberSubmitting ? "Submitting..." : "Submit request"}</span>
                 </button>
-                <button className="btn btn-secondary" type="button" onClick={() => setIsSubscriberModalOpen(false)}>
+                <button className="btn btn-secondary" type="button" disabled={isSubscriberSubmitting} onClick={closeSubscriberModal}>
                   <span>Cancel</span>
                 </button>
               </div>
@@ -1457,14 +1519,12 @@ function ImageGallery({ item, images, onOpen }) {
 }
 
 function DetailGrid({ item }) {
-  const fields = getDetailFields(item);
+  const fields = getDetailFields(item)
+    .map(field => ({ ...field, displayValue: fieldValueToText(field.value).trim() }))
+    .filter(field => String(field.label || "").trim() && field.displayValue);
 
   if (!fields.length) {
-    return (
-      <div className="detail-grid">
-        <div className="empty-state">No details have been recorded for this item yet.</div>
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -1472,12 +1532,12 @@ function DetailGrid({ item }) {
       {fields.map((field, index) => {
         const label = String(field.label || "").trim();
         if (!label) return null;
-        const value = fieldValueToText(field.value).trim();
+        const value = field.displayValue;
 
         return (
           <div className="detail-cell" key={`${label}-${index}`}>
             <span className="detail-label">{label}</span>
-            <span className={value ? "detail-value" : "detail-value empty"}>{value || "Not recorded"}</span>
+            <span className="detail-value">{value}</span>
           </div>
         );
       })}
@@ -1576,9 +1636,11 @@ function SuggestionList({ suggestions, onChoose }) {
 
 function ScanCandidatePicker({ parsed, onClose, onChoose }) {
   const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+  const initialFocusRef = useRef(null);
+  useModalPageLock(true, initialFocusRef);
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={e => {
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="scanCandidateTitle" onKeyDown={event => handleDialogKeyDown(event, onClose)} onClick={e => {
       if (e.target === e.currentTarget) onClose();
     }}>
       <div className="modal-panel">
@@ -1587,21 +1649,22 @@ function ScanCandidatePicker({ parsed, onClose, onChoose }) {
             <span className="modal-icon"><ScanText aria-hidden="true" /></span>
             <div>
               <p className="eyebrow">Document scan</p>
-              <div className="modal-title">Pick item row</div>
+              <div className="modal-title" id="scanCandidateTitle">Pick an item</div>
             </div>
           </div>
           <p className="modal-copy">
-            I found several possible rows. Choose the one from the packet, or scan a closer single row if this list looks wrong.
+            I found several possible items. Choose the one from the packet, or scan a closer view if this list looks wrong.
           </p>
 
           <div className="candidate-list">
-            {candidates.map(candidate => {
+            {candidates.map((candidate, index) => {
               const display = getPacketCandidateDisplay(candidate);
               return (
                 <button
                   className="btn btn-secondary candidate-btn"
                   type="button"
                   key={`${candidate.line}-${candidate.score}`}
+                  ref={index === 0 ? initialFocusRef : undefined}
                   onClick={() => onChoose(candidate.line)}
                 >
                   <span className="candidate-content">
@@ -1619,7 +1682,7 @@ function ScanCandidatePicker({ parsed, onClose, onChoose }) {
           </div>
 
           <div className="button-row">
-            <button className="btn btn-secondary" type="button" onClick={onClose}>
+            <button className="btn btn-secondary" type="button" ref={!candidates.length ? initialFocusRef : undefined} onClick={onClose}>
               <X aria-hidden="true" />
               <span>Cancel</span>
             </button>
@@ -1631,16 +1694,18 @@ function ScanCandidatePicker({ parsed, onClose, onChoose }) {
 }
 
 function Lightbox({ image, onClose }) {
+  const closeButtonRef = useRef(null);
+  useModalPageLock(Boolean(image), closeButtonRef);
   if (!image) return null;
 
   return (
-    <div className="lightbox-backdrop" role="dialog" aria-modal="true" onClick={e => {
+    <div className="lightbox-backdrop" role="dialog" aria-modal="true" aria-label="Inventory image" onKeyDown={event => handleDialogKeyDown(event, onClose)} onClick={e => {
       if (e.target === e.currentTarget) onClose();
     }}>
       <div className="lightbox-panel">
         <img src={image.src} alt={image.alt || "Inventory image"} />
         <div className="lightbox-actions">
-          <button className="btn btn-secondary" type="button" onClick={onClose}>
+          <button ref={closeButtonRef} className="btn btn-secondary" type="button" onClick={onClose}>
             <X aria-hidden="true" />
             <span>Close</span>
           </button>
@@ -1691,7 +1756,7 @@ function ViewerApp() {
           });
         }
       } catch {
-        if (!ignore) setLoginStatus({ text: "Failed to load index.json", isError: true });
+        if (!ignore) setLoginStatus({ text: "Could not load inventory data. Refresh the page and try again.", isError: true });
       }
     }
 
@@ -1762,7 +1827,7 @@ function ViewerApp() {
       setSelectedPlatoon(currentPlatoon);
       setSearchQuery("");
       setScanStatus({
-        text: result.source === "demo" ? "Demo inventory loaded. Live backend data is not connected yet." : "",
+        text: result.source === "demo" ? "Demo inventory loaded. Live inventory data is not connected yet." : "",
         isError: false
       });
       setLoginStatus({ text: "", isError: false });

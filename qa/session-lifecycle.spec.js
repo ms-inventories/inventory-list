@@ -12,10 +12,10 @@ async function signInAsPlatoonAdmin(page) {
 async function openSessions(page) {
   await page.getByRole("button", { name: /^Notifications/ }).click();
   await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open sessions", exact: true })
+    .getByRole("button", { name: "Open inventories", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 }
 
 async function openNewSessionForm(page) {
@@ -32,12 +32,24 @@ async function openNewSessionForm(page) {
 async function createEmptySession(page, name) {
   const sessionName = await openNewSessionForm(page);
   await sessionName.fill(name);
-  await page.locator(".session-create-form").getByRole("button", { name: "Start session", exact: true }).click();
-  await expect(page.locator(".session-row", { hasText: name })).toHaveCount(1);
+  await page.locator(".session-create-form").getByRole("button", { name: "Start inventory", exact: true }).click();
+  const inventoryRow = page.locator(".session-row", { hasText: name });
+  await expect(inventoryRow).toHaveCount(1);
+  await inventoryRow.click();
+  await expect(page.locator(".session-summary", { hasText: name })).toBeVisible();
+}
+
+async function openInventoryTools(page) {
+  const tools = page.locator("details.session-tools");
+  await expect(tools).toBeVisible();
+  if (!(await tools.evaluate(element => element.open))) {
+    await tools.locator(":scope > summary").click();
+  }
+  return tools;
 }
 
 test.describe("session lifecycle", () => {
-  test("reuses duplicate empty sessions and can delete the draft", async ({ page }, testInfo) => {
+  test("reuses duplicate empty inventories and can delete the draft", async ({ page }, testInfo) => {
     const sessionName = `QA duplicate ${testInfo.project.name} ${Date.now()}`;
 
     await page.goto(TENANT_URL);
@@ -45,20 +57,23 @@ test.describe("session lifecycle", () => {
     await openSessions(page);
 
     await createEmptySession(page, sessionName);
-    await createEmptySession(page, sessionName);
+    const duplicateName = await openNewSessionForm(page);
+    await duplicateName.fill(sessionName);
+    await page.locator(".session-create-form").getByRole("button", { name: "Start inventory", exact: true }).click();
 
     await expect(page.locator(".session-row", { hasText: sessionName })).toHaveCount(1);
-    await expect(page.getByText(/already an empty session/i)).toBeVisible();
+    await expect(page.getByText(/already an empty inventory/i)).toBeVisible();
 
-    await page.getByRole("button", { name: "Delete draft" }).click();
-    await expect(page.getByRole("dialog", { name: "Delete draft session?" })).toBeVisible();
-    await page.getByRole("button", { name: "Delete session" }).click();
+    const inventoryTools = await openInventoryTools(page);
+    await inventoryTools.getByRole("button", { name: "Delete empty inventory" }).click();
+    await expect(page.getByRole("dialog", { name: "Delete empty inventory?" })).toBeVisible();
+    await page.getByRole("button", { name: "Delete inventory" }).click();
 
     await expect(page.locator(".session-row", { hasText: sessionName })).toHaveCount(0);
-    await expect(page.getByText(`Deleted empty session ${sessionName}.`)).toBeVisible();
+    await expect(page.getByText(`Deleted empty inventory ${sessionName}.`)).toBeVisible();
   });
 
-  test("requires confirmation before closing a session with packet rows", async ({ page }, testInfo) => {
+  test("requires confirmation before closing an inventory with packet items", async ({ page }, testInfo) => {
     const sessionName = `QA closeout ${testInfo.project.name} ${Date.now()}`;
     const packetLin = `${testInfo.project.name.startsWith("mobile") ? "M" : "C"}${String(Date.now() % 100000).padStart(5, "0")}`;
 
@@ -67,31 +82,36 @@ test.describe("session lifecycle", () => {
     await openSessions(page);
     await createEmptySession(page, sessionName);
 
-    await page.locator(".packet-wizard-entry").getByRole("button", { name: "Upload packet" }).click();
+    await page.getByRole("region", { name: "Inventory workspace" })
+      .getByRole("button", { name: "Add items from packet", exact: true })
+      .click();
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Choose source" }).click();
     await dialog.locator("textarea").fill(`000009148 ${packetLin} QA CLOSEOUT TEST ITEM`);
-    await dialog.getByRole("button", { name: "Review rows" }).click();
+    await dialog.getByRole("button", { name: "Review items" }).click();
     await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
-    await dialog.getByRole("button", { name: /Import 1 rows?/ }).click();
+    await dialog.getByRole("button", { name: "Import 1 item" }).click();
     await expect(dialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
-    await dialog.getByRole("button", { name: "Open session" }).click();
+    await dialog.getByRole("button", { name: "Open inventory" }).click();
 
-    await page.getByRole("button", { name: "Close out" }).click();
-    await expect(page.getByRole("dialog", { name: "Close this session?" })).toBeVisible();
-    await page.getByRole("button", { name: "Cancel" }).click();
-    await expect(page.getByRole("dialog", { name: "Close this session?" })).toHaveCount(0);
+    const inventoryTools = await openInventoryTools(page);
+    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    let closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
+    await expect(closeDialog).toBeVisible();
+    await closeDialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByRole("dialog", { name: "Close this inventory?" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Close out" }).click();
-    await page.getByRole("button", { name: "Close session" }).click();
+    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
+    await closeDialog.getByRole("button", { name: "Close inventory" }).click();
 
-    await expect(page.getByRole("dialog", { name: "Close this session?" })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Close this inventory?" })).toHaveCount(0);
     await page.locator(".session-archive summary").click();
     await expect(page.locator(".session-archive .session-row", { hasText: sessionName })).toBeVisible();
   });
 
-  test("clears a stale session load error after refresh", async ({ page }) => {
+  test("clears a stale inventory load error after refresh", async ({ page }) => {
     let failNextSessionList = false;
     await page.route("**/*", async route => {
       const url = new URL(route.request().url());
@@ -114,9 +134,9 @@ test.describe("session lifecycle", () => {
     await openSessions(page);
 
     failNextSessionList = true;
-    await page.getByRole("button", { name: "Refresh sessions" }).click();
+    await page.getByRole("button", { name: "Refresh inventory" }).click();
     await expect(page.getByText("Internal server error")).toBeVisible();
-    await page.getByRole("button", { name: "Refresh sessions" }).click();
+    await page.getByRole("button", { name: "Refresh inventory" }).click();
     await expect(page.getByText("Internal server error")).toHaveCount(0);
   });
 });

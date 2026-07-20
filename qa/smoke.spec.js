@@ -81,7 +81,7 @@ test.describe("QA smoke", () => {
     const platoonCard = page.locator(".platform-platoon-card").filter({ hasText: "ms.localhost" }).first();
     await expect(platoonCard).toBeVisible();
     await expect(platoonCard.getByRole("button", { name: /Copy link for MS Platoon/i })).toBeVisible();
-    await expect(platoonCard.getByRole("link", { name: /Enter ms\.localhost workspace/i })).toBeVisible();
+    await expect(platoonCard.getByRole("link", { name: /Enter MS Platoon workspace/i })).toBeVisible();
 
     await openPlatformSection(page, "Settings");
     await expect(page.getByRole("heading", { name: "Platform settings", exact: true, level: 1 })).toBeVisible();
@@ -297,7 +297,10 @@ test.describe("QA smoke", () => {
 
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Dashboard review results" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Start new inventory" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start new inventory" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Upload packet" })).toHaveCount(0);
+    const activeInventory = page.getByRole("region", { name: "Active inventory" });
+    await expect(activeInventory.getByRole("button", { name: "Open inventory", exact: true })).toBeVisible();
     const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
     if (await workspaceMenu.isVisible()) {
       await workspaceMenu.click();
@@ -310,21 +313,30 @@ test.describe("QA smoke", () => {
       await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Team" })).toBeVisible();
     }
-    await expect(page.getByRole("button", { name: "Upload packet" })).toBeVisible();
+    await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toBeVisible();
+    await expect(page.locator(".session-create > summary")).toContainText("New inventory");
+    await expect(page.getByRole("button", { name: "Invite crew", exact: true })).toBeVisible();
   });
 
-  test("platoon admin can open and review packet upload rows", async ({ page }) => {
+  test("platoon admin can open and review packet items", async ({ page }) => {
     await page.goto(TENANT_URL);
     await signInWithQaPersona(page, "Platoon admin");
     await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
 
-    const uploadPacket = page.getByRole("button", { name: "Upload packet" });
-    await expect(uploadPacket).toBeVisible();
-    await uploadPacket.click();
+    const activeInventory = page.getByRole("region", { name: "Active inventory" });
+    const inventorySelect = activeInventory.getByRole("combobox", { name: "Active inventory", exact: true });
+    if (await inventorySelect.isVisible()) await inventorySelect.selectOption({ label: "July sensitive items" });
+    await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+    const inventoryTools = page.locator("details.session-tools");
+    await inventoryTools.locator(":scope > summary").click();
+    await inventoryTools.getByRole("button", { name: "Add packet", exact: true }).click();
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText("Session", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Inventory", { exact: true })).toBeVisible();
     await expect(dialog.getByText("Source", { exact: true })).toBeVisible();
     await expect(dialog.getByText("Review", { exact: true })).toBeVisible();
 
@@ -335,7 +347,7 @@ test.describe("QA smoke", () => {
       "000009148 R20684 RADIAC SET: AN/VDR-2 OH Qty 1",
       "0000005550 B67766 BINOCULAR: MODULAR CONSTRUCTION MIL SCAL OH Qty 5"
     ].join("\n"));
-    await dialog.getByRole("button", { name: "Review rows" }).click();
+    await dialog.getByRole("button", { name: "Review items" }).click();
 
     await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
     await expect(dialog.getByText("ready to import")).toBeVisible();
@@ -357,7 +369,7 @@ test.describe("QA smoke", () => {
     const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
     if (await workspaceMenu.isVisible()) await workspaceMenu.click();
     await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Inventory Sessions" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Inventory", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Review Queue" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Team" })).toHaveCount(0);
   });

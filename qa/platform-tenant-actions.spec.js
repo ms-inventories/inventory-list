@@ -44,7 +44,7 @@ test.describe("Platform platoon card actions", () => {
     const card = page.locator(".platform-platoon-card").filter({ hasText: tenantUrls.host }).first();
     await expect(card).toBeVisible();
 
-    const workspaceLink = card.getByRole("link", { name: `Enter ${tenantUrls.host} workspace` });
+    const workspaceLink = card.getByRole("link", { name: "Enter MS Platoon workspace" });
     await expect(workspaceLink).toHaveCount(1);
     await expect(workspaceLink).toHaveAttribute("href", tenantUrls.workspace);
     await expect(workspaceLink).toContainText("Enter workspace");

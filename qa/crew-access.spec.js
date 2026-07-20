@@ -94,15 +94,10 @@ test.describe("temporary crew access", () => {
       await codeInput.fill(created.code);
       await page.getByRole("button", { name: "Join inventory" }).click();
 
-      await expect(page.getByRole("heading", { name: "Inventory Dashboard" })).toBeVisible();
-      const activeInventory = page.getByRole("region", { name: "Active inventory" });
-      await expect(activeInventory).toContainText(session.name);
-      await expect.poll(() => activeInventory.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
-      if (testInfo.project.name === "mobile-chrome") {
-        const sessionHeading = await activeInventory.getByRole("heading", { name: session.name }).boundingBox();
-        const openSession = await activeInventory.getByRole("button", { name: "Open session" }).boundingBox();
-        expect(openSession.y).toBeGreaterThanOrEqual(sessionHeading.y + sessionHeading.height);
-      }
+      await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+      const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+      await expect(inventoryWorkspace).toContainText(session.name);
+      await expect.poll(() => inventoryWorkspace.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
       const workspaceMenu = page.getByRole("button", { name: "Open workspace menu" });
       const mobileNavigation = await workspaceMenu.isVisible();
       if (mobileNavigation) await workspaceMenu.click();
@@ -115,7 +110,6 @@ test.describe("temporary crew access", () => {
         await page.locator(".leader-brand").getByRole("button", { name: "Close menu" }).click();
       }
 
-      await activeInventory.getByRole("button", { name: "Open session" }).click();
       let itemRow = page.locator(".session-item", { hasText: packetLine });
       await expect(itemRow).toBeVisible();
       await expect(itemRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
@@ -152,7 +146,7 @@ test.describe("temporary crew access", () => {
     }
   });
 
-  test("leader generates and revokes a code in the selected session", async ({ page, request }, testInfo) => {
+  test("leader generates and revokes a code in the selected inventory", async ({ page, request }, testInfo) => {
     if (testInfo.project.name === "mobile-chrome") await page.setViewportSize({ width: 360, height: 640 });
     const session = await createActiveSession(request, `Crew dialog ${testInfo.project.name} ${Date.now()}`);
     await seedAdminBrowserSession(page);
@@ -163,7 +157,7 @@ test.describe("temporary crew access", () => {
       const activeInventory = page.getByRole("region", { name: "Active inventory" });
       const activeInventorySelector = activeInventory.getByRole("combobox", { name: "Active inventory" });
       if (await activeInventorySelector.isVisible()) await activeInventorySelector.selectOption(session.id);
-      await activeInventory.getByRole("button", { name: "Open session" }).click();
+      await activeInventory.getByRole("button", { name: "Open inventory" }).click();
       await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
       await page.locator(".session-row", { hasText: session.name }).click();
       const summary = page.locator(".session-summary").filter({ hasText: session.name });

@@ -199,7 +199,7 @@ function packetFileReadErrorMessage(error, file) {
     isPdfFile(file)
     && /(?:pdf reader did not load|worker|module script|dynamically imported module|mime type|failed to fetch|networkerror|load failed)/i.test(message)
   ) {
-    return "The PDF reader could not start. Refresh and try again, or use a CSV/text file or paste the packet rows below.";
+    return "The PDF reader could not start. Refresh and try again, or use a CSV/text file or paste one item per line below.";
   }
 
   return message || "Could not read packet file.";

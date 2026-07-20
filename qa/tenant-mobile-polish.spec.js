@@ -52,7 +52,7 @@ async function openWorkspaceView(page, name) {
   const toggle = page.getByRole("button", { name: "Open workspace menu" });
   if (await toggle.isVisible()) {
     await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator(".leader-shell")).toHaveClass(/sidebar-open/);
   }
   const item = page.getByRole("button", { name, exact: true });
   await item.scrollIntoViewIfNeeded();
@@ -62,7 +62,7 @@ async function openWorkspaceView(page, name) {
 async function openSessionsFromNotifications(page) {
   await page.getByRole("button", { name: /^Notifications/ }).click();
   await page.getByRole("region", { name: "Notifications" })
-    .getByRole("button", { name: "Open sessions", exact: true })
+    .getByRole("button", { name: "Open inventories", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
 }
@@ -186,12 +186,12 @@ test.describe("tenant mobile and tablet polish", () => {
       await openWorkspaceView(page, "Reports");
       await expect(page.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
 
-      await page.getByRole("combobox", { name: "Session", exact: true }).selectOption(session.id);
-      const results = page.getByRole("region", { name: "Report results" });
+      await page.getByRole("combobox", { name: "Inventory", exact: true }).selectOption(session.id);
+      const results = page.getByRole("table", { name: "Report results" });
       const row = results.locator(".reports-table-row", { hasText: packetLine });
       await expect(row).toBeVisible();
       await expect(results.locator(".reports-table-header")).toBeHidden();
-      for (const label of ["Session", "Item", "Outcome", "Proof status", "Location / serial"]) {
+      for (const label of ["Inventory", "Item", "Outcome", "Proof status", "Location / serial"]) {
         await expect(row.locator(".mobile-field-label").getByText(label, { exact: true })).toBeVisible();
       }
 
@@ -206,7 +206,7 @@ test.describe("tenant mobile and tablet polish", () => {
     }
   });
 
-  test("mobile dashboard keeps session work behind Open session and limits the review preview to three rows", async ({ page, request }, testInfo) => {
+  test("mobile dashboard keeps inventory work behind Open inventory and limits the review preview to three items", async ({ page, request }, testInfo) => {
     test.setTimeout(60_000);
     await page.setViewportSize({ width: 360, height: 740 });
     const suffix = scenarioSuffix(testInfo, "dashboard-preview");
@@ -270,9 +270,12 @@ test.describe("tenant mobile and tablet polish", () => {
       }
       await expectContained(page.locator("main"));
 
-      await activeInventory.getByRole("button", { name: "Open session", exact: true }).click();
+      await activeInventory.getByRole("button", { name: "Open inventory", exact: true }).click();
       const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
       await expect(inventoryWorkspace).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Leader Dashboard", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Back to dashboard", exact: true })).toBeVisible();
       await inventoryWorkspace.getByRole("group", { name: "Work assignment lists" })
         .getByRole("button", { name: /^Mine\b/ })
         .click();
@@ -298,6 +301,14 @@ test.describe("tenant mobile and tablet polish", () => {
       expect(fallbackThumbAlignment.display).toBe("grid");
       expect(fallbackThumbAlignment.horizontalOffset).toBeLessThanOrEqual(1);
       expect(fallbackThumbAlignment.verticalOffset).toBeLessThanOrEqual(1);
+      const [mainBox, sidebarBox, rowBox, toolsBox] = await Promise.all([
+        inventoryWorkspace.locator(".session-main").boundingBox(),
+        inventoryWorkspace.locator(".session-sidebar").boundingBox(),
+        sessionRow.boundingBox(),
+        inventoryWorkspace.locator(".session-tools > summary").boundingBox()
+      ]);
+      expect(mainBox.y).toBeLessThan(sidebarBox.y);
+      expect(rowBox.y).toBeLessThan(toolsBox.y);
       await expectContained(sessionRow);
       await expectInsideHorizontally(inventoryWorkspace, sessionRow);
     } finally {
@@ -325,7 +336,7 @@ test.describe("tenant mobile and tablet polish", () => {
       await expect(page.getByRole("heading", { name: "Team", exact: true })).toBeVisible();
       const teammateSearch = page.getByRole("searchbox", { name: "Search teammates" });
       await teammateSearch.fill("QA");
-      const clearSearch = page.getByRole("button", { name: "Clear search" });
+      const clearSearch = page.getByRole("search").getByRole("button", { name: "Clear search" });
       await expectMinTargetSize(clearSearch, { width: 44, height: 44 });
       await clearSearch.click();
 
@@ -335,7 +346,7 @@ test.describe("tenant mobile and tablet polish", () => {
       await expectMinTargetSize(page.locator(".team-member-manage .member-role-select").first());
 
       await openSessionsFromNotifications(page);
-      await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
       const sessionList = page.locator(".session-list");
       await expect(sessionList).toBeVisible();
       const sessionListStyle = await sessionList.evaluate(element => ({

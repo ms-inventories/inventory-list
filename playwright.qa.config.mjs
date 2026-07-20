@@ -1,5 +1,25 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+export function assertLocalQaTargets(environment = process.env) {
+  for (const [name, rawValue] of Object.entries(environment)) {
+    if (!/^QA_[A-Z0-9_]*(?:URL|ORIGIN)$/.test(name) || !String(rawValue || "").trim()) continue;
+    let target;
+    try {
+      target = new URL(String(rawValue));
+    } catch {
+      throw new Error(`${name} must be a valid local URL before Playwright QA can run.`);
+    }
+    const hostname = target.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (!LOOPBACK_HOSTS.has(hostname) && !hostname.endsWith(".localhost")) {
+      throw new Error(`${name} must target localhost for Playwright QA; received ${hostname}. Production smoke checks use separate scripts.`);
+    }
+  }
+}
+
+assertLocalQaTargets();
+
 const frontendUrl = process.env.QA_FRONTEND_URL || "http://localhost:5175";
 
 export default defineConfig({

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
@@ -469,7 +469,7 @@ function getProtectedAuthErrorMessage(error) {
   const code = error?.code || error?.details?.code || "";
 
   if (code.startsWith("token_exchange")) {
-    return "Sign-in reached the app, but the inventory API did not finish the callback. Try again or ask an admin to check API routing.";
+    return "Sign-in started, but the workspace did not finish opening. Try again or ask an admin for help.";
   }
 
   if (code === "state_mismatch") {
@@ -481,6 +481,29 @@ function getProtectedAuthErrorMessage(error) {
   }
 
   return getApiErrorMessage(error);
+}
+
+function handleModalKeyDown(event, onEscape) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    onEscape?.();
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const focusable = [...event.currentTarget.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )].filter(element => element.getClientRects().length);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 const platformViewHashes = {
@@ -538,12 +561,12 @@ function tenantRouteFromLocation() {
   };
 }
 
-function navigateAppHash(hashPath, { replace = false } = {}) {
+function navigateAppHash(hashPath, { replace = false, state = {} } = {}) {
   const normalizedHash = `#${String(hashPath || "/admin").startsWith("/") ? hashPath : `/${hashPath}`}`;
   if (window.location.hash === normalizedHash) return;
   const nextUrl = new URL(window.location.href);
   nextUrl.hash = normalizedHash.slice(1);
-  window.history[replace ? "replaceState" : "pushState"]({}, "", nextUrl.href);
+  window.history[replace ? "replaceState" : "pushState"](state, "", nextUrl.href);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -1094,7 +1117,7 @@ function assignedPerson(item) {
 }
 
 function itemDisplayName(item) {
-  return item?.inventoryItem?.commonName || item?.inventoryItem?.title || item?.packetLine || "Untitled row";
+  return item?.inventoryItem?.commonName || item?.inventoryItem?.title || item?.packetLine || "Untitled item";
 }
 
 function reportItemIsResolved(item) {
@@ -1160,11 +1183,11 @@ function buildSessionReportText(report) {
   const session = report.session || {};
   const counts = report.counts;
   const lines = [
-    `${session.name || "Inventory session"} close-out report`,
+    `${session.name || "Inventory"} close-out report`,
     `Status: ${formatItemStatus(session.status)}`,
     `Generated: ${formatDate(new Date())}`,
     "",
-    `Rows: ${counts.total}`,
+    `Items: ${counts.total}`,
     `Resolved: ${report.resolved} (${report.completion}%)`,
     `Approved/found: ${counts.approved + counts.found}`,
     `Needs review: ${counts.needsReview}`,
@@ -1177,7 +1200,7 @@ function buildSessionReportText(report) {
   ];
 
   if (report.issueRows.length) {
-    lines.push("Rows to reconcile:");
+    lines.push("Items to reconcile:");
     report.issueRows.forEach(item => {
       const latest = latestSubmission(item);
       const parts = [
@@ -1191,7 +1214,7 @@ function buildSessionReportText(report) {
       lines.push(`- ${parts.join(" | ")}`);
     });
   } else {
-    lines.push("Rows to reconcile: none");
+    lines.push("Items to reconcile: none");
   }
 
   return lines.join("\n");
@@ -1205,7 +1228,7 @@ function csvCell(value) {
 
 function buildSessionReportCsv(report) {
   const headers = [
-    "Session",
+    "Inventory",
     "Item",
     "Packet Line",
     "Expected Qty",
@@ -1248,8 +1271,8 @@ function buildSessionReportCsv(report) {
 
 function buildReportsCsv(rows) {
   const headers = [
-    "Session",
-    "Session Status",
+    "Inventory",
+    "Inventory Status",
     "Item",
     "Packet Line",
     "LIN",
@@ -1551,7 +1574,7 @@ function buildProofRequestMessage(fields) {
   return `Send ${labels.join(", ").toLowerCase()} when you can.`;
 }
 
-function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSaved, onStatus }) {
+function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSaved, onStatus, onOpenSavedPhoto }) {
   const savedItemPhotos = getInventoryItemPhotos(item?.inventoryItem);
   const previousLocation = item?.inventoryItem?.currentLocation || "";
   const savedLocation = previousLocation || item?.locationHint || "";
@@ -1707,9 +1730,9 @@ function ProofForm({ item, token, tenantSlug, requestNote = "", onCancel, onSave
           {savedItemPhotos.length ? (
             <div className="saved-record-photo-strip" aria-label="Previously saved item photos">
               {savedItemPhotos.map((photo, index) => (
-                <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.url} aria-label={`Open saved item photo ${index + 1}`}>
+                <button type="button" key={photo.id || photo.url} aria-label={`Show saved item photo ${index + 1}`} onClick={() => onOpenSavedPhoto?.(index)}>
                   <ProtectedMediaImage src={photo.url} alt="" loading="lazy" />
-                </a>
+                </button>
               ))}
             </div>
           ) : null}
@@ -1850,15 +1873,15 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
 
       <div className="closeout-report-body">
         <div className="closeout-print-header">
-          <strong>{report.session?.name || "Inventory session"}</strong>
+          <strong>{report.session?.name || "Inventory"}</strong>
           <span>Close-out report - {formatItemStatus(report.session?.status)} - {formatDate(new Date().toISOString())}</span>
-          <span>{counts.total} rows - {report.completion}% resolved</span>
+          <span>{countLabel(counts.total, "item")} - {report.completion}% resolved</span>
         </div>
 
         <div className="closeout-metrics">
           <div>
             <strong>{counts.total}</strong>
-            <span>Rows</span>
+            <span>Items</span>
           </div>
           <div>
             <strong>{report.resolved}</strong>
@@ -1883,7 +1906,7 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
         </div>
 
         <div className="closeout-report-heading">
-          <strong>Rows to reconcile</strong>
+          <strong>Items to reconcile</strong>
           <div className="closeout-report-actions">
             <button className="btn btn-secondary btn-small" type="button" onClick={() => onPrint(report)}>
               <Printer aria-hidden="true" />
@@ -1916,10 +1939,10 @@ function SessionCloseoutReport({ report, onCopy, onExportCsv, onPrint, isPrintTa
                 </div>
               );
             })}
-            {hiddenIssueCount > 0 ? <small className="closeout-overflow">+{hiddenIssueCount} more rows in copied report</small> : null}
+            {hiddenIssueCount > 0 ? <small className="closeout-overflow">+{hiddenIssueCount} more items in copied report</small> : null}
           </div>
         ) : (
-          <div className="closeout-empty">No unresolved rows.</div>
+          <div className="closeout-empty">No unresolved items.</div>
         )}
       </div>
     </details>
@@ -1938,7 +1961,7 @@ function AuthBootPanel({ status }) {
   );
 }
 
-function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss }) {
+function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss, onOpenPhoto }) {
   const candidate = item?.suggestedInventoryItem;
   if (!candidate) return null;
 
@@ -1966,9 +1989,9 @@ function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss }) {
       {photos.length ? (
         <div className="prior-match-photos" aria-label="Previously saved photos">
           {photos.map((photo, index) => (
-            <a href={photo.url} target="_blank" rel="noreferrer" key={photo.id || photo.url} aria-label={`Open previous photo ${index + 1}`}>
+            <button type="button" key={photo.id || photo.url} aria-label={`Show previous photo ${index + 1}`} onClick={() => onOpenPhoto?.(index)}>
               <ProtectedMediaImage src={photo.url} alt="" loading="lazy" />
-            </a>
+            </button>
           ))}
         </div>
       ) : null}
@@ -1989,7 +2012,6 @@ function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss }) {
 
 function SessionItemInlineContext({
   item,
-  importBatch,
   canManage,
   isClosed,
   assignmentAction,
@@ -2002,6 +2024,7 @@ function SessionItemInlineContext({
   onResolveMatch,
   onOpenPriorPhoto,
   onOpenSavedPhoto,
+  onOpenSuggestedPhoto,
   onOpenProofPhoto
 }) {
   const title = itemDisplayName(item);
@@ -2010,15 +2033,6 @@ function SessionItemInlineContext({
   const submissions = item.submissions || [];
   const isAssignmentPending = Boolean(assignmentAction);
   const isDirectCheckPending = Boolean(directCheckAction);
-  const hasSavedFacts = Boolean(savedRecord && (
-    savedRecord.commonName
-    || savedRecord.title
-    || savedRecord.armyName
-    || savedRecord.lin
-    || savedRecord.nsn
-    || savedRecord.currentLocation
-    || savedRecord.description
-  ));
 
   return (
     <div className="session-item-context-stack">
@@ -2030,23 +2044,19 @@ function SessionItemInlineContext({
           action={matchAction}
           onConfirm={() => onResolveMatch("confirm")}
           onDismiss={() => onResolveMatch("dismiss")}
+          onOpenPhoto={onOpenSuggestedPhoto}
         />
       ) : null}
 
-      {!item.priorInventoryHistory && savedRecord && (hasSavedFacts || savedPhotos.length) ? (
+      {!item.priorInventoryHistory && savedRecord && (savedRecord.currentLocation || savedPhotos.length) ? (
         <section className="session-item-context session-item-saved-record" aria-label={`Saved record for ${title}`}>
           <div className="session-item-context-heading">
-            <h3>Saved record</h3>
-            <span>Matched from previous inventory</span>
+            <h3>Previous inventory</h3>
+            <span>Matched saved record</span>
           </div>
-          {hasSavedFacts ? (
+          {savedRecord.currentLocation ? (
             <dl className="session-item-context-facts">
-              {savedRecord.commonName || savedRecord.title ? <div><dt>Common name</dt><dd>{savedRecord.commonName || savedRecord.title}</dd></div> : null}
-              {savedRecord.armyName ? <div><dt>Army name</dt><dd>{savedRecord.armyName}</dd></div> : null}
-              {savedRecord.lin ? <div><dt>LIN</dt><dd>{savedRecord.lin}</dd></div> : null}
-              {savedRecord.nsn ? <div><dt>NSN</dt><dd>{savedRecord.nsn}</dd></div> : null}
-              {savedRecord.currentLocation ? <div><dt>Last location</dt><dd>{savedRecord.currentLocation}</dd></div> : null}
-              {savedRecord.description ? <div><dt>Description</dt><dd>{savedRecord.description}</dd></div> : null}
+              <div><dt>Last known location</dt><dd>{savedRecord.currentLocation}</dd></div>
             </dl>
           ) : null}
           <ProofPhotoStrip
@@ -2098,14 +2108,6 @@ function SessionItemInlineContext({
         </section>
       ) : null}
 
-      {canManage && importBatch ? (
-        <p className="session-item-provenance">
-          Imported from <strong>{importBatch.sourceName || "an uploaded packet"}</strong>
-          {importBatch.createdAt ? ` on ${formatDate(importBatch.createdAt)}` : ""}
-          {importBatch.createdByName || importBatch.createdByEmail ? ` by ${importBatch.createdByName || importBatch.createdByEmail}` : ""}.
-        </p>
-      ) : null}
-
       {canManage && !isClosed ? (
         <section className="session-item-context session-item-inline-manage" aria-label={`Manage ${title}`}>
           <div className="session-item-context-heading"><h3>Leader controls</h3></div>
@@ -2146,7 +2148,8 @@ function SessionProofDialog({
   tenantSlug,
   onCancel,
   onSaved,
-  onStatus
+  onStatus,
+  onOpenSavedPhoto
 }) {
   if (!item) return null;
 
@@ -2194,7 +2197,7 @@ function SessionProofDialog({
       >
         <header className="session-proof-dialog-heading">
           <div>
-            <p className="eyebrow">{session?.name || "Inventory session"}</p>
+            <p className="eyebrow">{session?.name || "Inventory"}</p>
             <h2 id="sessionProofDialogTitle">{needsMoreProof ? `Respond with proof for ${title}` : `Add proof for ${title}`}</h2>
             <p id="sessionProofDialogItem">Record the result, location, notes, and photos that apply.</p>
           </div>
@@ -2215,6 +2218,7 @@ function SessionProofDialog({
               onCancel={onCancel}
               onSaved={onSaved}
               onStatus={onStatus}
+              onOpenSavedPhoto={onOpenSavedPhoto}
             />
           </section>
         </div>
@@ -2234,8 +2238,10 @@ function SessionPanel({
   onQueryChange = () => {},
   uploadIntent,
   preferredSessionId = "",
+  refreshVersion = 0,
   onUploadIntentHandled,
   onSessionChange,
+  onInventoryChanged,
   onInviteCrew,
   onOpenReview
 }) {
@@ -2259,7 +2265,7 @@ function SessionPanel({
   const [sessionItemFilter, setSessionItemFilter] = useState("available");
   const [proofItemId, setProofItemId] = useState("");
   const [detailPhotoViewer, setDetailPhotoViewer] = useState(null);
-  const [status, setStatus] = useState({ text: "Loading inventory sessions...", isError: false });
+  const [status, setStatus] = useState({ text: "Loading inventories...", isError: false });
   const [isLoadingSessions, setIsLoadingSessions] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [packetAction, setPacketAction] = useState("");
@@ -2273,17 +2279,20 @@ function SessionPanel({
   const [withdrawingSubmissionId, setWithdrawingSubmissionId] = useState("");
   const [printReportId, setPrintReportId] = useState("");
   const [closedSessionLimit, setClosedSessionLimit] = useState(20);
+  const [sessionToolsOpenId, setSessionToolsOpenId] = useState("");
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
   const packetFileInputRef = useRef(null);
   const packetTextareaRef = useRef(null);
   const detailPhotoTriggerRef = useRef(null);
   const proofTriggerRef = useRef(null);
+  const packetWizardTriggerRef = useRef(null);
+  const lifecycleDialogTriggerRef = useRef(null);
   const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
   const packetActionRef = useRef("");
   const sessionCreateActionRef = useRef(false);
   const sessionListRequestRef = useRef(0);
   const sessionDetailRequestRef = useRef(0);
-  const sessionLoadContextRef = useRef({ tenantSlug: null, token: null });
+  const sessionLoadContextRef = useRef({ tenantSlug: null, token: null, refreshVersion: null });
   const sessionItemFilterSessionRef = useRef("");
   const directCheckActionRef = useRef(new Map());
   const assignmentActionRef = useRef(new Map());
@@ -2318,12 +2327,13 @@ function SessionPanel({
   }
 
   async function loadSessions(nextSelectedId = selectedSessionId) {
+    const loadingStatusText = "Loading inventories...";
     const requestId = sessionListRequestRef.current + 1;
     sessionListRequestRef.current = requestId;
     setIsLoadingSessions(true);
 
     try {
-      setStatus({ text: "Loading inventory sessions...", isError: false });
+      setStatus({ text: loadingStatusText, isError: false });
       const data = await apiRequest("/inventory/sessions", { token, tenantSlug });
       if (requestId !== sessionListRequestRef.current) return false;
 
@@ -2333,6 +2343,7 @@ function SessionPanel({
         ? nextSelectedId
         : loaded.find(session => session.status !== "closed")?.id || "";
       setSelectedSessionId(selected);
+      if (selected !== preferredSessionId) onSessionChange?.(selected);
       let detailLoaded = true;
       if (selected) {
         detailLoaded = await loadSessionDetail(selected, false, requestId);
@@ -2341,12 +2352,20 @@ function SessionPanel({
       }
 
       if (detailLoaded && requestId === sessionListRequestRef.current) {
-        setStatus({ text: "", isError: false });
+        setStatus(current => (
+          current?.text === loadingStatusText && !current?.isError
+            ? { text: "", isError: false }
+            : current
+        ));
       }
       return detailLoaded && requestId === sessionListRequestRef.current;
     } catch (error) {
       if (requestId === sessionListRequestRef.current) {
-        setStatus({ text: getApiErrorMessage(error), isError: true });
+        setStatus(current => (
+          current?.text === loadingStatusText && !current?.isError
+            ? { text: getApiErrorMessage(error), isError: true }
+            : current
+        ));
       }
       return false;
     } finally {
@@ -2370,7 +2389,7 @@ function SessionPanel({
     const requestId = sessionDetailRequestRef.current + 1;
     sessionDetailRequestRef.current = requestId;
     try {
-      if (showStatus) setStatus({ text: "Loading session...", isError: false });
+      if (showStatus) setStatus({ text: "Loading inventory...", isError: false });
       const data = await apiRequest(`/inventory/sessions/${sessionId}`, { token, tenantSlug });
       if (requestId !== sessionDetailRequestRef.current) return false;
       if (sessionListRequestId && sessionListRequestId !== sessionListRequestRef.current) return false;
@@ -2385,7 +2404,7 @@ function SessionPanel({
           clearSelectedSessionState();
           await loadSessions("");
           setStatus({
-            text: "That session is no longer available. Pick another session or start a new one.",
+            text: "That inventory is no longer available. Pick another inventory or start a new one.",
             isError: false
           });
           return false;
@@ -2398,11 +2417,13 @@ function SessionPanel({
 
   useEffect(() => {
     const previousContext = sessionLoadContextRef.current;
-    const contextChanged = previousContext.tenantSlug !== tenantSlug || previousContext.token !== token;
-    sessionLoadContextRef.current = { tenantSlug, token };
+    const contextChanged = previousContext.tenantSlug !== tenantSlug
+      || previousContext.token !== token
+      || previousContext.refreshVersion !== refreshVersion;
+    sessionLoadContextRef.current = { tenantSlug, token, refreshVersion };
     if (!contextChanged && preferredSessionId && preferredSessionId === selectedSessionId) return;
     loadSessions(preferredSessionId || selectedSessionId);
-  }, [tenantSlug, token, preferredSessionId]);
+  }, [tenantSlug, token, preferredSessionId, refreshVersion]);
 
   useEffect(() => {
     if (uploadIntent !== "packet") return;
@@ -2469,7 +2490,7 @@ function SessionPanel({
     clearPacketImport();
     await loadSessionDetail(session.id, false);
     setStatus({
-      text: message || `${session.name} is already an empty session. Opened it instead.`,
+      text: message || `${session.name} is already an empty inventory. Opened it instead.`,
       isError: false
     });
     return session.id;
@@ -2499,8 +2520,8 @@ function SessionPanel({
       setNewSessionName("");
       setIsSessionCreateOpen(false);
       setStatus({ text: `Started ${data.session.name}`, isError: false });
-      onSessionChange?.(data.session.id);
       await loadSessions(data.session.id);
+      onInventoryChanged?.();
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
@@ -2510,6 +2531,7 @@ function SessionPanel({
   }
 
   function openPacketWizard(sessionId = selectedSessionId) {
+    if (!packetWizardOpen) packetWizardTriggerRef.current = document.activeElement;
     const fallbackSessionId = sessionId || selectedSessionId || openSessions[0]?.id || "";
     setPacketWizardModeTouched(false);
     clearPacketImport();
@@ -2535,6 +2557,7 @@ function SessionPanel({
     setPacketWizardSummary(null);
     setIsPacketImportOpen(false);
     setStatus({ text: "", isError: false });
+    window.requestAnimationFrame(() => packetWizardTriggerRef.current?.focus?.());
   }
 
   async function refreshSessions() {
@@ -2543,6 +2566,7 @@ function SessionPanel({
 
   function requestDeleteSession(session) {
     if (!session || Number(session.itemCount || 0) > 0) return;
+    lifecycleDialogTriggerRef.current = document.activeElement;
     setDeleteSessionTarget(session);
     setStatus({ text: "", isError: false });
   }
@@ -2550,10 +2574,12 @@ function SessionPanel({
   function closeDeleteSessionDialog() {
     if (isDeletingSession) return;
     setDeleteSessionTarget(null);
+    window.requestAnimationFrame(() => lifecycleDialogTriggerRef.current?.focus?.());
   }
 
   function requestCloseSession(session) {
     if (!session || session.status === "closed" || sessionStatusActionRef.current.has(session.id)) return;
+    lifecycleDialogTriggerRef.current = document.activeElement;
     setCloseSessionTarget(session);
     setStatus({ text: "", isError: false });
   }
@@ -2561,13 +2587,17 @@ function SessionPanel({
   function closeCloseSessionDialog() {
     if (isSaving || (closeSessionTarget?.id && sessionStatusActionRef.current.has(closeSessionTarget.id))) return;
     setCloseSessionTarget(null);
+    window.requestAnimationFrame(() => lifecycleDialogTriggerRef.current?.focus?.());
   }
 
   async function confirmCloseSession() {
     if (!closeSessionTarget?.id) return;
     const target = closeSessionTarget;
     const didClose = await updateSessionStatus("closed", target.id);
-    if (didClose) setCloseSessionTarget(null);
+    if (didClose) {
+      setCloseSessionTarget(null);
+      window.requestAnimationFrame(() => lifecycleDialogTriggerRef.current?.focus?.());
+    }
   }
 
   async function preparePacketWizardSession() {
@@ -2581,7 +2611,7 @@ function SessionPanel({
       if (shouldUseExistingSession) {
         const sessionId = fallbackSessionId;
         if (!sessionId) {
-          setStatus({ text: "Choose a session or create a new one first.", isError: true });
+          setStatus({ text: "Choose an inventory or start a new one first.", isError: true });
           return "";
         }
 
@@ -2596,7 +2626,7 @@ function SessionPanel({
 
       const name = currentWizard.sessionName.trim();
       if (!name) {
-        setStatus({ text: "Name the inventory session first.", isError: true });
+        setStatus({ text: "Name the inventory first.", isError: true });
         return "";
       }
 
@@ -2604,7 +2634,7 @@ function SessionPanel({
       if (duplicate) {
         const sessionId = await openExistingEmptySession(
           duplicate,
-          `${duplicate.name} is already an empty session. Using that session instead.`
+          `${duplicate.name} is already an empty inventory. Using it instead.`
         );
         if (sessionId) setPacketWizardStep(2);
         return sessionId;
@@ -2621,10 +2651,10 @@ function SessionPanel({
       setPacketWizardMode("existing");
       setPacketWizardSessionId(data.session.id);
       setSelectedSessionId(data.session.id);
-      onSessionChange?.(data.session.id);
       await loadSessions(data.session.id);
       setPacketWizardStep(2);
       setStatus({ text: `Started ${data.session.name}`, isError: false });
+      onInventoryChanged?.();
       return data.session.id;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -2636,7 +2666,7 @@ function SessionPanel({
 
   function reviewPacketRows(sourceText = packetRows, sourceName = packetSourceName, sessionId = selectedSessionId, sourceMeta = packetSourceFile) {
     if (!sessionId) {
-      setStatus({ text: "Create or select a session first.", isError: true });
+      setStatus({ text: "Start or select an inventory first.", isError: true });
       return [];
     }
 
@@ -2653,14 +2683,14 @@ function SessionPanel({
     setPacketSourceName(sourceName || source.fileName || "");
 
     if (!rows.length) {
-      setStatus({ text: "No packet rows found. Try pasting one item per line.", isError: true });
+      setStatus({ text: "No inventory items found. Try pasting one item per line.", isError: true });
       return [];
     }
 
     setStatus({
       text: analysis.ignoredCount
-        ? `${rows.length} item rows ready. ${analysis.ignoredCount} lines of headers or page text were skipped.`
-        : `${rows.length} item rows ready.`,
+        ? `${countLabel(rows.length, "item")} ready. ${analysis.ignoredCount} lines of headers or page text were skipped.`
+        : `${countLabel(rows.length, "item")} ready.`,
       isError: false
     });
     return rows;
@@ -2714,7 +2744,7 @@ function SessionPanel({
   function openPacketFilePicker(sessionId = selectedSessionId) {
     if (!sessionId) {
       setIsPacketImportOpen(true);
-      setStatus({ text: "Start or select an inventory session before uploading the packet.", isError: true });
+      setStatus({ text: "Start or select an inventory before uploading the packet.", isError: true });
       return;
     }
     packetFileInputRef.current?.click();
@@ -2769,14 +2799,14 @@ function SessionPanel({
 
   async function importPacketRowsToSession(targetSessionId = selectedSessionId) {
     if (!targetSessionId) {
-      setStatus({ text: "Create or select a session first.", isError: true });
+      setStatus({ text: "Start or select an inventory first.", isError: true });
       return null;
     }
 
     const reviewedRows = packetDraftRows.length ? packetDraftRows : reviewPacketRows();
     const items = sanitizePacketDraftRows(reviewedRows);
     if (!items.length) {
-      setStatus({ text: "Review at least one valid packet row first.", isError: true });
+        setStatus({ text: "Review at least one valid inventory item first.", isError: true });
       return null;
     }
 
@@ -2810,10 +2840,11 @@ function SessionPanel({
         await loadSessions(targetSessionId);
         setStatus({
           text: savedItemCount
-            ? `We could confirm only ${savedItemCount} of ${items.length} packet rows. Your reviewed rows and location hints are still here, and the session was refreshed. Check the list before trying again.`
-            : "We couldn't confirm that any packet rows were saved. Your reviewed rows and location hints are still here, and the session was refreshed. Check the list before trying again.",
+            ? `We could confirm only ${savedItemCount} of ${items.length} items. Your reviewed items and location hints are still here, and the inventory was refreshed. Check the list before trying again.`
+            : "We couldn't confirm that any items were saved. Your reviewed items and location hints are still here, and the inventory was refreshed. Check the list before trying again.",
           isError: true
         });
+        onInventoryChanged?.();
         return null;
       }
       const possibleMatchCount = Number(
@@ -2825,10 +2856,11 @@ function SessionPanel({
       clearPacketImport();
       setStatus({
         text: possibleMatchCount
-          ? `Added ${savedItemCount} packet rows. ${possibleMatchCount} possible previous ${possibleMatchCount === 1 ? "record needs" : "records need"} review.`
-          : `Added ${savedItemCount} packet rows.`,
+          ? `Added ${countLabel(savedItemCount, "item")}. ${possibleMatchCount} possible previous ${possibleMatchCount === 1 ? "record needs" : "records need"} review.`
+          : `Added ${countLabel(savedItemCount, "item")}.`,
         isError: false
       });
+      onInventoryChanged?.();
       return { count: savedItemCount, sourceName, sessionId: targetSessionId, possibleMatchCount };
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -2862,6 +2894,7 @@ function SessionPanel({
       });
       await loadSessions(selectedSessionId);
       setStatus({ text: "Submission withdrawn. You can update the proof and submit it again.", isError: false });
+      onInventoryChanged?.();
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
       await loadSessions(selectedSessionId);
@@ -2892,7 +2925,8 @@ function SessionPanel({
         body: { status: nextStatus }
       });
       const refreshed = await loadSessions(selectedSessionId);
-      if (refreshed) setStatus({ text: "Session item updated.", isError: false });
+      if (refreshed) setStatus({ text: "Item updated.", isError: false });
+      onInventoryChanged?.();
       return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -2933,6 +2967,7 @@ function SessionPanel({
           : action === "confirm" ? "Saved record linked." : "Suggestion removed.",
         isError: false
       });
+      onInventoryChanged?.();
       return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -2967,10 +3002,6 @@ function SessionPanel({
         tenantSlug,
         body: { memberId: memberId || null }
       });
-      setStatus({
-        text: claim ? "Item claimed. It is now in Mine." : memberId ? "Row assigned." : "Row assignment cleared.",
-        isError: false
-      });
       await loadSessionDetail(selectedSessionId, false);
       if (claim) {
         setSessionItemFilter("mine");
@@ -2980,6 +3011,11 @@ function SessionPanel({
         const target = assignmentOptions.find(member => member.id === memberId);
         setSessionItemFilter(target?.userId && target.userId === me?.user?.id ? "mine" : "team");
       }
+      setStatus({
+        text: claim ? "Item claimed. It is now in Mine." : memberId ? "Item assigned." : "Item assignment cleared.",
+        isError: false
+      });
+      onInventoryChanged?.();
       return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -3007,7 +3043,7 @@ function SessionPanel({
     });
 
     try {
-      setStatus({ text: nextStatus === "closed" ? "Closing session..." : "Reopening session...", isError: false });
+      setStatus({ text: nextStatus === "closed" ? "Closing inventory..." : "Reopening inventory...", isError: false });
       const data = await apiRequest(`/inventory/sessions/${sessionId}`, {
         method: "PATCH",
         token,
@@ -3019,11 +3055,12 @@ function SessionPanel({
         const crewAccessRevoked = Number(data.crewAccessRevoked || 0);
         const message = nextStatus === "closed"
           ? crewAccessRevoked
-            ? `Session closed. ${crewAccessRevoked} temporary crew ${crewAccessRevoked === 1 ? "pass" : "passes"} removed.`
-            : "Session closed."
-          : "Session reopened.";
+            ? `Inventory closed. ${crewAccessRevoked} temporary crew ${crewAccessRevoked === 1 ? "pass" : "passes"} removed.`
+            : "Inventory closed."
+          : "Inventory reopened.";
         setStatus({ text: message, isError: false });
       }
+      onInventoryChanged?.();
       return true;
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
@@ -3051,6 +3088,7 @@ function SessionPanel({
         tenantSlug
       });
       setDeleteSessionTarget(null);
+      window.requestAnimationFrame(() => lifecycleDialogTriggerRef.current?.focus?.());
       if (selectedSessionId === target.id) {
         setSelectedSessionId("");
         setDetail(null);
@@ -3059,7 +3097,8 @@ function SessionPanel({
         setPacketWizardSessionId("");
       }
       await loadSessions("");
-      setStatus({ text: `Deleted empty session ${target.name}.`, isError: false });
+      setStatus({ text: `Deleted empty inventory ${target.name}.`, isError: false });
+      onInventoryChanged?.();
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
@@ -3173,10 +3212,6 @@ function SessionPanel({
     [selectedSession, detail?.items]
   );
   const importBatches = detail?.importBatches || [];
-  const importBatchById = useMemo(
-    () => new Map(importBatches.map(batch => [batch.id, batch])),
-    [importBatches]
-  );
   const proofItem = detailItems.find(item => item.id === proofItemId) || null;
 
   useEffect(() => {
@@ -3184,13 +3219,13 @@ function SessionPanel({
   }, [proofItemId, proofItem]);
 
   useEffect(() => {
-    if (!proofItem && !detailPhotoViewer) return undefined;
+    if (!proofItem && !detailPhotoViewer && !packetWizardOpen && !closeSessionTarget && !deleteSessionTarget) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [Boolean(proofItem), Boolean(detailPhotoViewer)]);
+  }, [Boolean(proofItem), Boolean(detailPhotoViewer), packetWizardOpen, Boolean(closeSessionTarget), Boolean(deleteSessionTarget)]);
 
   function openFirstPossibleMatch() {
     const first = possibleMatchItems[0];
@@ -3220,7 +3255,7 @@ function SessionPanel({
       index,
       isZoomed: false,
       packetLine: item.packetLine || itemDisplayName(item),
-      sessionName: submission?.sessionName || selectedSession?.name || "Inventory session",
+      sessionName: submission?.sessionName || selectedSession?.name || "Inventory",
       submittedBy: submission
         ? (submission.submittedByName || submission.submittedByEmail ? submissionPerson(submission) : "Previous inventory")
         : "Saved inventory record",
@@ -3254,10 +3289,18 @@ function SessionPanel({
   const selectedSessionIsClosed = selectedSession?.status === "closed";
   const selectedSessionStatusAction = selectedSession?.id ? sessionStatusActions.get(selectedSession.id) || "" : "";
   const closeSessionAction = closeSessionTarget?.id ? sessionStatusActions.get(closeSessionTarget.id) || "" : "";
+
+  useEffect(() => {
+    setSessionToolsOpenId(selectedSessionIsClosed ? selectedSession?.id || "" : "");
+  }, [selectedSession?.id, selectedSessionIsClosed]);
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
   );
+  const sessionSwitcherOptions = useMemo(() => {
+    if (!selectedSession || selectedSession.status !== "closed") return openSessions;
+    return [...openSessions, selectedSession];
+  }, [openSessions, selectedSession]);
   const packetWizardFallbackSessionId = packetWizardSessionId || selectedSessionId || openSessions[0]?.id || "";
   const effectivePacketWizardMode = (
     !packetWizardModeTouched && !packetWizardSessionName.trim() && packetWizardFallbackSessionId
@@ -3301,7 +3344,7 @@ function SessionPanel({
       >
         <span className="session-row-copy">
           <strong>{session.name}</strong>
-          <small>{session.itemCount || 0} rows - {progress}% done</small>
+          <small>{countLabel(session.itemCount || 0, "item")} - {progress}% done</small>
           <span className="session-progress-track" aria-hidden="true">
             <span style={{ width: `${progress}%` }} />
           </span>
@@ -3332,216 +3375,68 @@ function SessionPanel({
 
   return (
     <section className="admin-card session-panel">
+      <input
+        ref={packetFileInputRef}
+        hidden
+        type="file"
+        accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
+        disabled={isPacketBusy || isSaving}
+        onChange={event => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          readPacketUpload(file);
+        }}
+      />
       <div className="admin-card-heading">
         <span className="admin-icon">
           <ListChecks aria-hidden="true" />
         </span>
         <div>
-          <p className="eyebrow">Inventory tasking</p>
-          <h2>Sessions</h2>
+          <p className="eyebrow">Inventory workspace</p>
+          <h2>Work queue</h2>
         </div>
-        <button className="icon-button admin-card-heading-action" type="button" aria-label="Refresh sessions" title="Refresh sessions" onClick={refreshSessions}>
+        <button className="icon-button admin-card-heading-action" type="button" aria-label="Refresh inventory" title="Refresh inventory" onClick={refreshSessions}>
           <RefreshCw aria-hidden="true" />
         </button>
       </div>
 
       <div className="session-layout">
-        <div className="session-sidebar">
-          <div className="session-work-summary">
-            <div>
-              <strong>{openCount}</strong>
-              <span>Open rows</span>
-            </div>
-            <div>
-              <strong>{reviewRowCount}</strong>
-              <span>Needs review</span>
-            </div>
-            <div>
-              <strong>{overallProgress}%</strong>
-              <span>Done</span>
-            </div>
-          </div>
-
-          {canManage ? (
-            <details
-              className="session-create"
-              open={isSessionCreateOpen || (!isLoadingSessions && !sessions.length)}
-              onToggle={event => setIsSessionCreateOpen(event.currentTarget.open)}
-            >
-              <summary className="btn btn-secondary">
-                <Plus aria-hidden="true" />
-                <span>New session</span>
-              </summary>
-              <form className="disclosure-panel admin-form session-create-form" onSubmit={createSession}>
-                {isPacketUploadIntent && !selectedSession ? (
-                  <div className="session-intent-note">
-                    <FileUp aria-hidden="true" />
-                    <span>Start a session first. The packet importer will open after the session is selected.</span>
-                  </div>
-                ) : null}
-                <label className="field-label" htmlFor="sessionName">Session name</label>
-                <div className="inline-control">
-                  <input
-                    id="sessionName"
-                    className="input"
-                    value={newSessionName}
-                    disabled={isSaving}
-                    placeholder="July sensitive items"
-                    onChange={e => setNewSessionName(e.target.value)}
-                  />
-                  <button className="btn btn-primary" type="submit" disabled={isSaving}>
-                    <Plus aria-hidden="true" />
-                    <span>{isSaving ? "Starting session..." : "Start session"}</span>
-                  </button>
-                </div>
-              </form>
-            </details>
-          ) : null}
-
-          <div className="session-list">
-            {sessions.length ? (
-              <>
-                {renderSessionGroup("Needs review", reviewSessions)}
-                {renderSessionGroup("Active", activeSessions)}
-                {renderSessionGroup("Drafts", draftSessions)}
-                {closedSessions.length ? (
-                  <details className="session-archive">
-                    <summary>Closed <span>{closedSessions.length}</span></summary>
-                    <div className="session-group">
-                      {visibleClosedSessions.map(renderSessionButton)}
-                      {closedSessions.length > visibleClosedSessions.length ? (
-                        <button
-                          className="btn btn-secondary btn-small session-archive-more"
-                          type="button"
-                          onClick={() => setClosedSessionLimit(current => current + 20)}
-                        >
-                          <span>Show {Math.min(20, closedSessions.length - visibleClosedSessions.length)} more closed sessions</span>
-                        </button>
-                      ) : null}
-                    </div>
-                  </details>
-                ) : null}
-              </>
-            ) : (
-              <EmptyPanel
-                title="No sessions yet"
-                body="Start with the packet upload flow. It will create the session and keep the imported rows attached to it."
-                action={canManage ? (
-                  <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard()}>
-                    <FileUp aria-hidden="true" />
-                    <span>Upload packet</span>
-                  </button>
-                ) : null}
-              />
-            )}
-          </div>
-        </div>
-
         <div className="session-main">
           {selectedSession ? (
             <>
               <div className="session-summary">
-                <div>
-                  <strong>{selectedSession.name}</strong>
-                  <span>{selectedSession.itemCount || 0} packet rows</span>
+                <div className="session-summary-copy">
+                  <span className="session-current-label">Current inventory</span>
+                  {sessionSwitcherOptions.length > 1 ? (
+                    <select
+                      className="select session-summary-select"
+                      value={selectedSession.id}
+                      aria-label="Current inventory"
+                      onChange={event => selectSession(event.target.value)}
+                    >
+                      {sessionSwitcherOptions.map(session => (
+                        <option value={session.id} key={session.id}>{session.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <strong>{selectedSession.name}</strong>
+                  )}
+                  <span>{countLabel(selectedSession.itemCount || 0, "item")}</span>
                   <span className="session-progress-track session-summary-progress" aria-hidden="true">
                     <span style={{ width: `${sessionProgress(selectedSession)}%` }} />
                   </span>
                 </div>
                 <div className="admin-row-meta session-summary-actions">
                   <span className="badge">{selectedSession.foundCount || 0} resolved</span>
-                  <span className="badge">{selectedSession.needsReviewCount || 0} needs review</span>
+                  {selectedSession.needsReviewCount ? <span className="badge">{selectedSession.needsReviewCount} needs review</span> : null}
                   {canManage && selectedSession.status === "active" && onInviteCrew ? (
-                    <button className="btn btn-primary btn-small" type="button" onClick={() => onInviteCrew(selectedSession)}>
+                    <button className="btn btn-secondary btn-small" type="button" onClick={() => onInviteCrew(selectedSession)}>
                       <UserPlus aria-hidden="true" />
                       <span>Invite crew</span>
                     </button>
                   ) : null}
-                  {canManage ? (
-                    Number(selectedSession.itemCount || 0) === 0 ? (
-                      <button className="btn btn-danger-soft btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestDeleteSession(selectedSession)}>
-                        <Trash2 aria-hidden="true" />
-                        <span>Delete draft</span>
-                      </button>
-                    ) : (
-                      selectedSession.status !== "closed" ? (
-                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestCloseSession(selectedSession)}>
-                          <span>{selectedSessionStatusAction === "closed" ? "Closing..." : "Close out"}</span>
-                        </button>
-                      ) : (
-                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => updateSessionStatus("active")}>
-                          <span>{selectedSessionStatusAction === "active" ? "Reopening..." : "Reopen"}</span>
-                        </button>
-                      )
-                    )
-                  ) : null}
                 </div>
               </div>
-
-              {canManage ? (
-                <SessionCloseoutReport
-                  report={sessionReport}
-                  isPrintTarget={printReportId === sessionReport?.session?.id}
-                  onCopy={copyCloseoutReport}
-                  onExportCsv={exportCloseoutCsv}
-                  onPrint={printCloseoutReport}
-                />
-              ) : null}
-
-              {canManage && importBatches.length ? (
-                <details className="packet-import-history">
-                  <summary className="packet-import-history-heading">
-                    <strong>Import history</strong>
-                    <span>{importBatches.length}</span>
-                  </summary>
-                  <div className="packet-import-history-list">
-                    {importBatches.slice(0, 4).map(batch => (
-                      <div className="packet-import-history-row" key={batch.id}>
-                        <div>
-                          <strong>{batch.sourceName || "Packet import"}</strong>
-                          <span>
-                            {batch.rowCount || 0} rows - {formatDate(batch.createdAt)}
-                            {batch.createdByName || batch.createdByEmail ? ` - uploaded by ${batch.createdByName || batch.createdByEmail}` : ""}
-                          </span>
-                        </div>
-                        <div className="packet-import-history-actions">
-                          {!selectedSessionIsClosed ? (
-                            <button className="btn btn-secondary btn-small" type="button" onClick={() => retryImportBatch(batch)}>
-                              <ClipboardPlus aria-hidden="true" />
-                              <span>Review again</span>
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              ) : null}
-
-              {canManage && !selectedSessionIsClosed ? (
-                <div className="packet-wizard-entry">
-                  <div>
-                    <strong>Packet import</strong>
-                    <span>Upload a PDF, CSV, photo, or paste rows from the packet.</span>
-                  </div>
-                  <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard(selectedSession.id)}>
-                    <FileUp aria-hidden="true" />
-                    <span>Upload packet</span>
-                  </button>
-                  <input
-                    ref={packetFileInputRef}
-                    className="packet-hidden-file"
-                    type="file"
-                    accept="application/pdf,text/plain,text/csv,image/*,.pdf,.txt,.csv"
-                    disabled={isPacketBusy || isSaving}
-                    onChange={e => {
-                      const file = e.target.files?.[0];
-                      e.target.value = "";
-                      readPacketUpload(file);
-                    }}
-                  />
-                </div>
-              ) : null}
 
               {canManage && possibleMatchItems.length && !selectedSessionIsClosed ? (
                 <div className="prior-match-banner">
@@ -3591,7 +3486,7 @@ function SessionPanel({
                 </div>
               ) : null}
 
-              <div className="session-items" role="region" aria-label="Session row results">
+              <div className="session-items" role="region" aria-label="Inventory items">
                 {visibleDetailItems.length ? visibleDetailItems.map(item => {
                   const submission = latestSubmission(item);
                   const isRejectedProof = submission?.reviewState === "rejected";
@@ -3611,7 +3506,6 @@ function SessionPanel({
                   const assignmentAction = assignmentActions.get(item.id) || "";
                   const matchAction = matchActions.get(item.id) || "";
                   const assignedMemberId = item.assignedTo ? assignedMemberIdByUserId.get(item.assignedTo) || "" : "";
-                  const importBatch = item.importBatchId ? importBatchById.get(item.importBatchId) || null : null;
                   const priorSnapshot = getPriorInventorySnapshot(item);
                   const leadingPhoto = priorSnapshot?.photos[0] || getInventoryItemPhotos(item.inventoryItem)[0] || null;
                   const isDirectCheckPending = Boolean(directCheckAction);
@@ -3623,7 +3517,7 @@ function SessionPanel({
                           {leadingPhoto ? <ProtectedMediaImage src={leadingPhoto.url} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
                         </span>
                         <div>
-                          <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled row"}</strong>
+                          <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled item"}</strong>
                           {item.inventoryItem?.lin || item.inventoryItem?.nsn ? (
                             <span>
                               {[item.inventoryItem.lin ? `LIN ${item.inventoryItem.lin}` : "", item.inventoryItem.nsn ? `NSN ${item.inventoryItem.nsn}` : ""].filter(Boolean).join(" · ")}
@@ -3679,7 +3573,6 @@ function SessionPanel({
                       </div>
                       <SessionItemInlineContext
                         item={item}
-                        importBatch={importBatch}
                         canManage={canManage}
                         isClosed={selectedSessionIsClosed}
                         assignmentAction={assignmentAction}
@@ -3692,6 +3585,7 @@ function SessionPanel({
                         onResolveMatch={action => resolvePriorMatch(item.id, action)}
                         onOpenPriorPhoto={(index, snapshot) => openItemPhotoViewer(item, snapshot.photos, index, snapshot.photoContext || snapshot.history)}
                         onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
+                        onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
                         onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                       />
                     </article>
@@ -3722,12 +3616,12 @@ function SessionPanel({
                   />
                 ) : detailItems.length ? null : (
                   <EmptyPanel
-                    title="No packet rows yet"
-                    body="Upload a packet or paste rows from the hand receipt to start tasking the inventory."
+                    title="No inventory items yet"
+                    body="Add a packet or paste items from the hand receipt to start the inventory."
                     action={canManage ? (
                       <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard(selectedSession.id)}>
                         <FileUp aria-hidden="true" />
-                        <span>Upload packet</span>
+                        <span>Add items from packet</span>
                       </button>
                     ) : null}
                   />
@@ -3742,7 +3636,6 @@ function SessionPanel({
                   </summary>
                   <div className="session-completed-list">
                     {visibleCompletedItems.length ? visibleCompletedItems.map(item => {
-                      const importBatch = item.importBatchId ? importBatchById.get(item.importBatchId) || null : null;
                       return (
                       <article className="session-completed-item" key={item.id}>
                         <span>
@@ -3752,7 +3645,6 @@ function SessionPanel({
                         <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
                         <SessionItemInlineContext
                           item={item}
-                          importBatch={importBatch}
                           canManage={canManage}
                           isClosed
                           assignmentAction=""
@@ -3765,6 +3657,7 @@ function SessionPanel({
                           onResolveMatch={() => {}}
                           onOpenPriorPhoto={(index, snapshot) => openItemPhotoViewer(item, snapshot.photos, index, snapshot.photoContext || snapshot.history)}
                           onOpenSavedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.inventoryItem), index)}
+                          onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
                           onOpenProofPhoto={(proofSubmission, index) => openItemPhotoViewer(item, proofSubmission.photos, index, proofSubmission)}
                         />
                       </article>
@@ -3775,21 +3668,197 @@ function SessionPanel({
                   </div>
                 </details>
               ) : null}
+
+              {canManage ? (
+                <details
+                  className="session-tools"
+                  key={selectedSession.id}
+                  open={sessionToolsOpenId === selectedSession.id}
+                  onToggle={event => setSessionToolsOpenId(event.currentTarget.open ? selectedSession.id : "")}
+                >
+                  <summary className="session-tools-heading">
+                    <span>
+                      <strong>Inventory tools</strong>
+                      <small>Packets, import history, reports, and inventory status</small>
+                    </span>
+                    <ChevronDown aria-hidden="true" />
+                  </summary>
+                  <div className="session-tools-body">
+                    {!selectedSessionIsClosed && Number(selectedSession.itemCount || 0) > 0 ? (
+                      <div className="packet-wizard-entry">
+                        <div>
+                          <strong>Add items from a packet</strong>
+                          <span>Upload a PDF, CSV, photo, or paste items from the hand receipt.</span>
+                        </div>
+                        <button className="btn btn-secondary btn-small" type="button" onClick={() => openPacketWizard(selectedSession.id)}>
+                          <FileUp aria-hidden="true" />
+                          <span>Add packet</span>
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {importBatches.length ? (
+                      <details className="packet-import-history">
+                        <summary className="packet-import-history-heading">
+                          <strong>Import history</strong>
+                          <span>{importBatches.length}</span>
+                        </summary>
+                        <div className="packet-import-history-list">
+                          {importBatches.slice(0, 4).map(batch => (
+                            <div className="packet-import-history-row" key={batch.id}>
+                              <div>
+                                <strong>{batch.sourceName || "Packet import"}</strong>
+                                <span>
+                                  {countLabel(batch.rowCount || 0, "item")} - {formatDate(batch.createdAt)}
+                                  {batch.createdByName || batch.createdByEmail ? ` - uploaded by ${batch.createdByName || batch.createdByEmail}` : ""}
+                                </span>
+                              </div>
+                              <div className="packet-import-history-actions">
+                                {!selectedSessionIsClosed ? (
+                                  <button className="btn btn-secondary btn-small" type="button" onClick={() => retryImportBatch(batch)}>
+                                    <ClipboardPlus aria-hidden="true" />
+                                    <span>Review again</span>
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+
+                    <SessionCloseoutReport
+                      report={sessionReport}
+                      isPrintTarget={printReportId === sessionReport?.session?.id}
+                      onCopy={copyCloseoutReport}
+                      onExportCsv={exportCloseoutCsv}
+                      onPrint={printCloseoutReport}
+                    />
+
+                    <div className="session-lifecycle-actions">
+                      <span>Inventory status</span>
+                      {Number(selectedSession.itemCount || 0) === 0 ? (
+                        <button className="btn btn-danger-soft btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestDeleteSession(selectedSession)}>
+                          <Trash2 aria-hidden="true" />
+                          <span>Delete empty inventory</span>
+                        </button>
+                      ) : selectedSession.status !== "closed" ? (
+                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestCloseSession(selectedSession)}>
+                          <span>{selectedSessionStatusAction === "closed" ? "Closing..." : "Close inventory"}</span>
+                        </button>
+                      ) : (
+                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => updateSessionStatus("active")}>
+                          <span>{selectedSessionStatusAction === "active" ? "Reopening..." : "Reopen inventory"}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </details>
+              ) : null}
             </>
           ) : (
             <EmptyPanel
-              title={isPacketUploadIntent ? "Start or select a session" : "Select a session"}
+              title={isPacketUploadIntent ? "Start or select an inventory" : "Select an inventory"}
               body={isPacketUploadIntent
-                ? "Packet upload lives inside a session so the imported rows stay attached to the right inventory."
-                : "Session details and packet rows will appear here."}
+                ? "Packet upload lives inside an inventory so imported items stay with the right work."
+                : "Inventory details and items will appear here."}
               action={canManage ? (
                 <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard()}>
                   <FileUp aria-hidden="true" />
-                  <span>{isPacketUploadIntent ? "Start upload" : "Upload packet"}</span>
+                  <span>Start inventory from packet</span>
                 </button>
               ) : null}
             />
           )}
+        </div>
+
+        <div className="session-sidebar">
+          <div className="session-sidebar-heading">
+            <strong>Manage inventories</strong>
+            <span>Switch inventories or start another one.</span>
+          </div>
+          <div className="session-work-summary">
+            <div>
+              <strong>{openCount}</strong>
+              <span>Open inventories</span>
+            </div>
+            <div>
+              <strong>{reviewRowCount}</strong>
+              <span>Needs review</span>
+            </div>
+            <div>
+              <strong>{overallProgress}%</strong>
+              <span>Done</span>
+            </div>
+          </div>
+
+          {canManage ? (
+            <details
+              className="session-create"
+              open={isSessionCreateOpen || (!isLoadingSessions && !sessions.length)}
+              onToggle={event => setIsSessionCreateOpen(event.currentTarget.open)}
+            >
+              <summary className="btn btn-secondary">
+                <Plus aria-hidden="true" />
+                <span>New inventory</span>
+              </summary>
+              <form className="disclosure-panel admin-form session-create-form" onSubmit={createSession}>
+                {isPacketUploadIntent && !selectedSession ? (
+                  <div className="session-intent-note">
+                    <FileUp aria-hidden="true" />
+                    <span>Start an inventory first. The packet importer will open after it is selected.</span>
+                  </div>
+                ) : null}
+                <label className="field-label" htmlFor="sessionName">Inventory name</label>
+                <div className="inline-control">
+                  <input
+                    id="sessionName"
+                    className="input"
+                    value={newSessionName}
+                    disabled={isSaving}
+                    placeholder="July inventory"
+                    onChange={e => setNewSessionName(e.target.value)}
+                  />
+                  <button className="btn btn-primary" type="submit" disabled={isSaving}>
+                    <Plus aria-hidden="true" />
+                    <span>{isSaving ? "Starting inventory..." : "Start inventory"}</span>
+                  </button>
+                </div>
+              </form>
+            </details>
+          ) : null}
+
+          <div className="session-list">
+            {sessions.length ? (
+              <>
+                {renderSessionGroup("Needs review", reviewSessions)}
+                {renderSessionGroup("Active", activeSessions)}
+                {renderSessionGroup("Drafts", draftSessions)}
+                {closedSessions.length ? (
+                  <details className="session-archive">
+                    <summary>Closed <span>{closedSessions.length}</span></summary>
+                    <div className="session-group">
+                      {visibleClosedSessions.map(renderSessionButton)}
+                      {closedSessions.length > visibleClosedSessions.length ? (
+                        <button
+                          className="btn btn-secondary btn-small session-archive-more"
+                          type="button"
+                          onClick={() => setClosedSessionLimit(current => current + 20)}
+                        >
+                          <span>Show {Math.min(20, closedSessions.length - visibleClosedSessions.length)} more closed inventories</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </details>
+                ) : null}
+              </>
+            ) : (
+              <EmptyPanel
+                title="No inventories yet"
+                body="Start with a packet upload. It creates the inventory and keeps every imported item together."
+              />
+            )}
+          </div>
         </div>
       </div>
 
@@ -3800,9 +3869,10 @@ function SessionPanel({
         token={token}
         tenantSlug={tenantSlug}
         onCancel={closeProof}
+        onOpenSavedPhoto={index => openItemPhotoViewer(proofItem, getInventoryItemPhotos(proofItem?.inventoryItem), index)}
         onSaved={() => {
           closeProof();
-          loadSessions(selectedSessionId);
+          void loadSessions(selectedSessionId).then(() => onInventoryChanged?.());
         }}
         onStatus={setStatus}
       />
@@ -3817,7 +3887,7 @@ function SessionPanel({
 
       {packetWizardOpen ? (
         <div className="modal-backdrop packet-wizard-backdrop" role="presentation">
-          <div className="modal-panel packet-wizard-panel" role="dialog" aria-modal="true" aria-labelledby="packetWizardTitle" aria-busy={isPacketBusy}>
+          <div className="modal-panel packet-wizard-panel" role="dialog" aria-modal="true" aria-labelledby="packetWizardTitle" aria-busy={isPacketBusy} onKeyDown={event => handleModalKeyDown(event, closePacketWizard)}>
             <div className="modal-stack packet-wizard">
               <div className="packet-wizard-heading">
                 <div className="modal-heading">
@@ -3827,17 +3897,17 @@ function SessionPanel({
                   <div>
                     <p className="eyebrow">Packet import</p>
                     <h2 id="packetWizardTitle" className="modal-title">Upload packet</h2>
-                    <p className="modal-copy">Pick the inventory session, add the packet source, review the rows, then save them.</p>
+                    <p className="modal-copy">Pick the inventory, add the packet source, review the items, then save them.</p>
                   </div>
                 </div>
-                <button className="icon-button" type="button" aria-label="Close packet wizard" disabled={isPacketBusy} onClick={closePacketWizard}>
+                <button className="icon-button" type="button" aria-label="Close packet wizard" disabled={isPacketBusy} onClick={closePacketWizard} autoFocus>
                   <XCircle aria-hidden="true" />
                 </button>
               </div>
 
               <div className="packet-wizard-steps" aria-label="Packet import progress">
                 {[
-                  [1, "Session"],
+                  [1, "Inventory"],
                   [2, "Source"],
                   [3, "Review"],
                   [4, "Done"]
@@ -3852,8 +3922,8 @@ function SessionPanel({
               {packetWizardStep === 1 ? (
                 <div className="packet-wizard-section">
                   <div>
-                    <h3>Choose where these rows belong</h3>
-                    <p>Packet rows are saved inside one inventory session so the work stays tied to the right task.</p>
+                    <h3>Choose where these items belong</h3>
+                    <p>Packet items are saved inside one inventory so the work stays tied to the right task.</p>
                   </div>
                   <StatusLine status={status} />
 
@@ -3870,7 +3940,7 @@ function SessionPanel({
                         }}
                       />
                       <span>
-                        <strong>Use an open session</strong>
+                        <strong>Use an open inventory</strong>
                         <small>Best when you already started the inventory.</small>
                       </span>
                       <select
@@ -3881,7 +3951,7 @@ function SessionPanel({
                       >
                         {openSessions.map(session => (
                           <option value={session.id} key={session.id}>
-                            {session.name} ({session.itemCount || 0} rows)
+                            {session.name} ({countLabel(session.itemCount || 0, "item")})
                           </option>
                         ))}
                       </select>
@@ -3900,7 +3970,7 @@ function SessionPanel({
                       }}
                     />
                     <span>
-                      <strong>Start a new session</strong>
+                      <strong>Start a new inventory</strong>
                       <small>Use this when the packet begins a new inventory task.</small>
                     </span>
                     <input
@@ -3927,8 +3997,8 @@ function SessionPanel({
                       onClick={preparePacketWizardSession}
                     >
                       <span>{packetAction === "prepare"
-                        ? effectivePacketWizardMode === "new" ? "Starting session..." : "Opening session..."
-                        : isLoadingSessions ? "Loading sessions..." : "Choose source"}</span>
+                        ? effectivePacketWizardMode === "new" ? "Starting inventory..." : "Opening inventory..."
+                        : isLoadingSessions ? "Loading inventories..." : "Choose source"}</span>
                     </button>
                   </div>
                 </div>
@@ -4005,7 +4075,7 @@ function SessionPanel({
                       onClick={reviewWizardPacketRows}
                     >
                       <ClipboardList aria-hidden="true" />
-                      <span>Review rows</span>
+                      <span>Review items</span>
                     </button>
                   </div>
                 </div>
@@ -4015,7 +4085,7 @@ function SessionPanel({
                 <div className="packet-wizard-section packet-wizard-section-review">
                   <div>
                     <h3>Review before saving</h3>
-                    <p>Clean up anything the parser guessed wrong. Low confidence rows can still be saved if the text is useful.</p>
+                    <p>Check anything the importer was unsure about. You can edit or remove an item before saving.</p>
                   </div>
                   <StatusLine status={status} />
 
@@ -4027,7 +4097,7 @@ function SessionPanel({
                         <small>{packetParseSummary.sourceName}</small>
                       </div>
                       <div>
-                        <span>Rows ready</span>
+                        <span>Items ready</span>
                         <strong>{packetRowsReadyCount}</strong>
                         <small>will import</small>
                       </div>
@@ -4066,40 +4136,45 @@ function SessionPanel({
                       <div className="packet-review-heading">
                         <strong>{packetRowsReadyCount} ready to import</strong>
                         <span>
-                          {packetDraftRows.length} rows found
+                          {countLabel(packetDraftRows.length, "item")} found
                           {lowConfidencePacketRowCount ? ` - ${lowConfidencePacketRowCount} need closer review` : ""}
                         </span>
                       </div>
                       {lowConfidencePacketRowCount ? (
                         <div className="packet-review-warning">
                           <AlertCircle aria-hidden="true" />
-                          <span>Check low-confidence rows before importing. Remove anything that came from headers, notes, or page text.</span>
+                          <span>Check the items marked low confidence before importing. Remove anything that came from headers, notes, or page text.</span>
                         </div>
                       ) : null}
                       <div className="packet-review-list">
                         {packetDraftRows.map((row, index) => (
                           <div className="packet-review-row" key={row.id}>
                             <div className="packet-review-row-top">
-                              <span className="packet-row-number" aria-label={`Packet row ${index + 1}`}>{index + 1}</span>
-                              <span
-                                className={`packet-confidence ${row.confidence}`}
-                                title={`${row.confidence === "high" ? "High" : row.confidence === "medium" ? "Medium" : "Low"} parser confidence. Review the packet text and quantity before importing.`}
-                                aria-label={`${row.confidence} parser confidence`}
-                              >
-                                {row.confidence}
-                                <Info aria-hidden="true" />
-                              </span>
+                              <span className="packet-row-number" aria-label={`Item ${index + 1}`}>{index + 1}</span>
+                              <details className="packet-confidence-details">
+                                <summary
+                                  className={`packet-confidence ${row.confidence}`}
+                                  aria-label={`${row.confidence} import confidence. Show explanation.`}
+                                >
+                                  {row.confidence}
+                                  <Info aria-hidden="true" />
+                                </summary>
+                                <div role="note">
+                                  <strong>{row.confidence === "high" ? "High" : row.confidence === "medium" ? "Medium" : "Low"} confidence</strong>
+                                  <span>This shows how clearly the importer recognized the packet text. Check the item name and quantity before saving.</span>
+                                </div>
+                              </details>
                               <button
                                 className="icon-button"
                                 type="button"
-                                aria-label="Remove row"
+                                aria-label="Remove item"
                                 disabled={isPacketBusy}
                                 onClick={() => removePacketDraftRow(row.id)}
                               >
                                 <Trash2 aria-hidden="true" />
                               </button>
                             </div>
-                            <label className="field-label" htmlFor={`packetLine-${row.id}`}>Packet row</label>
+                            <label className="field-label" htmlFor={`packetLine-${row.id}`}>Item from packet</label>
                             <textarea
                               id={`packetLine-${row.id}`}
                               className="input packet-review-line"
@@ -4134,7 +4209,7 @@ function SessionPanel({
                       </div>
                     </div>
                   ) : (
-                    <EmptyPanel title="No rows ready" body="Go back and choose a file or paste packet text first." />
+                    <EmptyPanel title="No items ready" body="Go back and choose a file or paste packet text first." />
                   )}
 
                   <div className="packet-wizard-actions">
@@ -4155,7 +4230,7 @@ function SessionPanel({
                     </button>
                     <button className="btn btn-primary" type="button" disabled={isPacketBusy || packetRowsReadyCount === 0} onClick={finishPacketWizardImport}>
                       <ClipboardPlus aria-hidden="true" />
-                      <span>{packetAction === "import" ? "Importing..." : `Import ${packetRowsReadyCount} ${packetRowsReadyCount === 1 ? "row" : "rows"}`}</span>
+                      <span>{packetAction === "import" ? "Importing..." : `Import ${countLabel(packetRowsReadyCount, "item")}`}</span>
                     </button>
                   </div>
                 </div>
@@ -4166,7 +4241,7 @@ function SessionPanel({
                   <CheckCircle2 aria-hidden="true" />
                   <div>
                     <h3>Packet imported</h3>
-                    <p>{packetWizardSummary?.count || 0} rows were added from {packetWizardSummary?.sourceName || "the packet"}.</p>
+                    <p>{countLabel(packetWizardSummary?.count || 0, "item")} added from {packetWizardSummary?.sourceName || "the packet"}.</p>
                     {packetWizardSummary?.possibleMatchCount ? (
                       <p>{packetWizardSummary.possibleMatchCount} possible previous {packetWizardSummary.possibleMatchCount === 1 ? "record is" : "records are"} ready for leader review.</p>
                     ) : null}
@@ -4187,7 +4262,7 @@ function SessionPanel({
                     </button>
                     <button className="btn btn-primary" type="button" onClick={packetWizardSummary?.possibleMatchCount ? openFirstPossibleMatch : closePacketWizard}>
                       {packetWizardSummary?.possibleMatchCount ? <History aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
-                      <span>{packetWizardSummary?.possibleMatchCount ? "Review matches" : "Open session"}</span>
+                      <span>{packetWizardSummary?.possibleMatchCount ? "Review matches" : "Open inventory"}</span>
                     </button>
                   </div>
                 </div>
@@ -4199,7 +4274,7 @@ function SessionPanel({
 
       {closeSessionTarget ? (
         <div className="modal-backdrop" role="presentation">
-          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="closeSessionTitle">
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="closeSessionTitle" onKeyDown={event => handleModalKeyDown(event, closeCloseSessionDialog)}>
             <div className="modal-stack">
               <div className="modal-heading">
                 <span className="modal-icon">
@@ -4207,7 +4282,7 @@ function SessionPanel({
                 </span>
                 <div>
                   <p className="eyebrow">Closeout</p>
-                  <h2 className="modal-title" id="closeSessionTitle">Close this session?</h2>
+                  <h2 className="modal-title" id="closeSessionTitle">Close this inventory?</h2>
                   <p className="modal-copy">
                     This moves {closeSessionTarget.name} out of the active work list. You can reopen it later from the closed archive.
                   </p>
@@ -4216,7 +4291,7 @@ function SessionPanel({
               <div className="close-session-summary">
                 <span>
                   <strong>{closeSessionTarget.itemCount || 0}</strong>
-                  packet rows
+                  items
                 </span>
                 <span>
                   <strong>{closeSessionTarget.foundCount || 0}</strong>
@@ -4231,9 +4306,9 @@ function SessionPanel({
               <div className="button-row start-inventory-actions">
                 <button className="btn btn-primary" type="button" onClick={confirmCloseSession} disabled={isSaving || Boolean(closeSessionAction)}>
                   <CheckCircle2 aria-hidden="true" />
-                  <span>{closeSessionAction === "closed" ? "Closing..." : "Close session"}</span>
+                  <span>{closeSessionAction === "closed" ? "Closing..." : "Close inventory"}</span>
                 </button>
-                <button className="btn btn-secondary" type="button" onClick={closeCloseSessionDialog} disabled={isSaving || Boolean(closeSessionAction)}>
+                <button className="btn btn-secondary" type="button" onClick={closeCloseSessionDialog} disabled={isSaving || Boolean(closeSessionAction)} autoFocus>
                   <span>Cancel</span>
                 </button>
               </div>
@@ -4244,26 +4319,26 @@ function SessionPanel({
 
       {deleteSessionTarget ? (
         <div className="modal-backdrop" role="presentation">
-          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="deleteSessionTitle">
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="deleteSessionTitle" onKeyDown={event => handleModalKeyDown(event, closeDeleteSessionDialog)}>
             <div className="modal-stack">
               <div className="modal-heading">
                 <span className="modal-icon danger">
                   <Trash2 aria-hidden="true" />
                 </span>
                 <div>
-                  <p className="eyebrow">Empty session</p>
-                  <h2 className="modal-title" id="deleteSessionTitle">Delete draft session?</h2>
+                  <p className="eyebrow">Empty inventory</p>
+                  <h2 className="modal-title" id="deleteSessionTitle">Delete empty inventory?</h2>
                   <p className="modal-copy">
-                    This removes the empty session named {deleteSessionTarget.name}. Sessions with packet rows use the closeout flow instead.
+                    This removes the empty inventory named {deleteSessionTarget.name}. Inventories with items use the closeout flow instead.
                   </p>
                 </div>
               </div>
               <div className="button-row start-inventory-actions">
                 <button className="btn btn-danger" type="button" onClick={deleteEmptySession} disabled={isDeletingSession}>
                   <Trash2 aria-hidden="true" />
-                  <span>{isDeletingSession ? "Deleting..." : "Delete session"}</span>
+                  <span>{isDeletingSession ? "Deleting..." : "Delete inventory"}</span>
                 </button>
-                <button className="btn btn-secondary" type="button" onClick={closeDeleteSessionDialog} disabled={isDeletingSession}>
+                <button className="btn btn-secondary" type="button" onClick={closeDeleteSessionDialog} disabled={isDeletingSession} autoFocus>
                   <span>Cancel</span>
                 </button>
               </div>
@@ -4434,10 +4509,6 @@ function ProofPhotoViewer({ viewer, onClose, onMove, onSelect, onToggleZoom }) {
                 {viewer.isZoomed ? <ZoomOut aria-hidden="true" /> : <ZoomIn aria-hidden="true" />}
                 <span>{viewer.isZoomed ? "Fit photo" : "Zoom photo"}</span>
               </button>
-              <a className="btn btn-secondary btn-small" href={photo.url} target="_blank" rel="noreferrer">
-                <ExternalLink aria-hidden="true" />
-                <span>Open original</span>
-              </a>
             </div>
           </aside>
         </div>
@@ -4778,6 +4849,7 @@ function ReviewPanel({
       });
       await loadQueue();
       setStatus({ text: action === "confirm" ? "Saved record linked. Review can continue." : "Suggestion removed. Review can continue.", isError: false });
+      onInventoryChanged?.();
     } catch (error) {
       setStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
@@ -4865,7 +4937,7 @@ function ReviewPanel({
         {visibleSubmissions.length ? visibleSubmissions.map(submission => (
           <article className={`review-card ${isAccountabilityNoteEvidence(submission) ? "accountability-note-only" : ""}`} key={submission.id}>
             <div className="review-card-main">
-              <strong>{submission.sessionItem?.packetLine || "Packet row"}</strong>
+              <strong>{submission.sessionItem?.packetLine || "Inventory item"}</strong>
               <span>{submission.session?.name} - {submission.submittedByName || submission.submittedByEmail}</span>
               {submission.locationText ? <small>Location: {submission.locationText}</small> : null}
               {hasMeaningfulSerial(submission.serialNumber) ? <small>Serial: {submission.serialNumber}</small> : null}
@@ -4876,10 +4948,13 @@ function ReviewPanel({
             </div>
 
             {isAccountabilityNoteEvidence(submission) ? (
-              <div className="accountability-evidence-label" role="note">
-                <ShieldCheck aria-hidden="true" />
-                <span><strong>Accountability note</strong>No photo was available; review the verifier and status above.</span>
-              </div>
+              <details className="accountability-evidence-label">
+                <summary>
+                  <Info aria-hidden="true" />
+                  <strong>No photo attached</strong>
+                </summary>
+                <p>The submitter used an accountability note. Review who verified the item and the reported status above.</p>
+              </details>
             ) : null}
 
             <ProofPhotoStrip
@@ -4933,6 +5008,15 @@ function ReviewPanel({
                   : String(reviewActions.get(submission.id) || "").replace(/^match-/, "")}
                 onConfirm={() => resolveReviewMatch(submission, "confirm")}
                 onDismiss={() => resolveReviewMatch(submission, "dismiss")}
+                onOpenPhoto={index => {
+                  const candidate = submission.sessionItem.suggestedInventoryItem;
+                  openPhotoViewer(submission, {
+                    createdAt: candidate.lastInventoriedAt,
+                    locationText: candidate.currentLocation,
+                    note: candidate.description,
+                    submittedByName: "Previous inventory"
+                  }, getInventoryItemPhotos(candidate), index);
+                }}
               />
             ) : null}
 
@@ -5016,14 +5100,14 @@ function ReviewPanel({
         )) : (
           <EmptyPanel
             title={submissionId ? "Proof no longer waiting" : hasSearchQuery ? "No matching review work" : "Nothing to review"}
-            body={submissionId ? "This submission was already reviewed or withdrawn." : hasSearchQuery ? "Clear the search or try a packet line, session, submitter, serial, location, or proof note." : "Submitted proof will appear here."}
+            body={submissionId ? "This submission was already reviewed or withdrawn." : hasSearchQuery ? "Clear the search or try an item, inventory, submitter, serial number, location, or proof note." : "Submitted proof will appear here."}
             action={submissionId ? null : hasSearchQuery ? (
               <button className="btn btn-secondary btn-small" type="button" onClick={() => {
                 if (onClearSearch) onClearSearch();
                 else onQueryChange?.("");
               }}>Clear search</button>
             ) : (
-              <button className="btn btn-primary btn-small" type="button" onClick={onOpenSessions}>Open inventory sessions</button>
+              <button className="btn btn-primary btn-small" type="button" onClick={onOpenSessions}>Open inventories</button>
             )}
           />
         )}
@@ -5076,6 +5160,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   const newsletterLoadRequestRef = useRef(0);
   const contentTitleRef = useRef(null);
   const issueTitleRef = useRef(null);
+  const newsletterModalTriggerRef = useRef(null);
   const mobileNavToggleRef = useRef(null);
   const mobileNavCloseRef = useRef(null);
   const roleLabel = me?.isPlatformAdmin ? "Super administrator" : "Newsletter admin";
@@ -5180,7 +5265,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       setNewsletterLoadState("ready");
 
       const hasSelectedContentBlock = preferredContentBlockId && nextContentBlocks.some(block => block.id === preferredContentBlockId);
-      if (!hasSelectedContentBlock) {
+      if (!hasSelectedContentBlock && !isContentEditorOpen) {
         const firstBlock = nextContentBlocks[0] || null;
         setSelectedContentBlockId(firstBlock?.id || "");
         setContentForm(frgContentForm(firstBlock || frgContentTemplate));
@@ -5189,7 +5274,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
       }
 
       const hasSelectedIssue = preferredIssueId && nextIssues.some(issue => issue.id === preferredIssueId);
-      if (!hasSelectedIssue) {
+      if (!hasSelectedIssue && !isIssueEditorOpen) {
         const firstIssue = nextIssues[0] || null;
         setSelectedIssueId(firstIssue?.id || "");
         setForm(newsletterIssueForm(firstIssue || newsletterDraftTemplate));
@@ -5237,19 +5322,22 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   }, [isMobileNavOpen, isMobileViewport]);
 
   useEffect(() => {
+    if (!isMobileViewport || !isMobileNavOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileNavOpen, isMobileViewport]);
+
+  useEffect(() => {
     if (!isContentEditorOpen && !isIssueEditorOpen && !selectedSubscriberId) return undefined;
-
-    function handleDialogKeyDown(event) {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      if (isContentEditorOpen) closeContentEditor();
-      if (isIssueEditorOpen) closeIssueEditor();
-      if (selectedSubscriberId) closeSubscriberDetails();
-    }
-
-    document.addEventListener("keydown", handleDialogKeyDown);
-    return () => document.removeEventListener("keydown", handleDialogKeyDown);
-  }, [isContentEditorOpen, isIssueEditorOpen, selectedSubscriberId, contentAction, issueAction, newsletterActions]);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isContentEditorOpen, isIssueEditorOpen, selectedSubscriberId]);
 
   function updateForm(key, value) {
     setForm(current => ({ ...current, [key]: value }));
@@ -5282,18 +5370,18 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
   function selectContentBlock(block) {
     if (newsletterActionRef.current.size) return;
+    newsletterModalTriggerRef.current = document.activeElement;
     setSelectedContentBlockId(block.id);
     setContentForm(frgContentForm(block));
     setIsContentEditorOpen(true);
     setActionStatus(current => current.scope === "content" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
-    if (isMobileViewport) {
-      window.requestAnimationFrame(() => contentTitleRef.current?.focus());
-    }
+    window.requestAnimationFrame(() => contentTitleRef.current?.focus());
   }
 
   function startNewContentBlock() {
     if (newsletterActionRef.current.size) return;
+    newsletterModalTriggerRef.current = document.activeElement;
     setSelectedContentBlockId("");
     setContentForm(frgContentForm());
     setIsContentEditorOpen(true);
@@ -5304,18 +5392,18 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
 
   function selectIssue(issue) {
     if (newsletterActionRef.current.size) return;
+    newsletterModalTriggerRef.current = document.activeElement;
     setSelectedIssueId(issue.id);
     setForm(newsletterIssueForm(issue));
     setIsIssueEditorOpen(true);
     setActionStatus(current => current.scope === "issue" ? { scope: "", text: "", isError: false } : current);
     setStatus({ text: "", isError: false });
-    if (isMobileViewport) {
-      window.requestAnimationFrame(() => issueTitleRef.current?.focus());
-    }
+    window.requestAnimationFrame(() => issueTitleRef.current?.focus());
   }
 
   function startNewDraft() {
     if (newsletterActionRef.current.size) return;
+    newsletterModalTriggerRef.current = document.activeElement;
     setSelectedIssueId("");
     setForm(newsletterIssueForm());
     setIsIssueEditorOpen(true);
@@ -5350,16 +5438,19 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   function closeContentEditor() {
     if (contentAction) return;
     setIsContentEditorOpen(false);
+    window.requestAnimationFrame(() => newsletterModalTriggerRef.current?.focus?.());
   }
 
   function closeIssueEditor() {
     if (issueAction) return;
     setIsIssueEditorOpen(false);
+    window.requestAnimationFrame(() => newsletterModalTriggerRef.current?.focus?.());
   }
 
   function closeSubscriberDetails() {
     if (selectedSubscriberId && newsletterActions.get(`subscriber:${selectedSubscriberId}`)) return;
     setSelectedSubscriberId("");
+    window.requestAnimationFrame(() => newsletterModalTriggerRef.current?.focus?.());
   }
 
   async function saveContentBlock(event) {
@@ -5783,7 +5874,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   return (
     <div className={`platform-shell newsletter-shell ${isMobileNavOpen ? "platform-nav-open" : ""}`}>
       <button className="platform-sidebar-backdrop" type="button" aria-label="Close newsletter menu" onClick={() => closeNewsletterNav()} />
-      <aside className="platform-sidebar newsletter-sidebar" aria-hidden={isMobileViewport && !isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && !isMobileNavOpen ? true : undefined}>
+      <aside className="platform-sidebar newsletter-sidebar" aria-hidden={isMobileViewport && !isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && !isMobileNavOpen ? true : undefined} onKeyDown={isMobileViewport && isMobileNavOpen ? event => handleModalKeyDown(event, () => closeNewsletterNav()) : undefined}>
         <div className="platform-brand">
           <MailPlus aria-hidden="true" />
           <strong>FRG Newsletter</strong>
@@ -5833,7 +5924,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
         </div>
       </aside>
 
-      <main className="platform-main">
+      <main className="platform-main" aria-hidden={isMobileViewport && isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && isMobileNavOpen ? true : undefined}>
         <header className="platform-topbar">
           <div className="newsletter-topbar-leading">
             <button
@@ -5871,10 +5962,6 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                 </div>
               </div>
             )}
-            <button className="btn btn-secondary btn-small platform-topbar-signout" type="button" onClick={onLogout}>
-              <LogOut aria-hidden="true" />
-              <span>Sign out</span>
-            </button>
           </div>
         </header>
 
@@ -6038,7 +6125,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <div className="modal-backdrop newsletter-modal-backdrop" role="presentation" onMouseDown={event => {
               if (event.target === event.currentTarget) closeContentEditor();
             }}>
-              <div className="modal-panel newsletter-management-modal" role="dialog" aria-modal="true" aria-labelledby="homepageEditorTitle">
+              <div className="modal-panel newsletter-management-modal" role="dialog" aria-modal="true" aria-labelledby="homepageEditorTitle" onKeyDown={event => handleModalKeyDown(event, closeContentEditor)}>
                 <div className="newsletter-modal-heading">
                   <div>
                     <p className="eyebrow">Public homepage</p>
@@ -6327,7 +6414,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
               <div className="modal-backdrop newsletter-modal-backdrop" role="presentation" onMouseDown={event => {
                 if (event.target === event.currentTarget) closeIssueEditor();
               }}>
-                <div className="modal-panel newsletter-management-modal newsletter-issue-modal" role="dialog" aria-modal="true" aria-labelledby="newsletterIssueEditorTitle">
+              <div className="modal-panel newsletter-management-modal newsletter-issue-modal" role="dialog" aria-modal="true" aria-labelledby="newsletterIssueEditorTitle" onKeyDown={event => handleModalKeyDown(event, closeIssueEditor)}>
                   <div className="newsletter-modal-heading">
                     <div>
                       <p className="eyebrow">Newsletter issue</p>
@@ -6526,7 +6613,10 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
                     <div role="cell"><span className={`status-pill ${subscriber.status}`}>{subscriber.status === "active" ? "approved" : subscriber.status}</span></div>
                     <span role="cell">{formatShortDate(subscriber.lastSubscribedAt || subscriber.createdAt)}</span>
                     <div role="cell">
-                      <button className="btn btn-secondary btn-small" type="button" onClick={() => setSelectedSubscriberId(subscriber.id)}>
+                      <button className="btn btn-secondary btn-small" type="button" onClick={event => {
+                        newsletterModalTriggerRef.current = event.currentTarget;
+                        setSelectedSubscriberId(subscriber.id);
+                      }}>
                         <Users aria-hidden="true" />
                         <span>View details</span>
                       </button>
@@ -6609,13 +6699,13 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
             <div className="modal-backdrop newsletter-modal-backdrop" role="presentation" onMouseDown={event => {
               if (event.target === event.currentTarget) closeSubscriberDetails();
             }}>
-              <div className="modal-panel newsletter-subscriber-modal" role="dialog" aria-modal="true" aria-labelledby="subscriberDetailsTitle">
+              <div className="modal-panel newsletter-subscriber-modal" role="dialog" aria-modal="true" aria-labelledby="subscriberDetailsTitle" onKeyDown={event => handleModalKeyDown(event, closeSubscriberDetails)}>
                 <div className="newsletter-modal-heading">
                   <div>
                     <p className="eyebrow">Subscriber details</p>
                     <h2 id="subscriberDetailsTitle">{selectedSubscriber.displayName || "Subscriber request"}</h2>
                   </div>
-                  <button className="icon-button" type="button" aria-label="Close subscriber details" disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))} onClick={closeSubscriberDetails}>
+                  <button className="icon-button" type="button" aria-label="Close subscriber details" disabled={Boolean(newsletterActions.get(`subscriber:${selectedSubscriber.id}`))} onClick={closeSubscriberDetails} autoFocus>
                     <X aria-hidden="true" />
                   </button>
                 </div>
@@ -6710,12 +6800,14 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
   const [setupTenantId, setSetupTenantId] = useState("");
   const [hasLoadedTenants, setHasLoadedTenants] = useState(false);
   const [tenantLoadError, setTenantLoadError] = useState(false);
+  const [platformUsersLoadError, setPlatformUsersLoadError] = useState(false);
   const platformActionRef = useRef(new Map());
   const platformLoadRequestRef = useRef(0);
   const userMenuRef = useRef(null);
   const mobileNavToggleRef = useRef(null);
   const mobileNavCloseRef = useRef(null);
   const createTenantTriggerRef = useRef(null);
+  const platformModalTriggerRef = useRef(null);
   const platformUserName = me?.user?.display_name || me?.user?.email || "Admin user";
   const platformUserEmail = me?.user?.email || me?.identity?.email || "";
   const platformUserInitial = String(platformUserName || "A").slice(0, 1).toUpperCase();
@@ -6811,7 +6903,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
     { id: "dashboard", label: "Dashboard", icon: Home },
     { id: "users", label: "Users", icon: UserPlus },
     { id: "settings", label: "Settings", icon: Settings },
-    { id: "support", label: "Support", icon: RefreshCw }
+    { id: "support", label: "Support", icon: MessageSquare }
   ];
 
   function beginPlatformAction(scope, action) {
@@ -6865,13 +6957,21 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
     try {
       if (!quiet) setStatus({ text: "Loading platoons...", isError: false });
       setTenantLoadError(false);
-      const [data, userData] = await Promise.all([
+      const [tenantResult, userResult] = await Promise.allSettled([
         apiRequest("/platform/tenants", { token }),
-        apiRequest("/platform/users", { token }).catch(() => ({ users: [], management: { mutationsAvailable: false, reason: "User management is temporarily unavailable." } }))
+        apiRequest("/platform/users", { token })
       ]);
       if (requestId !== platformLoadRequestRef.current) return { ok: false, stale: true };
+      if (tenantResult.status === "rejected") throw tenantResult.reason;
+      const data = tenantResult.value;
       setTenants(data.tenants || []);
-      setPlatformUsers(userData.users || []);
+      if (userResult.status === "fulfilled") {
+        setPlatformUsers(userResult.value.users || []);
+        setPlatformUsersLoadError(false);
+      } else {
+        setPlatformUsers([]);
+        setPlatformUsersLoadError(true);
+      }
       setHasLoadedTenants(true);
       setPlatformSetup(data.setup || { unavailable: true, tenants: {} });
       const accountSetupAvailable = data.provisioningAvailable === true;
@@ -6885,6 +6985,8 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
     } catch (error) {
       if (requestId !== platformLoadRequestRef.current) return { ok: false, stale: true };
       setPlatformProvisioningAvailable(false);
+      setPlatformUsers([]);
+      setPlatformUsersLoadError(true);
       setHasLoadedTenants(true);
       setTenantLoadError(true);
       if (!quiet) setPlatformSetup(null);
@@ -6896,6 +6998,16 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
   useEffect(() => {
     loadTenants({ quiet: hasLoadedTenants });
   }, [token]);
+
+  useEffect(() => {
+    const hasOpenModal = Boolean(pendingRoleChange || pendingStatusChange || isAddUserOpen || isCreateOpen);
+    if (!hasOpenModal) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [Boolean(pendingRoleChange), Boolean(pendingStatusChange), isAddUserOpen, isCreateOpen]);
 
   useEffect(() => {
     const syncViewFromLocation = () => setActiveView(platformViewFromLocation());
@@ -6929,6 +7041,15 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isUserMenuOpen, isMobileNavOpen, isMobileViewport]);
+
+  useEffect(() => {
+    if (!isMobileViewport || !isMobileNavOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileNavOpen, isMobileViewport]);
 
   async function refreshPlatform() {
     const scope = "refresh";
@@ -7170,6 +7291,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
         body: { role: nextRole }
       });
       setPendingRoleChange(null);
+      window.requestAnimationFrame(() => platformModalTriggerRef.current?.focus?.());
       await loadTenants({ quiet: true });
       setStatus({ text: `${user.displayName || user.email} is now ${formatTeamRole(nextRole)} in ${membership.tenantName}.`, isError: false });
     } catch (error) {
@@ -7193,6 +7315,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
         body: { status: nextStatus }
       });
       setPendingStatusChange(null);
+      window.requestAnimationFrame(() => platformModalTriggerRef.current?.focus?.());
       await loadTenants({ quiet: true });
       setStatus({
         text: `${user.displayName || user.email} is now ${nextStatus === "active" ? "active" : "disabled"} in ${membership.tenantName}.`,
@@ -7207,6 +7330,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
 
   function openAddPlatformUser() {
     if (platformActionRef.current.size || !platformProvisioningAvailable) return;
+    platformModalTriggerRef.current = document.activeElement;
     setPlatformMemberForm(current => ({
       ...current,
       tenantSlug: activeTenants.some(tenant => tenant.slug === current.tenantSlug)
@@ -7223,6 +7347,19 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
     setIsAddUserOpen(false);
     setPlatformMemberIdentityCheck(null);
     setAddUserStatus({ text: "", isError: false });
+    window.requestAnimationFrame(() => platformModalTriggerRef.current?.focus?.());
+  }
+
+  function closePlatformRoleDialog() {
+    if (hasPlatformAction) return;
+    setPendingRoleChange(null);
+    window.requestAnimationFrame(() => platformModalTriggerRef.current?.focus?.());
+  }
+
+  function closePlatformStatusDialog() {
+    if (hasPlatformAction) return;
+    setPendingStatusChange(null);
+    window.requestAnimationFrame(() => platformModalTriggerRef.current?.focus?.());
   }
 
   function updatePlatformMemberForm(key, value) {
@@ -7278,6 +7415,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
       setPlatformMemberForm({ tenantSlug, email: "", displayName: "", role: "contributor" });
       setPlatformMemberIdentityCheck(null);
       setIsAddUserOpen(false);
+      window.requestAnimationFrame(() => platformModalTriggerRef.current?.focus?.());
       await loadTenants({ quiet: true });
       setStatus({ text: `${email} was added to ${tenants.find(tenant => tenant.slug === tenantSlug)?.name || tenantSlug}. Account setup will continue automatically.`, isError: false });
     } catch (error) {
@@ -7452,26 +7590,27 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
           const activeSessionCount = Number(tenant.activeSessionCount || 0);
           const crewCount = Number(tenant.activeTemporaryCrewCount || 0);
           const progress = Math.max(0, Math.min(100, Number(activeSession?.progressPercent || 0)));
+          const headingId = `platoon-${String(tenant.id).replace(/[^A-Za-z0-9_-]/g, "-")}-title`;
           return (
-            <article className="platform-platoon-card" key={tenant.id}>
+            <article className="platform-platoon-card" aria-labelledby={headingId} key={tenant.id}>
               <div className="platform-platoon-card-heading">
                 <span className="tenant-avatar" aria-hidden="true">{tenantInitials(tenant)}</span>
                 <div>
-                  <strong>{tenantDisplayName(tenant)}</strong>
+                  <h2 id={headingId}>{tenantDisplayName(tenant)}</h2>
                   <span className={`status-pill ${tenant.status}`}>{tenant.status}</span>
                 </div>
               </div>
 
               <div className="platform-platoon-facts">
-                <span><strong>{activeSessionCount}</strong>{countLabel(activeSessionCount, "active inventory").replace(/^\d+\s*/, "")}</span>
+                <span><strong>{activeSessionCount}</strong>{countLabel(activeSessionCount, "active inventory", "active inventories").replace(/^\d+\s*/, "")}</span>
                 <span><strong>{crewCount}</strong>{countLabel(crewCount, "active crew member").replace(/^\d+\s*/, "")}</span>
-                <span><strong>{tenant.memberCount || 0}</strong>invited users</span>
+                <span><strong>{tenant.memberCount || 0}</strong>{countLabel(tenant.memberCount || 0, "team member").replace(/^\d+\s*/, "")}</span>
               </div>
 
               {activeSession ? (
                 <div className="platform-active-session">
                   <div>
-                    <span>Current inventory</span>
+                    <span>{activeSessionCount > 1 ? "Latest active inventory" : "Active inventory"}</span>
                     <strong>{activeSession.name}</strong>
                   </div>
                   <div className="platform-session-progress-label">
@@ -7483,7 +7622,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                   </div>
                 </div>
               ) : (
-                <p className="platform-no-session">No active inventory session.</p>
+                <p className="platform-no-session">No active inventory.</p>
               )}
 
               <div className="platform-link-row">
@@ -7492,7 +7631,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                   <Copy aria-hidden="true" />
                 </button>
               </div>
-              <a className="btn btn-primary platform-open-workspace" href={tenantWorkspaceHref(tenant)} aria-label={`Enter ${host} workspace`}>
+              <a className="btn btn-primary platform-open-workspace" href={tenantWorkspaceHref(tenant)} aria-label={`Enter ${tenantDisplayName(tenant)} workspace`}>
                 <span>Enter workspace</span>
                 <ArrowRight aria-hidden="true" />
               </a>
@@ -7506,7 +7645,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
   return (
     <div className={`platform-shell ${isMobileNavOpen ? "platform-nav-open" : ""}`}>
       <button className="platform-sidebar-backdrop" type="button" aria-label="Close platform menu" onClick={() => closePlatformNav()} />
-      <aside className="platform-sidebar" aria-hidden={isMobileViewport && !isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && !isMobileNavOpen ? true : undefined}>
+      <aside className="platform-sidebar" aria-hidden={isMobileViewport && !isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && !isMobileNavOpen ? true : undefined} onKeyDown={isMobileViewport && isMobileNavOpen ? event => handleModalKeyDown(event, () => closePlatformNav()) : undefined}>
         <div className="platform-brand">
           <ShieldCheck aria-hidden="true" />
           <strong>{APP_NAME}</strong>
@@ -7546,7 +7685,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
         </div>
       </aside>
 
-      <main className="platform-main">
+      <main className="platform-main" aria-hidden={isMobileViewport && isMobileNavOpen ? "true" : undefined} inert={isMobileViewport && isMobileNavOpen ? true : undefined}>
         <header className="platform-topbar">
           <button
             ref={mobileNavToggleRef}
@@ -7601,7 +7740,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                       <span>App portal</span>
                     </button>
                     <button type="button" onClick={openSupportDetails}>
-                      <RefreshCw aria-hidden="true" />
+                      <Info aria-hidden="true" />
                       <span>Diagnostics</span>
                     </button>
                     <button type="button" onClick={copyDiagnosticsFromMenu}>
@@ -7616,10 +7755,6 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                 </section>
               ) : null}
             </div>
-            <button className="btn btn-secondary btn-small platform-topbar-signout" type="button" onClick={onLogout}>
-              <LogOut aria-hidden="true" />
-              <span>Sign out</span>
-            </button>
           </div>
         </header>
 
@@ -7696,17 +7831,29 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                   ) : null}
                 </div>
               </div>
+              {platformUsersLoadError ? (
+                <div className="platform-users-load-error" role="alert">
+                  <div>
+                    <strong>Could not load users</strong>
+                    <span>Platoons are still available. Try loading the user list again.</span>
+                  </div>
+                  <button className="btn btn-secondary btn-small" type="button" disabled={hasPlatformAction} onClick={() => loadTenants({ quiet: true })}>
+                    <RefreshCw aria-hidden="true" />
+                    <span>Retry</span>
+                  </button>
+                </div>
+              ) : null}
               <div className="platform-table platform-user-table" role="table" aria-label="Platform users">
                 <div className="platform-table-head" role="row">
-                  <span>User</span>
-                  <span>Platoon</span>
-                  <span>Role</span>
-                  <span>Status</span>
+                  <span role="columnheader">User</span>
+                  <span role="columnheader">Platoon</span>
+                  <span role="columnheader">Role</span>
+                  <span role="columnheader">Status</span>
                 </div>
                 {visiblePlatformUsers.flatMap(user => (
                   user.memberships.map(membership => (
                     <article className="platform-table-row" role="row" key={`${user.id}-${membership.id}`}>
-                      <div className="platform-row-main">
+                      <div className="platform-row-main" role="cell">
                         <span className="tenant-avatar" aria-hidden="true">{String(user.displayName || user.email || "U").slice(0, 1).toUpperCase()}</span>
                         <div>
                           <strong>{user.displayName || "Unnamed user"}</strong>
@@ -7714,29 +7861,35 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                           <span className="platform-user-mobile-platoon"><Building2 aria-hidden="true" />{membership.tenantName}</span>
                         </div>
                       </div>
-                      <span className="platform-user-platoon" data-label="Platoon"><span className="mobile-field-label">Platoon</span><span>{membership.tenantName}</span></span>
-                      <span className="platform-user-role-field" data-label="Role">
+                      <span className="platform-user-platoon" data-label="Platoon" role="cell"><span className="mobile-field-label">Platoon</span><span>{membership.tenantName}</span></span>
+                      <span className="platform-user-role-field" data-label="Role" role="cell">
                         <span className="mobile-field-label">Role</span>
                         <select
                           className="select platform-role-select"
                           aria-label={`Role for ${user.displayName || user.email} in ${membership.tenantName}`}
                           value={membership.role}
                           disabled={hasPlatformAction}
-                          onChange={event => setPendingRoleChange({ user, membership, nextRole: event.target.value })}
+                          onChange={event => {
+                            platformModalTriggerRef.current = event.currentTarget;
+                            setPendingRoleChange({ user, membership, nextRole: event.target.value });
+                          }}
                         >
                           <option value="tenant_admin">Platoon admin</option>
                           <option value="contributor">Member</option>
                           <option value="viewer">Viewer</option>
                         </select>
                       </span>
-                      <span className="platform-status-field" data-label="Status">
+                      <span className="platform-status-field" data-label="Status" role="cell">
                         <span className="mobile-field-label">Status</span>
                         <select
                           className="select platform-status-select"
                           aria-label={`Status for ${user.displayName || user.email} in ${membership.tenantName}`}
                           value={membership.status}
                           disabled={hasPlatformAction}
-                          onChange={event => setPendingStatusChange({ user, membership, nextStatus: event.target.value })}
+                          onChange={event => {
+                            platformModalTriggerRef.current = event.currentTarget;
+                            setPendingStatusChange({ user, membership, nextStatus: event.target.value });
+                          }}
                         >
                           {membership.status === "invited" ? <option value="invited">Invited</option> : null}
                           <option value="active">Active</option>
@@ -7747,7 +7900,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                   ))
                 ))}
               </div>
-              {!visiblePlatformUsers.length ? (
+              {!platformUsersLoadError && !visiblePlatformUsers.length ? (
                 <EmptyPanel
                   title={query.trim() ? "No matching users" : "No permanent users yet"}
                   body={query.trim() ? "Clear the search to see every user." : "Invite permanent users from a platoon workspace."}
@@ -7773,10 +7926,10 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                   </button>
                 </div>
                 <div className="platform-summary-table" role="table" aria-label="Platform totals">
-                  <div role="row"><span>Total platoons</span><strong>{tenants.length}</strong></div>
-                  <div role="row"><span>Active platoons</span><strong>{activeTenants.length}</strong></div>
-                  <div role="row"><span>Permanent users</span><strong>{totalMembers}</strong></div>
-                  <div role="row"><span>Platoon admins</span><strong>{totalAdmins}</strong></div>
+                  <div role="row"><span role="rowheader">Total platoons</span><strong role="cell">{tenants.length}</strong></div>
+                  <div role="row"><span role="rowheader">Active platoons</span><strong role="cell">{activeTenants.length}</strong></div>
+                  <div role="row"><span role="rowheader">Permanent users</span><strong role="cell">{totalMembers}</strong></div>
+                  <div role="row"><span role="rowheader">Platoon admins</span><strong role="cell">{totalAdmins}</strong></div>
                 </div>
               </section>
               <details className="platform-table-card platform-setup-details">
@@ -7812,11 +7965,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
                   {diagnostics.map(([label, value]) => (
                     <div className="platform-diagnostic" key={label}>
                       <span>{label}</span>
-                      {label === "API health" ? (
-                        <a className="platform-health-link" href={value} target="_blank" rel="noreferrer">{value}</a>
-                      ) : (
-                        <strong>{value}</strong>
-                      )}
+                      <strong>{value}</strong>
                     </div>
                   ))}
                 </div>
@@ -7828,21 +7977,21 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
 
       {pendingRoleChange ? (
         <div className="modal-backdrop platform-modal-backdrop" role="presentation" onMouseDown={event => {
-          if (event.target === event.currentTarget && !hasPlatformAction) setPendingRoleChange(null);
+          if (event.target === event.currentTarget) closePlatformRoleDialog();
         }}>
-          <section className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="confirmRoleTitle">
+          <section className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="confirmRoleTitle" onKeyDown={event => handleModalKeyDown(event, closePlatformRoleDialog)}>
             <div className="platform-modal-heading">
               <div>
                 <p className="eyebrow">Confirm role change</p>
                 <h2 id="confirmRoleTitle">Change this user’s access?</h2>
               </div>
-              <button className="icon-button" type="button" disabled={hasPlatformAction} onClick={() => setPendingRoleChange(null)} aria-label="Cancel role change"><X aria-hidden="true" /></button>
+              <button className="icon-button" type="button" disabled={hasPlatformAction} onClick={closePlatformRoleDialog} aria-label="Cancel role change" autoFocus><X aria-hidden="true" /></button>
             </div>
             <p>
               <strong>{pendingRoleChange.user.displayName || pendingRoleChange.user.email}</strong> will become {formatTeamRole(pendingRoleChange.nextRole)} in {pendingRoleChange.membership.tenantName}.
             </p>
             <div className="modal-actions">
-              <button className="btn btn-secondary" type="button" disabled={hasPlatformAction} onClick={() => setPendingRoleChange(null)}>Cancel</button>
+              <button className="btn btn-secondary" type="button" disabled={hasPlatformAction} onClick={closePlatformRoleDialog}>Cancel</button>
               <button className="btn btn-primary" type="button" disabled={hasPlatformAction} onClick={confirmPlatformRoleChange}>Confirm role change</button>
             </div>
           </section>
@@ -7851,21 +8000,21 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
 
       {pendingStatusChange ? (
         <div className="modal-backdrop platform-modal-backdrop" role="presentation" onMouseDown={event => {
-          if (event.target === event.currentTarget && !hasPlatformAction) setPendingStatusChange(null);
+          if (event.target === event.currentTarget) closePlatformStatusDialog();
         }}>
-          <section className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="confirmUserStatusTitle">
+          <section className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="confirmUserStatusTitle" onKeyDown={event => handleModalKeyDown(event, closePlatformStatusDialog)}>
             <div className="platform-modal-heading">
               <div>
                 <p className="eyebrow">Confirm access change</p>
                 <h2 id="confirmUserStatusTitle">{pendingStatusChange.nextStatus === "active" ? "Enable this account?" : "Disable this account?"}</h2>
               </div>
-              <button className="icon-button" type="button" disabled={hasPlatformAction} onClick={() => setPendingStatusChange(null)} aria-label="Cancel status change"><X aria-hidden="true" /></button>
+              <button className="icon-button" type="button" disabled={hasPlatformAction} onClick={closePlatformStatusDialog} aria-label="Cancel status change" autoFocus><X aria-hidden="true" /></button>
             </div>
             <p>
               <strong>{pendingStatusChange.user.displayName || pendingStatusChange.user.email}</strong> will be {pendingStatusChange.nextStatus === "active" ? "enabled" : "disabled"} in {pendingStatusChange.membership.tenantName}. Account access will be updated automatically.
             </p>
             <div className="modal-actions">
-              <button className="btn btn-secondary" type="button" disabled={hasPlatformAction} onClick={() => setPendingStatusChange(null)}>Cancel</button>
+              <button className="btn btn-secondary" type="button" disabled={hasPlatformAction} onClick={closePlatformStatusDialog}>Cancel</button>
               <button className={pendingStatusChange.nextStatus === "active" ? "btn btn-primary" : "btn btn-danger-soft"} type="button" disabled={hasPlatformAction} onClick={confirmPlatformStatusChange}>
                 {pendingStatusChange.nextStatus === "active" ? "Enable account" : "Disable account"}
               </button>
@@ -7878,7 +8027,7 @@ function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogou
         <div className="modal-backdrop platform-modal-backdrop" role="presentation" onMouseDown={event => {
           if (event.target === event.currentTarget) closeAddPlatformUser();
         }}>
-          <aside className="platform-create-modal" role="dialog" aria-modal="true" aria-labelledby="addPlatformUserTitle">
+          <aside className="platform-create-modal" role="dialog" aria-modal="true" aria-labelledby="addPlatformUserTitle" onKeyDown={event => handleModalKeyDown(event, closeAddPlatformUser)}>
             <div className="platform-modal-heading">
               <div>
                 <p className="eyebrow">Permanent account</p>
@@ -8114,7 +8263,6 @@ function LeaderOverviewPanel({
   onCreateSession,
   onOpenSessions,
   onOpenSession,
-  onOpenUpload,
   onInviteCrew,
   onOpenReview,
   showWorkQueue = false
@@ -8126,21 +8274,29 @@ function LeaderOverviewPanel({
   const [claimingItemId, setClaimingItemId] = useState("");
   const [submissions, setSubmissions] = useState([]);
   const [status, setStatus] = useState({ text: "Loading dashboard...", isError: false });
+  const dashboardRequestRef = useRef(0);
+  const dashboardContextRef = useRef({ tenantSlug: null, token: null, canManage: null, refreshVersion: null });
   const detailRequestRef = useRef(0);
 
   async function loadDashboard() {
+    const requestId = dashboardRequestRef.current + 1;
+    dashboardRequestRef.current = requestId;
     try {
       setStatus({ text: "Loading dashboard...", isError: false });
       const [sessionData, reviewData] = await Promise.all([
         apiRequest("/inventory/sessions", { token, tenantSlug }),
         canManage ? apiRequest("/inventory/review-queue", { token, tenantSlug }) : Promise.resolve({ submissions: [] })
       ]);
+      if (requestId !== dashboardRequestRef.current) return;
       const loadedSessions = sortSessionsByAttention(sessionData.sessions || []);
+      dashboardContextRef.current = { tenantSlug, token, canManage, refreshVersion };
       setSessions(loadedSessions);
       setSubmissions(reviewData.submissions || []);
       setStatus({ text: "", isError: false });
     } catch (error) {
-      setStatus({ text: getApiErrorMessage(error), isError: true });
+      if (requestId === dashboardRequestRef.current) {
+        setStatus({ text: getApiErrorMessage(error), isError: true });
+      }
     }
   }
 
@@ -8151,7 +8307,13 @@ function LeaderOverviewPanel({
   const hasSearchQuery = searchTerms(query).length > 0;
   const openSessions = sessions.filter(session => session.status !== "closed");
   const activeSessions = sessions.filter(session => session.status === "active");
-  const selectedSession = activeSessions.find(session => session.id === preferredSessionId) || activeSessions[0] || null;
+  const dashboardContext = dashboardContextRef.current;
+  const dashboardIsCurrent = dashboardContext.tenantSlug === tenantSlug
+    && dashboardContext.token === token
+    && dashboardContext.canManage === canManage
+    && dashboardContext.refreshVersion === refreshVersion;
+  const selectedSession = activeSessions.find(session => session.id === preferredSessionId)
+    || (dashboardIsCurrent ? activeSessions[0] : null);
   const reviewRowCount = openSessions.reduce((total, session) => total + Number(session.needsReviewCount || 0), 0);
   const totalRows = openSessions.reduce((total, session) => total + Number(session.itemCount || 0), 0);
   const resolvedRows = openSessions.reduce((total, session) => total + Number(session.foundCount || 0), 0);
@@ -8197,10 +8359,10 @@ function LeaderOverviewPanel({
     return () => {
       ignore = true;
     };
-  }, [selectedSession?.id, tenantSlug, token, onSessionChange, me?.user?.id, me?.user?.email]);
+  }, [selectedSession?.id, tenantSlug, token, refreshVersion, onSessionChange, me?.user?.id, me?.user?.email]);
 
   function itemTitle(item) {
-    return item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Packet row";
+    return item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Inventory item";
   }
 
   function itemLocation(item) {
@@ -8293,31 +8455,20 @@ function LeaderOverviewPanel({
           <h1>{canManage ? "Leader Dashboard" : "Inventory Dashboard"}</h1>
           <p>{canManage ? "Manage active inventories and review submitted proof." : "Claim inventory work and submit proof from one place."}</p>
         </div>
-        <div className="leader-page-actions">
-          {canManage ? (
-            <>
-              <button className="btn btn-primary" type="button" onClick={onCreateSession}>
-                <Plus aria-hidden="true" />
-                <span>Start new inventory</span>
-              </button>
-              <button className="btn btn-secondary" type="button" onClick={onOpenUpload}>
-                <FileUp aria-hidden="true" />
-                <span>Upload packet</span>
-              </button>
-            </>
-          ) : (
+        {!canManage && !selectedSession ? (
+          <div className="leader-page-actions">
             <button className="btn btn-primary" type="button" onClick={onOpenSessions}>
               <ListChecks aria-hidden="true" />
               <span>Open inventory</span>
             </button>
-          )}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       <div className={`leader-metric-strip ${canManage ? "" : "contributor"}`} aria-label="Inventory overview">
         <div>
           <strong>{openSessions.length}</strong>
-          <span>Open sessions</span>
+          <span>Open inventories</span>
         </div>
         <div>
           <strong>{pendingItems.length}</strong>
@@ -8358,19 +8509,19 @@ function LeaderOverviewPanel({
             )}
             <p>{selectedSession
               ? `${countLabel(selectedSession.itemCount || 0, "item")} - ${sessionProgress(selectedSession)}% complete`
-              : "Start an inventory session to put current work on the home page."}</p>
+              : "Start an inventory to put current work on the dashboard."}</p>
           </div>
           {selectedSession ? (
             <div className="leader-active-inventory-actions">
+              <button className="btn btn-primary" type="button" onClick={() => onOpenSession(selectedSession.id)}>
+                <span>Open inventory</span>
+              </button>
               {canManage && onInviteCrew ? (
-                <button className="btn btn-primary" type="button" onClick={() => onInviteCrew(selectedSession)}>
+                <button className="btn btn-secondary" type="button" onClick={() => onInviteCrew(selectedSession)}>
                   <UserPlus aria-hidden="true" />
                   <span>Invite crew</span>
                 </button>
               ) : null}
-              <button className={canManage ? "btn btn-secondary" : "btn btn-primary"} type="button" onClick={() => onOpenSession(selectedSession.id)}>
-                <span>Open session</span>
-              </button>
             </div>
           ) : canManage ? (
             <button className="btn btn-primary" type="button" onClick={onCreateSession}>
@@ -8393,7 +8544,7 @@ function LeaderOverviewPanel({
               <p>{selectedSession ? selectedSession.name : "No active inventory selected."}</p>
             </div>
             <button className="btn btn-secondary btn-small" type="button" onClick={() => selectedSession ? onOpenSession(selectedSession.id) : onOpenSessions()}>
-              <span>Open session</span>
+              <span>Open inventory</span>
             </button>
           </div>
 
@@ -8425,7 +8576,7 @@ function LeaderOverviewPanel({
                     </span>
                     <div>
                       <strong>{itemTitle(item)}</strong>
-                      <span>{item.session?.name || "Inventory session"}</span>
+                      <span>{item.session?.name || "Inventory"}</span>
                       <small>{assignedName ? `Assigned to ${assignedName}` : "Unassigned"}</small>
                     </div>
                   </div>
@@ -8452,8 +8603,8 @@ function LeaderOverviewPanel({
                 body={hasSearchQuery
                   ? "Clear the dashboard search or try a different item or location."
                   : selectedSession
-                    ? "Choose another assignment list or open the session to see completed items."
-                    : "Start or reopen an inventory session to see current work."}
+                    ? "Choose another assignment list or open the inventory to see completed items."
+                    : "Start or reopen an inventory to see current work."}
                 action={hasSearchQuery ? (
                   <button className="btn btn-secondary btn-small" type="button" onClick={() => onQueryChange("")}>
                     <RefreshCw aria-hidden="true" />
@@ -8461,7 +8612,7 @@ function LeaderOverviewPanel({
                   </button>
                 ) : selectedSession ? (
                   <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(selectedSession.id)}>
-                    <span>Browse session work</span>
+                    <span>Browse inventory work</span>
                   </button>
                 ) : canManage ? (
                   <button className="btn btn-primary btn-small" type="button" onClick={onCreateSession}>
@@ -8543,9 +8694,9 @@ function LeaderOverviewPanel({
 const tenantNotificationOptions = [
   { key: "proof_submitted", group: "inApp", label: "Proof submitted", copy: "Alert platoon admins when proof is waiting for review." },
   { key: "proof_requests", group: "inApp", label: "More proof requested", copy: "Alert the submitter when a platoon admin asks for more detail." },
-  { key: "open_rows", group: "inApp", label: "Open rows", copy: "Show active sessions that still have unchecked work." },
+  { key: "open_rows", group: "inApp", label: "Open items", copy: "Show active inventories that still have unchecked work." },
   { key: "packet_imports", group: "inApp", label: "Packet imports", copy: "Show recent packet imports in the notification panel." },
-  { key: "session_closed", group: "inApp", label: "Session closed", copy: "Show recently closed sessions that are ready for records." },
+  { key: "session_closed", group: "inApp", label: "Inventory closed", copy: "Show recently closed inventories that are ready for records." },
   { key: "email_proof_submitted", group: "email", label: "Email platoon admins", copy: "Email active platoon admins when new proof is submitted." },
   { key: "email_proof_requests", group: "email", label: "Email proof requests", copy: "Email the submitter when more proof is requested." }
 ];
@@ -8629,7 +8780,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
     setIsCopying(true);
     try {
       const copied = await copyText(settingsData?.workspace?.url || "");
-      setStatus({ text: copied ? "Workspace URL copied." : "Could not copy the workspace URL.", isError: !copied });
+      setStatus({ text: copied ? "Workspace link copied." : "Could not copy the workspace link.", isError: !copied });
     } finally {
       setIsCopying(false);
       if (settingsActionRef.current === "copy") settingsActionRef.current = "";
@@ -8707,7 +8858,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
             </div>
             <button className="btn btn-secondary" type="button" onClick={copyWorkspaceUrl} disabled={isLoading || isSaving || isCopying || !settingsData?.workspace?.url}>
               <Copy aria-hidden="true" />
-              <span>{isCopying ? "Copying..." : "Copy workspace URL"}</span>
+              <span>{isCopying ? "Copying..." : "Copy link"}</span>
             </button>
           </div>
         </section>
@@ -8717,7 +8868,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
             <span className="leader-card-icon"><Bell aria-hidden="true" /></span>
             <div>
               <h2>Notification preferences</h2>
-              <p>These tenant-wide defaults apply to every member in this workspace.</p>
+              <p>These defaults apply to everyone in this workspace.</p>
             </div>
           </div>
           <div className="settings-alert-recipient">
@@ -8735,7 +8886,7 @@ function TenantSettingsPanel({ token, tenantSlug, onSaved }) {
           </div>
           <div className="settings-preference-grid">
             {renderPreferenceGroup("inApp", "In-app alerts", "Choose which workflow events appear under the bell.")}
-            {renderPreferenceGroup("email", "Email alerts", "Choose which proof events send workflow email when SMTP is configured.")}
+            {renderPreferenceGroup("email", "Email alerts", "Choose which proof events send an email alert.")}
           </div>
         </section>
 
@@ -8892,7 +9043,7 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
   async function rememberEquipmentLink(event) {
     event.preventDefault();
     if (!linkingRow?.id || !linkTargetKey || linkAction) {
-      if (!linkTargetKey) setLinkStatus({ text: "Choose the equipment this row belongs to.", isError: true });
+      if (!linkTargetKey) setLinkStatus({ text: "Choose the equipment this item belongs to.", isError: true });
       return;
     }
     setLinkAction("save");
@@ -9083,7 +9234,7 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
 
                   <footer className="equipment-library-card-footer">
                     <span>{countLabel(Number(entry.observationCount || 0), "approved observation")}</span>
-                    {Number(entry.sessionCount || 0) ? <span>{countLabel(Number(entry.sessionCount), "inventory session")}</span> : null}
+                    {Number(entry.sessionCount || 0) ? <span>{countLabel(Number(entry.sessionCount), "inventory", "inventories")}</span> : null}
                   </footer>
                 </div>
               </article>
@@ -9101,12 +9252,12 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
       ) : null}
 
       {unlinkedActiveRows.length ? (
-        <section className="leader-card equipment-exceptions" aria-label="Unmatched active rows">
+        <section className="leader-card equipment-exceptions" aria-label="Unmatched active items">
           <div className="equipment-section-heading">
             <div>
               <p className="eyebrow">Manual exceptions</p>
-              <h2>Unmatched active rows</h2>
-              <p>Operational rows normally link automatically. Remember a link only when the row is the same equipment; this does not merge serialized assets.</p>
+              <h2>Items that did not link automatically</h2>
+              <p>Link an item only when it is the same equipment. Separate pieces of equipment will remain separate.</p>
             </div>
             <span>{unlinkedActiveRows.length}</span>
           </div>
@@ -9114,33 +9265,32 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
             {visibleUnlinkedRows.length ? visibleUnlinkedRows.map(row => (
               <article className="equipment-exception-row" key={row.id}>
                 <div>
-                  <strong>{row.packetLine || "Unnamed packet row"}</strong>
+                  <strong>{row.packetLine || "Unnamed inventory item"}</strong>
                   {row.sessionName ? <span>{row.sessionName}</span> : null}
                   {row.expectedQty != null ? <small>Quantity: {row.expectedQty}</small> : null}
                 </div>
                 <button className="btn btn-secondary btn-small" type="button" onClick={event => openLinkDialog(row, event.currentTarget)}>Link to equipment</button>
               </article>
-            )) : <p className="equipment-section-empty">No unmatched active rows match this search.</p>}
+            )) : <p className="equipment-section-empty">No unmatched active items match this search.</p>}
           </div>
         </section>
       ) : null}
 
-      <section className="leader-card equipment-remembered-links" aria-label="Remembered links">
+      {rememberedLinks.length ? <section className="leader-card equipment-remembered-links" aria-label="Remembered links">
         <div className="equipment-section-heading">
           <div>
             <p className="eyebrow">Maintenance</p>
             <h2>Remembered links</h2>
-            <p>These exceptions apply to future rows with identical packet wording. Removing one does not change past inventory evidence or merge saved assets.</p>
+            <p>These exceptions apply to future items with identical packet wording. Removing one does not change past inventory evidence or merge saved assets.</p>
           </div>
-          {rememberedLinks.length ? <span>{rememberedLinks.length}</span> : null}
+          <span>{rememberedLinks.length}</span>
         </div>
-        {rememberedLinks.length ? (
-          <div className="equipment-remembered-list">
+        <div className="equipment-remembered-list">
             {rememberedLinks.map(link => (
               <article className="equipment-remembered-row" key={link.id}>
                 <div>
                   <span>{link.sourcePacketLine}</span>
-                  <strong>{link.targetDisplayName || link.targetEntryKey}</strong>
+                  <strong>{link.targetDisplayName || "Saved equipment"}</strong>
                   {link.createdAt ? <small>Remembered {formatDate(link.createdAt)}</small> : null}
                 </div>
                 <button className="btn btn-danger-soft btn-small" type="button" disabled={Boolean(removingLinkId)} onClick={() => removeRememberedLink(link)}>
@@ -9148,26 +9298,18 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
                 </button>
               </article>
             ))}
-          </div>
-        ) : (
-          <p className="equipment-section-empty">No manual equipment links are remembered.</p>
-        )}
-      </section>
+        </div>
+      </section> : null}
 
       {linkingRow ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={event => {
           if (event.target === event.currentTarget) closeLinkDialog();
         }}>
-          <form className="modal-panel equipment-link-panel" role="dialog" aria-modal="true" aria-labelledby="equipmentLinkTitle" onSubmit={rememberEquipmentLink} onKeyDown={event => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeLinkDialog();
-            }
-          }}>
+          <form className="modal-panel equipment-link-panel" role="dialog" aria-modal="true" aria-labelledby="equipmentLinkTitle" onSubmit={rememberEquipmentLink} onKeyDown={event => handleModalKeyDown(event, closeLinkDialog)}>
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">Manual exception</p>
-                <h2 id="equipmentLinkTitle">Link unmatched row</h2>
+                <h2 id="equipmentLinkTitle">Link unmatched item</h2>
                 <p className="modal-copy">Choose the equipment represented by <strong>{linkingRow.packetLine}</strong>.</p>
               </div>
               <button className="icon-button" type="button" aria-label="Close equipment link" disabled={Boolean(linkAction)} onClick={closeLinkDialog}><X aria-hidden="true" /></button>
@@ -9175,7 +9317,7 @@ function EquipmentLibraryPanel({ token, tenantSlug, query, onQueryChange = () =>
 
             <div className="equipment-link-warning">
               <Info aria-hidden="true" />
-              <p>The remembered link applies to future active rows with identical packet wording. It groups operational history only and does not merge serialized assets.</p>
+              <p>The remembered link applies to future active items with identical packet wording. It groups operational history only and does not merge serialized assets.</p>
             </div>
 
             <label className="equipment-link-search">
@@ -9354,7 +9496,7 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
       <div className="leader-page-heading reports-screen-only">
         <div>
           <h1>Reports</h1>
-          <p>Review outcomes and proof status across inventory sessions.</p>
+          <p>Review outcomes and proof status across inventories.</p>
         </div>
         <div className="leader-page-actions">
           <button className="btn btn-primary" type="button" onClick={exportReportsCsv} disabled={isLoading || !visibleRows.length}>
@@ -9385,9 +9527,9 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
       <section className="leader-card reports-filter-card reports-screen-only" aria-label="Report filters">
         <div className="reports-filter-grid">
           <label>
-            <span>Session</span>
+            <span>Inventory</span>
             <select className="select" value={sessionFilter} disabled={isLoading} onChange={event => setSessionFilter(event.target.value)}>
-              <option value="all">All sessions</option>
+              <option value="all">All inventories</option>
               {sessions.map(session => <option value={session.id} key={session.id}>{session.name}</option>)}
             </select>
           </label>
@@ -9395,8 +9537,8 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
             <span>Status</span>
             <select className="select" value={lifecycleFilter} disabled={isLoading} onChange={event => setLifecycleFilter(event.target.value)}>
               <option value="all">Any lifecycle</option>
-              <option value="open">Open sessions</option>
-              <option value="closed">Closed sessions</option>
+              <option value="open">Open inventories</option>
+              <option value="closed">Closed inventories</option>
             </select>
           </label>
         </div>
@@ -9414,19 +9556,19 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
         </div>
       </section>
 
-      <section className="leader-card reports-session-timing reports-screen-only" aria-label="Session timing">
+      <section className="leader-card reports-session-timing reports-screen-only" aria-label="Inventory timing">
         <div className="leader-card-header">
           <span className="leader-card-icon"><CalendarDays aria-hidden="true" /></span>
-          <div><h2>Session timing</h2><p>When each inventory started and how long it took to reach 100%.</p></div>
+          <div><h2>Inventory timing</h2><p>When each inventory started and how long it took to reach 100%.</p></div>
         </div>
         <div className="reports-session-timing-table" role="table">
-          <div className="reports-session-timing-head" role="row"><span>Session</span><span>Started</span><span>Completed</span><span>Time to 100%</span></div>
+          <div className="reports-session-timing-head" role="row"><span role="columnheader">Inventory</span><span role="columnheader">Started</span><span role="columnheader">Completed</span><span role="columnheader">Time to 100%</span></div>
           {visibleReportSessions.map(session => (
             <div className="reports-session-timing-row" role="row" key={session.id}>
-              <strong>{session.name}</strong>
-              <span>{formatDate(session.startedAt || session.createdAt)}</span>
-              <span>{session.completedAt ? formatDate(session.completedAt) : session.status === "closed" ? "Closed before 100%" : "In progress"}</span>
-              <span>{formatReportDuration(session.durationToCompletionSeconds)}</span>
+              <strong role="rowheader">{session.name}</strong>
+              <span role="cell">{formatDate(session.startedAt || session.createdAt)}</span>
+              <span role="cell">{session.completedAt ? formatDate(session.completedAt) : session.status === "closed" ? "Closed before 100%" : "In progress"}</span>
+              <span role="cell">{formatReportDuration(session.durationToCompletionSeconds)}</span>
             </div>
           ))}
         </div>
@@ -9434,12 +9576,12 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
 
       <section className="reports-print-header">
         <strong>Shadow Tracer inventory report</strong>
-        <span>{sessions.find(session => session.id === sessionFilter)?.name || "All sessions"}</span>
+        <span>{sessions.find(session => session.id === sessionFilter)?.name || "All inventories"}</span>
         <span>Generated {formatDate(new Date())}</span>
       </section>
 
       <div className="reports-summary-grid" role="region" aria-label="Report summary">
-        <div><strong>{summary.total}</strong><span>Rows</span></div>
+        <div><strong>{summary.total}</strong><span>Items</span></div>
         <div><strong>{summary.resolved}</strong><span>Resolved</span><small>{summary.completion}%</small></div>
         <div><strong>{summary.found}</strong><span>Found</span></div>
         <div><strong>{summary.missing}</strong><span>Missing</span></div>
@@ -9450,9 +9592,9 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
         <span>{summary.unchecked} unchecked/in review</span>
       </div>
 
-      <section className="leader-card reports-results" aria-label="Report results">
-        <div className="reports-table reports-table-header">
-          <span>Session</span><span>Item</span><span>Outcome</span><span>Reported by</span><span>Proof status</span><span>Location / serial</span>
+      <section className="leader-card reports-results" role={visibleRows.length ? "table" : undefined} aria-label="Report results">
+        <div className="reports-table reports-table-header" role={visibleRows.length ? "row" : undefined}>
+          <span role={visibleRows.length ? "columnheader" : undefined}>Inventory</span><span role={visibleRows.length ? "columnheader" : undefined}>Item</span><span role={visibleRows.length ? "columnheader" : undefined}>Outcome</span><span role={visibleRows.length ? "columnheader" : undefined}>Reported by</span><span role={visibleRows.length ? "columnheader" : undefined}>Proof status</span><span role={visibleRows.length ? "columnheader" : undefined}>Location / serial</span>
         </div>
         {visibleRows.length ? renderedRows.map(item => {
           const wasDirectlyVerified = Boolean(item.directVerifiedBy || item.directVerifiedByName || item.directVerifiedByEmail);
@@ -9461,22 +9603,22 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
           const displayName = itemDisplayName(item);
           const reportedBy = item.directVerifiedByName || item.directVerifiedByEmail || latest?.submittedByName || latest?.submittedByEmail || "—";
           return (
-            <article className="reports-table reports-table-row" key={item.id}>
-              <div data-label="Session"><span className="mobile-field-label">Session</span><span className="reports-field-value"><strong>{item.sessionName}</strong><small>{formatItemStatus(item.sessionStatus)}</small></span></div>
-              <div data-label="Item">
+            <article className="reports-table reports-table-row" role="row" key={item.id}>
+              <div data-label="Inventory" role="cell"><span className="mobile-field-label">Inventory</span><span className="reports-field-value"><strong>{item.sessionName}</strong><small>{formatItemStatus(item.sessionStatus)}</small></span></div>
+              <div data-label="Item" role="cell">
                 <span className="mobile-field-label">Item</span>
                 <span className="reports-field-value"><strong>{displayName}</strong>{item.packetLine && item.packetLine !== displayName ? <small>{item.packetLine}</small> : null}</span>
               </div>
-              <div data-label="Outcome"><span className="mobile-field-label">Outcome</span><span className={`status-pill ${reportItemOutcome(item)}`}>{formatItemStatus(reportItemOutcome(item))}</span></div>
-              <div data-label="Reported by"><span className="mobile-field-label">Reported by</span><span className="reports-field-value"><span>{reportedBy}</span></span></div>
-              <div data-label="Proof status"><span className="mobile-field-label">Proof status</span><span className={`status-pill ${wasDirectlyVerified ? "approved" : latest?.reviewState || "unchecked"}`}>{wasDirectlyVerified ? "Direct check" : latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof"}</span></div>
-              <div data-label="Location / serial"><span className="mobile-field-label">Location / serial</span><span className="reports-field-value"><span>{location}</span>{hasMeaningfulSerial(latest?.serialNumber) ? <small>Serial: {latest.serialNumber}</small> : null}</span></div>
+              <div data-label="Outcome" role="cell"><span className="mobile-field-label">Outcome</span><span className={`status-pill ${reportItemOutcome(item)}`}>{formatItemStatus(reportItemOutcome(item))}</span></div>
+              <div data-label="Reported by" role="cell"><span className="mobile-field-label">Reported by</span><span className="reports-field-value"><span>{reportedBy}</span></span></div>
+              <div data-label="Proof status" role="cell"><span className="mobile-field-label">Proof status</span><span className={`status-pill ${wasDirectlyVerified ? "approved" : latest?.reviewState || "unchecked"}`}>{wasDirectlyVerified ? "Direct check" : latest?.reviewState ? formatReviewState(latest.reviewState) : "No proof"}</span></div>
+              <div data-label="Location / serial" role="cell"><span className="mobile-field-label">Location / serial</span><span className="reports-field-value"><span>{location}</span>{hasMeaningfulSerial(latest?.serialNumber) ? <small>Serial: {latest.serialNumber}</small> : null}</span></div>
             </article>
           );
         }) : (
           <EmptyPanel
-            title={isLoading ? "Loading report" : "No report rows"}
-            body={isLoading ? "Getting the latest inventory results." : "Adjust the session, status, proof, or workspace search filters."}
+            title={isLoading ? "Loading report" : "No report items"}
+            body={isLoading ? "Getting the latest inventory results." : "Adjust the inventory, status, proof, or workspace search filters."}
             action={!isLoading ? (
               <button className="btn btn-secondary btn-small" type="button" onClick={resetReportFilters}>
                 <RefreshCw aria-hidden="true" />
@@ -9486,7 +9628,7 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
           />
         )}
         {!isPrintTarget && visibleRows.length > renderedRows.length ? (
-          <div className="reports-row-limit">Showing the first {renderedRows.length.toLocaleString()} rows. Export CSV or narrow the filters for the full result.</div>
+          <div className="reports-row-limit">Showing the first {renderedRows.length.toLocaleString()} items. Export CSV or narrow the filters for the full result.</div>
         ) : null}
       </section>
 
@@ -9496,10 +9638,10 @@ function ReportsPanel({ token, tenantSlug, query, onQueryChange = () => {} }) {
 }
 
 const ACTIVITY_DETAIL_LABELS = {
-  count: "Rows",
-  matchedCount: "Matched rows",
-  sessionName: "Session",
-  packetLine: "Packet row",
+  count: "Items",
+  matchedCount: "Matched items",
+  sessionName: "Inventory",
+  packetLine: "Packet item",
   expectedQty: "Expected quantity",
   locationHint: "Location hint",
   sourceName: "Source",
@@ -9530,8 +9672,8 @@ const ACTIVITY_DETAIL_LABELS = {
   attachedToType: "Attached to",
   ownerOverride: "Admin override",
   adminEmail: "Initial admin",
-  hostname: "Hostname",
-  slug: "Slug"
+  hostname: "Workspace address",
+  slug: "Workspace link name"
 };
 
 function activityCategoryFor(event) {
@@ -9564,11 +9706,11 @@ function activityActorName(event) {
 }
 
 function activityContextName(event) {
-  return event?.context?.sessionName || event?.details?.sessionName || event?.details?.name || "the inventory session";
+  return event?.context?.sessionName || event?.details?.sessionName || event?.details?.name || "the inventory";
 }
 
 function activityPacketRow(event) {
-  return event?.context?.packetLine || event?.details?.packetLine || "a packet row";
+  return event?.context?.packetLine || event?.details?.packetLine || "an inventory item";
 }
 
 function activityDetailValue(key, value) {
@@ -9596,7 +9738,7 @@ function activitySentence(event) {
     case "inventory_session.deleted":
       return `${actor} deleted ${sessionName}.`;
     case "session_items.bulk_created":
-      return `${actor} imported ${Number(details.count || 0).toLocaleString()} rows${details.sourceName ? ` from ${details.sourceName}` : ""} into ${sessionName}.`;
+      return `${actor} imported ${countLabel(Number(details.count || 0), "item")}${details.sourceName ? ` from ${details.sourceName}` : ""} into ${sessionName}.`;
     case "session_item.created":
       return `${actor} added ${packetRow} to ${sessionName}.`;
     case "session_item.assigned":
@@ -9870,7 +10012,7 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
               </div>
               <div className="activity-event-actions">
                 {event.context?.sessionId ? (
-                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(event.context.sessionId)}>Open session</button>
+                  <button className="btn btn-secondary btn-small" type="button" onClick={() => onOpenSession(event.context.sessionId)}>Open inventory</button>
                 ) : null}
                 {category === "access" ? (
                   <button className="btn btn-secondary btn-small" type="button" onClick={onOpenPeople}>Open people</button>
@@ -9888,7 +10030,7 @@ function TenantActivityPanel({ token, tenantSlug, onOpenSession, onOpenSessions,
             action={hasFilters ? (
               <button className="btn btn-secondary btn-small" type="button" onClick={clearFilters}>Clear filters</button>
             ) : (
-              <button className="btn btn-primary btn-small" type="button" onClick={onOpenSessions}>Open inventory sessions</button>
+              <button className="btn btn-primary btn-small" type="button" onClick={onOpenSessions}>Open inventories</button>
             )}
           />
         ) : null}
@@ -10020,10 +10162,10 @@ function TenantPeoplePanel({
                   <AlertCircle aria-hidden="true" />
                   <span>Permanent account setup is not connected yet.</span>
                 </div>
-                <p className="team-email-note">For today&apos;s inventory, create temporary access from the active session.</p>
+                <p className="team-email-note">For today&apos;s inventory, create temporary access from the active inventory.</p>
                 <button className="btn btn-primary btn-full" type="button" onClick={onOpenSessions}>
                   <ListChecks aria-hidden="true" />
-                  <span>Open inventory sessions</span>
+                  <span>Open inventories</span>
                 </button>
               </>
             ) : (
@@ -10250,7 +10392,7 @@ function TenantPeoplePanel({
                 <button className="btn btn-secondary btn-small" type="button" onClick={clearPeopleSearch}>Clear search</button>
               ) : (
                 <button className="btn btn-primary btn-small" type="button" onClick={openAddTeammate}>
-                  {provisioningAvailable ? "Add teammate" : "Open inventory sessions"}
+                  {provisioningAvailable ? "Add teammate" : "Open inventories"}
                 </button>
               )}
             />
@@ -10258,7 +10400,7 @@ function TenantPeoplePanel({
         </section>
       </div>
 
-      <details className="admin-card legacy-links-card">
+      {invitations.length || lastInviteUrl ? <details className="admin-card legacy-links-card">
         <summary className="legacy-links-summary">
           <span>
             <LogIn aria-hidden="true" />
@@ -10323,13 +10465,13 @@ function TenantPeoplePanel({
                 <button className="btn btn-secondary btn-small" type="button" onClick={clearPeopleSearch}>Clear search</button>
               ) : (
                 <button className="btn btn-secondary btn-small" type="button" onClick={openAddTeammate}>
-                  {provisioningAvailable ? "Add teammate" : "Open inventory sessions"}
+                  {provisioningAvailable ? "Add teammate" : "Open inventories"}
                 </button>
               )}
             />
           )}
         </div>
-      </details>
+      </details> : null}
 
       {identityResolution ? (
         <div
@@ -10339,7 +10481,7 @@ function TenantPeoplePanel({
             if (event.target === event.currentTarget && !identityResolution.isSaving) onCloseResolution();
           }}
         >
-          <div className="modal-panel member-identity-panel" role="dialog" aria-modal="true" aria-labelledby="identityResolutionTitle">
+          <div className="modal-panel member-identity-panel" role="dialog" aria-modal="true" aria-labelledby="identityResolutionTitle" onKeyDown={event => handleModalKeyDown(event, onCloseResolution)}>
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">Duplicate sign-in</p>
@@ -10348,7 +10490,7 @@ function TenantPeoplePanel({
                   {identityResolution.member.displayName || identityResolution.member.email} has more than one account using {identityResolution.member.email}.
                 </p>
               </div>
-              <button className="icon-button" type="button" aria-label="Close account chooser" disabled={identityResolution.isSaving} onClick={onCloseResolution}>
+              <button className="icon-button" type="button" aria-label="Close account chooser" disabled={identityResolution.isSaving} onClick={onCloseResolution} autoFocus>
                 <X aria-hidden="true" />
               </button>
             </div>
@@ -10418,6 +10560,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [reviewModalRevision, setReviewModalRevision] = useState(0);
   const [sessionIntent, setSessionIntent] = useState("");
   const [preferredSessionId, setPreferredSessionId] = useState(() => me?.crew?.sessionId || "");
+  const [inventoryRevision, setInventoryRevision] = useState(0);
+  const [inventoryRefreshRevision, setInventoryRefreshRevision] = useState(0);
   const [isStartInventoryOpen, setIsStartInventoryOpen] = useState(false);
   const [startInventoryForm, setStartInventoryForm] = useState(() => ({
     name: defaultInventorySessionName(),
@@ -10433,7 +10577,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const [memberForm, setMemberForm] = useState({ email: "", displayName: "", role: "contributor" });
   const [memberIdentityCheck, setMemberIdentityCheck] = useState(null);
   const [identityResolution, setIdentityResolution] = useState(null);
-  const [status, setStatus] = useState({ text: "Loading tenant...", isError: false });
+  const [status, setStatus] = useState({ text: "Loading workspace...", isError: false });
   const [lastInviteUrl, setLastInviteUrl] = useState("");
   const [inviteLinksById, setInviteLinksById] = useState({});
   const [inviteActionsById, setInviteActionsById] = useState({});
@@ -10456,22 +10600,24 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   const leaderSearchInputRef = useRef(null);
   const tenantSidebarRef = useRef(null);
   const tenantMobileNavToggleRef = useRef(null);
+  const startInventoryTriggerRef = useRef(null);
+  const identityResolutionTriggerRef = useRef(null);
   const reviewModalTriggerRef = useRef(null);
   const reviewModalCloseRef = useRef(null);
   const reviewSearchInputRef = useRef(null);
   const reviewReturnPathRef = useRef("/admin");
   const startInventoryActionRef = useRef(false);
   const notificationActionRef = useRef(false);
+  const notificationInventoryFingerprintRef = useRef("");
   const workspaceRefreshActionRef = useRef(false);
   const logoutActionRef = useRef(false);
   const userName = me?.user?.display_name || me?.user?.displayName || me?.user?.email || "Signed in";
   const userRole = isCrew ? "Crew member" : me?.membership?.role ? formatRole(me.membership.role) : isTenantAdmin ? "Platoon admin" : "Member";
   const userInitial = String(userName || "U").slice(0, 1).toUpperCase();
-  const tenantSearch = isReviewWorkspaceOpen ? null : activeTab === "dashboard" && !isTenantAdmin && !isSessionWorkspaceOpen ? null : ({
-    dashboard: {
-      label: "Search dashboard",
-      placeholder: "Search dashboard items, sessions, locations..."
-    },
+  const tenantSearch = isReviewWorkspaceOpen ? null : activeTab === "dashboard" ? (isSessionWorkspaceOpen ? {
+    label: "Search inventory items",
+    placeholder: "Search items, LIN, NSN, or location..."
+  } : null) : ({
     equipment: {
       label: "Search equipment",
       placeholder: "Search equipment, LIN, NSN, or reported location..."
@@ -10486,6 +10632,23 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
   }[activeTab] || null);
   const activeNavLabel = navItems.find(item => item.id === activeTab)?.label || "Workspace";
+  const markInventoryChanged = useCallback(() => {
+    setInventoryRevision(current => current + 1);
+  }, []);
+  const refreshInventoryWorkspace = useCallback(() => {
+    setInventoryRevision(current => current + 1);
+    setInventoryRefreshRevision(current => current + 1);
+  }, []);
+
+  const tenantSearchContext = isReviewWorkspaceOpen
+    ? "review"
+    : activeTab === "dashboard"
+      ? isSessionWorkspaceOpen ? "inventory" : "overview"
+      : activeTab;
+
+  useEffect(() => {
+    setLeaderQuery("");
+  }, [tenantSearchContext]);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -10514,16 +10677,29 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }, [isSidebarOpen, isMobileViewport]);
 
   useEffect(() => {
-    if (!isReviewWorkspaceOpen) {
-      setReviewSubmissionId("");
-      return undefined;
-    }
+    if (!isMobileViewport || !isSidebarOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    window.requestAnimationFrame(() => reviewModalCloseRef.current?.focus?.());
     return () => {
       document.body.style.overflow = previousOverflow;
     };
+  }, [isSidebarOpen, isMobileViewport]);
+
+  useEffect(() => {
+    if (!isStartInventoryOpen && !identityResolution && !isReviewWorkspaceOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isStartInventoryOpen, Boolean(identityResolution), isReviewWorkspaceOpen]);
+
+  useEffect(() => {
+    if (!isReviewWorkspaceOpen) {
+      setReviewSubmissionId("");
+      return;
+    }
+    window.requestAnimationFrame(() => reviewModalCloseRef.current?.focus?.());
   }, [isReviewWorkspaceOpen]);
 
   function openPlatformAdmin() {
@@ -10589,38 +10765,30 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     setIsSidebarOpen(false);
     setIsNotificationsOpen(false);
     setIsUserMenuOpen(false);
-    navigateAppHash("/admin/review");
+    navigateAppHash("/admin/review", {
+      state: { inventoryReviewReturnPath: reviewReturnPathRef.current }
+    });
   }
 
-  function closeReviewWorkspace({ restoreFocus = true } = {}) {
+  function closeReviewWorkspace({ restoreFocus = true, nextPath = "" } = {}) {
     setIsReviewWorkspaceOpen(false);
     setReviewSubmissionId("");
     setLeaderQuery("");
-    navigateAppHash(reviewReturnPathRef.current || tenantTabHashes.dashboard, { replace: true });
+    const currentPath = String(window.location.hash || "").replace(/^#/, "").split("?")[0];
+    const historyReturnPath = String(window.history.state?.inventoryReviewReturnPath || "");
+    if (nextPath) {
+      if (currentPath === "/admin/review" && historyReturnPath === nextPath) {
+        window.history.back();
+      } else {
+        navigateAppHash(nextPath, { replace: true });
+      }
+    } else if (currentPath === "/admin/review" && historyReturnPath) {
+      window.history.back();
+    } else {
+      navigateAppHash(reviewReturnPathRef.current || tenantTabHashes.dashboard, { replace: true });
+    }
     if (restoreFocus) {
       window.requestAnimationFrame(() => reviewModalTriggerRef.current?.focus?.());
-    }
-  }
-
-  function handleReviewModalKeyDown(event) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeReviewWorkspace();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusable = [...event.currentTarget.querySelectorAll(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
-    )].filter(element => element.getClientRects().length);
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
     }
   }
 
@@ -10652,7 +10820,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
 
     try {
-      if (!silent) setStatus({ text: "Loading tenant...", isError: false });
+      if (!silent) setStatus({ text: "Loading workspace...", isError: false });
       const tenantData = await apiRequest("/tenant", { token, tenantSlug });
       setTenant(tenantData.tenant);
 
@@ -10692,8 +10860,16 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     setIsLoadingNotifications(true);
     try {
       const data = await apiRequest("/tenant/notifications", { token, tenantSlug });
-      setNotifications(data.notifications || []);
-      setNotificationUnreadCount(Number(data.unreadCount || 0));
+      const nextNotifications = data.notifications || [];
+      const nextUnreadCount = Number(data.unreadCount || 0);
+      const nextInventoryFingerprint = `${nextUnreadCount}:${nextNotifications.map(notification => notification.id).join(",")}`;
+      const previousInventoryFingerprint = notificationInventoryFingerprintRef.current;
+      notificationInventoryFingerprintRef.current = nextInventoryFingerprint;
+      if (previousInventoryFingerprint && previousInventoryFingerprint !== nextInventoryFingerprint) {
+        refreshInventoryWorkspace();
+      }
+      setNotifications(nextNotifications);
+      setNotificationUnreadCount(nextUnreadCount);
       setNotificationStatus("");
       return true;
     } catch (error) {
@@ -10936,6 +11112,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
   }
 
   async function openMemberIdentityResolution(member) {
+    identityResolutionTriggerRef.current = document.activeElement;
     setMemberActionId(member.id);
     try {
       const data = await apiRequest(`/tenant/members/${member.id}/identity-candidates`, {
@@ -10961,6 +11138,12 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     setIdentityResolution(current => current ? { ...current, selectedId: candidateId, error: "" } : current);
   }
 
+  function closeMemberIdentityResolution({ force = false } = {}) {
+    if (identityResolution?.isSaving && !force) return;
+    setIdentityResolution(null);
+    window.requestAnimationFrame(() => identityResolutionTriggerRef.current?.focus?.());
+  }
+
   async function confirmMemberIdentityResolution() {
     if (!identityResolution?.member?.id || !identityResolution.selectedId || identityResolution.isSaving) return;
     const memberId = identityResolution.member.id;
@@ -10975,7 +11158,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       if (data.member) {
         setMembers(current => current.map(member => member.id === data.member.id ? data.member : member));
       }
-      setIdentityResolution(null);
+      closeMemberIdentityResolution({ force: true });
       setStatus({ text: "Sign-in account selected. Account setup is continuing.", isError: false });
       await loadTenant({ silent: true });
     } catch (error) {
@@ -11126,12 +11309,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     }
   }
 
-  function openSessions(intent = "") {
+  function openSessions(intent = "", { navigate = true, replace = false } = {}) {
     setSessionIntent(intent);
     setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
     setIsReviewWorkspaceOpen(false);
-    navigateAppHash("/admin/sessions");
+    setIsNotificationsOpen(false);
+    setIsUserMenuOpen(false);
+    if (navigate) navigateAppHash("/admin/sessions", { replace });
     closeTenantSidebar(false);
   }
 
@@ -11141,11 +11326,14 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     setIsSessionWorkspaceOpen(true);
     setActiveTab("dashboard");
     setIsReviewWorkspaceOpen(false);
+    setIsNotificationsOpen(false);
+    setIsUserMenuOpen(false);
     navigateAppHash("/admin/sessions");
     closeTenantSidebar(false);
   }
 
   function openStartInventoryWizard(source = "packet") {
+    startInventoryTriggerRef.current = document.activeElement;
     setStartInventoryForm(current => ({
       name: current.name.trim() ? current.name : defaultInventorySessionName(),
       source
@@ -11161,6 +11349,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     if (startInventoryActionRef.current) return;
     setIsStartInventoryOpen(false);
     setStartInventoryStatus({ text: "", isError: false });
+    window.requestAnimationFrame(() => startInventoryTriggerRef.current?.focus?.());
   }
 
   async function startInventory(e) {
@@ -11168,7 +11357,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     if (startInventoryActionRef.current) return;
     const name = startInventoryForm.name.trim();
     if (!name) {
-      setStartInventoryStatus({ text: "Name the inventory session first.", isError: true });
+      setStartInventoryStatus({ text: "Name the inventory first.", isError: true });
       return;
     }
 
@@ -11192,6 +11381,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       setActiveTab("dashboard");
       navigateAppHash("/admin/sessions");
       setStatus({ text: `Started ${data.session?.name || name}`, isError: false });
+      markInventoryChanged();
     } catch (error) {
       setStartInventoryStatus({ text: getApiErrorMessage(error), isError: true });
     } finally {
@@ -11204,7 +11394,6 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     const action = notification?.action || {};
     const tab = action.tab;
     if (tab === "review" && isTenantAdmin) {
-      setActiveTab("dashboard");
       openReviewWorkspace(action.submissionId || notification?.submissionId || "");
       return;
     }
@@ -11215,10 +11404,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       return;
     }
 
-    setActiveTab("dashboard");
-    setIsSessionWorkspaceOpen(true);
-    setIsReviewWorkspaceOpen(false);
-    navigateAppHash("/admin/sessions");
+    openSessions();
   }
 
   async function refreshTenantWorkspace() {
@@ -11226,6 +11412,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
     workspaceRefreshActionRef.current = true;
     setIsRefreshingWorkspace(true);
     setStatus({ text: "Refreshing workspace...", isError: false });
+    refreshInventoryWorkspace();
     try {
       const [tenantLoaded, notificationsLoaded, refreshedIdentity] = await Promise.all([
         loadTenant(),
@@ -11262,7 +11449,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
       isSidebarCollapsed ? "sidebar-collapsed" : ""
     ].filter(Boolean).join(" ")}>
       <button className="leader-sidebar-backdrop" type="button" aria-label="Close menu" onClick={() => closeTenantSidebar()} />
-      <aside ref={tenantSidebarRef} className="leader-sidebar" aria-hidden={isReviewWorkspaceOpen || (isMobileViewport && !isSidebarOpen) ? "true" : undefined} inert={isReviewWorkspaceOpen || (isMobileViewport && !isSidebarOpen) ? true : undefined}>
+      <aside ref={tenantSidebarRef} className="leader-sidebar" aria-hidden={isReviewWorkspaceOpen || (isMobileViewport && !isSidebarOpen) ? "true" : undefined} inert={isReviewWorkspaceOpen || (isMobileViewport && !isSidebarOpen) ? true : undefined} onKeyDown={isMobileViewport && isSidebarOpen ? event => handleModalKeyDown(event, () => closeTenantSidebar()) : undefined}>
         <div className="leader-brand">
           <button
             className="leader-menu-button"
@@ -11309,7 +11496,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
         </div>
       </aside>
 
-      <main className="leader-main" aria-hidden={isReviewWorkspaceOpen ? "true" : undefined} inert={isReviewWorkspaceOpen ? true : undefined}>
+      <main className="leader-main" aria-hidden={isReviewWorkspaceOpen || (isMobileViewport && isSidebarOpen) ? "true" : undefined} inert={isReviewWorkspaceOpen || (isMobileViewport && isSidebarOpen) ? true : undefined}>
         <header className={`leader-topbar ${tenantSearch ? "has-search" : "without-search"}`}>
           <button
             ref={tenantMobileNavToggleRef}
@@ -11415,7 +11602,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                       <ShieldCheck aria-hidden="true" />
                       <div>
                         <strong>{isLoadingNotifications ? "Checking workspace" : "No action needed"}</strong>
-                        <span>{isTenantAdmin ? "New proof submissions, imports, and closed sessions will appear here." : "Proof requests and open session work will appear here."}</span>
+                        <span>{isTenantAdmin ? "New proof submissions, imports, and closed inventories will appear here." : "Proof requests and open inventory work will appear here."}</span>
                       </div>
                     </div>
                   )}
@@ -11426,11 +11613,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     </button>
                     <button type="button" onClick={() => openSessions()}>
                       <CalendarDays aria-hidden="true" />
-                      <span>Open sessions</span>
+                      <span>Open inventories</span>
                     </button>
                     {isTenantAdmin ? (
                       <button type="button" onClick={() => {
-                        setActiveTab("dashboard");
                         openReviewWorkspace();
                       }}>
                         <ClipboardList aria-hidden="true" />
@@ -11494,10 +11680,10 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                           <dt>Workspace</dt>
                           <dd>{tenant?.name || `${tenantSlug}.${appConfig.baseDomain}`}</dd>
                         </div>
-                        <div>
+                        {me?.user?.email ? <div>
                           <dt>Email</dt>
-                          <dd>{me?.user?.email || "Not provided"}</dd>
-                        </div>
+                          <dd>{me.user.email}</dd>
+                        </div> : null}
                         <div>
                           <dt>Role</dt>
                           <dd>{userRole}</dd>
@@ -11525,35 +11711,35 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
 
           {activeTab === "dashboard" ? (
             <>
-              <LeaderOverviewPanel
-                token={token}
-                tenantSlug={tenantSlug}
-                me={me}
-                query={leaderQuery}
-                onQueryChange={setLeaderQuery}
-                canManage={isTenantAdmin}
-                canSubmit={canSubmitProof}
-                preferredSessionId={preferredSessionId}
-                refreshVersion={reviewModalRevision}
-                onSessionChange={setPreferredSessionId}
-                onCreateSession={() => openStartInventoryWizard("packet")}
-                onOpenSessions={() => openSessions()}
-                onOpenSession={openActivitySession}
-                onOpenUpload={() => openSessions("packet")}
-                onInviteCrew={session => setCrewDialogSession(session)}
-                onOpenReview={openReviewWorkspace}
-                showWorkQueue={false}
-              />
+              {!isSessionWorkspaceOpen ? (
+                <LeaderOverviewPanel
+                  token={token}
+                  tenantSlug={tenantSlug}
+                  me={me}
+                  query={leaderQuery}
+                  onQueryChange={setLeaderQuery}
+                  canManage={isTenantAdmin}
+                  canSubmit={canSubmitProof}
+                  preferredSessionId={preferredSessionId}
+                  refreshVersion={inventoryRevision + reviewModalRevision}
+                  onSessionChange={setPreferredSessionId}
+                  onCreateSession={() => openStartInventoryWizard("packet")}
+                  onOpenSessions={() => openSessions()}
+                  onOpenSession={openActivitySession}
+                  onInviteCrew={session => setCrewDialogSession(session)}
+                  onOpenReview={openReviewWorkspace}
+                  showWorkQueue={false}
+                />
+              ) : null}
 
               {isSessionWorkspaceOpen ? (
                 <section className="embedded-workspace-panel" aria-label="Inventory workspace">
                   {!isCrew ? (
-                    <div className="embedded-workspace-heading">
-                      <div><p className="eyebrow">Current inventory</p><h2>Work queue</h2></div>
+                    <div className="embedded-workspace-nav">
                       <button className="btn btn-secondary btn-small" type="button" onClick={() => {
                         setIsSessionWorkspaceOpen(false);
-                        navigateAppHash(tenantTabHashes.dashboard);
-                      }}>Close work queue</button>
+                        navigateAppHash(tenantTabHashes.dashboard, { replace: true });
+                      }}><Home aria-hidden="true" /><span>Back to dashboard</span></button>
                     </div>
                   ) : null}
                   <SessionPanel
@@ -11567,14 +11753,15 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     onQueryChange={setLeaderQuery}
                     uploadIntent={sessionIntent}
                     preferredSessionId={preferredSessionId}
+                    refreshVersion={inventoryRefreshRevision}
                     onUploadIntentHandled={() => setSessionIntent("")}
                     onSessionChange={setPreferredSessionId}
+                    onInventoryChanged={markInventoryChanged}
                     onInviteCrew={session => setCrewDialogSession(session)}
                     onOpenReview={openReviewWorkspace}
                   />
                 </section>
               ) : null}
-
             </>
           ) : null}
 
@@ -11622,9 +11809,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               identityResolution={identityResolution}
               onSelectResolutionIdentity={selectResolutionIdentity}
               onConfirmResolution={confirmMemberIdentityResolution}
-              onCloseResolution={() => {
-                if (!identityResolution?.isSaving) setIdentityResolution(null);
-              }}
+              onCloseResolution={closeMemberIdentityResolution}
             />
           ) : null}
 
@@ -11662,7 +11847,9 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="reviewWorkspaceTitle"
-            onKeyDown={handleReviewModalKeyDown}
+            onKeyDown={event => {
+              if (!event.defaultPrevented) handleModalKeyDown(event, closeReviewWorkspace);
+            }}
           >
             <header className="review-workspace-modal-header">
               <span className="modal-icon">
@@ -11706,13 +11893,17 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 query={leaderQuery}
                 submissionId={reviewSubmissionId}
                 showHeading={false}
+                refreshVersion={inventoryRefreshRevision}
                 onQueryChange={setLeaderQuery}
                 onClearSearch={clearReviewSearch}
                 onOpenSessions={() => {
-                  closeReviewWorkspace({ restoreFocus: false });
-                  openSessions();
+                  closeReviewWorkspace({ restoreFocus: false, nextPath: "/admin/sessions" });
+                  openSessions("", { navigate: false });
                 }}
-                onInventoryChanged={() => setReviewModalRevision(current => current + 1)}
+                onInventoryChanged={() => {
+                  markInventoryChanged();
+                  setReviewModalRevision(current => current + 1);
+                }}
                 onSubmissionReviewed={reviewedSubmissionId => {
                   if (reviewSubmissionId === reviewedSubmissionId) closeReviewWorkspace();
                 }}
@@ -11740,6 +11931,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
             aria-modal="true"
             aria-labelledby="startInventoryTitle"
             onSubmit={startInventory}
+            onKeyDown={event => handleModalKeyDown(event, closeStartInventoryWizard)}
           >
             <div className="modal-stack">
               <div className="modal-heading">
@@ -11749,11 +11941,11 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                 <div>
                   <p className="eyebrow">Inventory tasking</p>
                   <h2 className="modal-title" id="startInventoryTitle">Start inventory</h2>
-                  <p className="modal-copy">Create the session, then decide whether to upload the packet now or build it later.</p>
+                  <p className="modal-copy">Name the inventory, then choose whether to add the packet now or later.</p>
                 </div>
               </div>
 
-              <label className="field-label" htmlFor="startInventoryName">Session name</label>
+              <label className="field-label" htmlFor="startInventoryName">Inventory name</label>
               <input
                 id="startInventoryName"
                 className="input"
@@ -11777,7 +11969,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                   />
                   <span>
                     <strong>Upload packet now</strong>
-                    <small>Open the packet import flow after the session is created.</small>
+                    <small>Open the packet import after the inventory is created.</small>
                   </span>
                 </label>
                 <label className={`start-inventory-choice ${startInventoryForm.source === "blank" ? "active" : ""}`}>
@@ -11790,8 +11982,8 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
                     onChange={() => setStartInventoryForm(current => ({ ...current, source: "blank" }))}
                   />
                   <span>
-                    <strong>Create blank session</strong>
-                    <small>Start the workspace and add packet rows later.</small>
+                    <strong>Create blank inventory</strong>
+                    <small>Start the workspace and add packet items later.</small>
                   </span>
                 </label>
               </fieldset>
@@ -11801,7 +11993,7 @@ function TenantPanel({ token, tenantSlug, me, onRefresh, onLogout }) {
               <div className="button-row start-inventory-actions">
                 <button className="btn btn-primary" type="submit" disabled={isStartingInventory}>
                   <Plus aria-hidden="true" />
-                  <span>{isStartingInventory ? "Starting..." : "Start session"}</span>
+                  <span>{isStartingInventory ? "Starting..." : "Start inventory"}</span>
                 </button>
                 <button className="btn btn-secondary" type="button" onClick={closeStartInventoryWizard} disabled={isStartingInventory}>
                   <span>Cancel</span>
@@ -11825,7 +12017,13 @@ export default function AdminConsole() {
   const [hasCheckedAccess, setHasCheckedAccess] = useState(false);
   const [isRefreshingSession, setIsRefreshingSession] = useState(false);
   const [reconnectRequired, setReconnectRequired] = useState(false);
+  const [reconnectNeedsSignIn, setReconnectNeedsSignIn] = useState(false);
+  const [reconnectError, setReconnectError] = useState("");
   const authActionRef = useRef("");
+  const reconnectDialogRef = useRef(null);
+  const reconnectButtonRef = useRef(null);
+  const reconnectSignInButtonRef = useRef(null);
+  const reconnectPreviousFocusRef = useRef(null);
   const token = getSessionAccessToken(session);
 
   async function runAuthAction(kind, action) {
@@ -11884,12 +12082,16 @@ export default function AdminConsole() {
       if (refreshState === "success" && event?.detail?.session) {
         setSession(event.detail.session);
         setReconnectRequired(false);
+        setReconnectNeedsSignIn(false);
+        setReconnectError("");
       }
     }
 
     function handleInvalidatedSession() {
       setIsRefreshingSession(false);
       setReconnectRequired(true);
+      setReconnectNeedsSignIn(false);
+      setReconnectError("");
       setStatus({ text: "", isError: false });
     }
 
@@ -11900,6 +12102,34 @@ export default function AdminConsole() {
       window.removeEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidatedSession);
     };
   }, []);
+
+  const hasReconnectDialog = Boolean(me && reconnectRequired);
+
+  useEffect(() => {
+    if (!hasReconnectDialog) return undefined;
+    const dialog = reconnectDialogRef.current;
+    if (!dialog) return undefined;
+
+    reconnectPreviousFocusRef.current = document.activeElement;
+    if (!dialog.open) dialog.showModal();
+    const focusFrame = window.requestAnimationFrame(() => reconnectButtonRef.current?.focus());
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      if (dialog.open) dialog.close();
+      const previousFocus = reconnectPreviousFocusRef.current;
+      reconnectPreviousFocusRef.current = null;
+      window.requestAnimationFrame(() => {
+        if (previousFocus?.isConnected) previousFocus.focus?.();
+      });
+    };
+  }, [hasReconnectDialog]);
+
+  useEffect(() => {
+    if (!hasReconnectDialog || !reconnectNeedsSignIn) return undefined;
+    const focusFrame = window.requestAnimationFrame(() => reconnectSignInButtonRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [hasReconnectDialog, reconnectNeedsSignIn]);
 
   useEffect(() => {
     if (!session?.accessToken || !authSessionCanRefresh(session) || reconnectRequired) return undefined;
@@ -12123,11 +12353,45 @@ export default function AdminConsole() {
 
   async function reconnectSession() {
     await runAuthAction("reconnect", async () => {
+      setReconnectNeedsSignIn(false);
+      setReconnectError("");
       try {
-        setStatus({ text: "Opening secure sign-in...", isError: false });
+        setStatus({ text: "Refreshing secure access...", isError: false });
+        const refreshedSession = await refreshAuthSession(null, { force: true });
+        const refreshedToken = getSessionAccessToken(refreshedSession);
+        if (refreshedToken) {
+          setSession(refreshedSession);
+          setReconnectRequired(false);
+          setReconnectNeedsSignIn(false);
+          setReconnectError("");
+          await loadMe(refreshedToken);
+          return;
+        }
+      } catch (error) {
+        const refreshStatus = Number(error?.details?.status || error?.status || 0);
+        if (![400, 401].includes(refreshStatus)) {
+          const message = getProtectedAuthErrorMessage(error);
+          setReconnectError(message);
+          setStatus({ text: message, isError: true });
+          return;
+        }
+      }
+
+      setReconnectNeedsSignIn(true);
+      setReconnectError("Your secure session ended. Sign in again when you are ready; this page will stay in place until then.");
+      setStatus({ text: "", isError: false });
+    });
+  }
+
+  async function signInAgain() {
+    await runAuthAction("reauth", async () => {
+      try {
+        setReconnectError("");
         await beginOidcLogin(`${window.location.pathname}${window.location.hash || ""}`);
       } catch (error) {
-        setStatus({ text: getProtectedAuthErrorMessage(error), isError: true });
+        const message = getProtectedAuthErrorMessage(error);
+        setReconnectError(message);
+        setStatus({ text: message, isError: true });
       }
     });
   }
@@ -12156,7 +12420,8 @@ export default function AdminConsole() {
 
   return (
     <MediaAuthProvider token={token} tenantSlug={tenantSlug}>
-      <div className={shellClassName}>
+      <>
+      <div className={shellClassName} aria-hidden={hasReconnectDialog ? "true" : undefined} inert={hasReconnectDialog ? true : undefined}>
       {!isTenantDashboard && !isPlatformDashboard && !isNewsletterDashboard ? (
         <AdminHeader me={me} tenantSlug={tenantSlug} mode={isNewsletterPage ? "newsletter" : ""} authAction={authAction} onRefresh={refreshAccess} onLogout={logout} />
       ) : null}
@@ -12205,20 +12470,40 @@ export default function AdminConsole() {
         </div>
       ) : null}
 
-      {me && reconnectRequired ? (
-        <section className="session-reconnect-card" role="alert" aria-live="assertive">
-          <ShieldCheck aria-hidden="true" />
-          <div>
-            <strong>Reconnect to continue</strong>
-            <span>Your current page is still here. Reconnect your secure sign-in to keep working.</span>
-          </div>
-          <button className="btn btn-primary btn-small" type="button" disabled={Boolean(authAction)} onClick={reconnectSession}>
-            <LogIn aria-hidden="true" />
-            <span>{authAction === "reconnect" ? "Opening sign-in..." : "Reconnect"}</span>
-          </button>
-        </section>
-      ) : null}
       </div>
+
+      {hasReconnectDialog ? (
+        <dialog
+          ref={reconnectDialogRef}
+          className="session-reconnect-card"
+          role="alertdialog"
+          aria-labelledby="sessionReconnectTitle"
+          aria-describedby="sessionReconnectDescription"
+          aria-busy={Boolean(authAction)}
+          onCancel={event => event.preventDefault()}
+          onKeyDown={event => handleModalKeyDown(event)}
+        >
+          <ShieldCheck aria-hidden="true" />
+          <div className="session-reconnect-copy">
+            <strong id="sessionReconnectTitle">Reconnect to continue</strong>
+            <span id="sessionReconnectDescription">Your current page is still here. Reconnect your secure sign-in to keep working.</span>
+            {reconnectError ? <span className="session-reconnect-error" role="alert">{reconnectError}</span> : null}
+          </div>
+          <div className="session-reconnect-actions">
+            <button ref={reconnectButtonRef} className="btn btn-primary btn-small" type="button" aria-disabled={Boolean(authAction)} onClick={reconnectSession}>
+              <RefreshCw aria-hidden="true" />
+              <span>{authAction === "reconnect" ? "Reconnecting..." : "Reconnect"}</span>
+            </button>
+            {reconnectNeedsSignIn ? (
+              <button ref={reconnectSignInButtonRef} className="btn btn-secondary btn-small" type="button" aria-disabled={Boolean(authAction)} onClick={signInAgain}>
+                <LogIn aria-hidden="true" />
+                <span>{authAction === "reauth" ? "Opening sign-in..." : "Sign in again"}</span>
+              </button>
+            ) : null}
+          </div>
+        </dialog>
+      ) : null}
+      </>
     </MediaAuthProvider>
   );
 }

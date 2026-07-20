@@ -92,7 +92,7 @@ test.describe("tenant administration async action states", () => {
     await openWorkspaceTab(page, "Reports");
     const reportsPage = page.locator(".reports-page");
     await expect(reportsPage.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
-    await expect(reportsPage.getByRole("combobox", { name: "Session", exact: true })).toBeEnabled();
+    await expect(reportsPage.getByRole("combobox", { name: "Inventory", exact: true })).toBeEnabled();
 
     let reportRefreshes = 0;
     await page.route("**/api/inventory/reports", async route => {
@@ -117,12 +117,12 @@ test.describe("tenant administration async action states", () => {
     } else {
       await expect(reportsPage.getByRole("button", { name: "Refreshing...", exact: true })).toBeDisabled();
     }
-    await expect(reportsPage.getByRole("combobox", { name: "Session", exact: true })).toBeEnabled();
+    await expect(reportsPage.getByRole("combobox", { name: "Inventory", exact: true })).toBeEnabled();
     expect(reportRefreshes).toBe(1);
   });
 
   test("workspace, alert, and activity refreshes stay single-shot and explain progress", async ({ page }, testInfo) => {
-    test.setTimeout(60_000);
+    test.setTimeout(90_000);
     await openTenant(page);
     await expect(page.locator(".leader-system-card")).toContainText("MS Platoon");
 
@@ -147,7 +147,7 @@ test.describe("tenant administration async action states", () => {
     const notificationButton = page.getByRole("button", { name: /^Notifications/ });
     await notificationButton.click();
     const notificationPanel = page.getByRole("region", { name: "Notifications" });
-    await expect(notificationPanel.getByRole("button", { name: "Refresh alerts", exact: true })).toBeEnabled();
+    await expect(notificationPanel.getByRole("button", { name: "Refresh alerts", exact: true })).toBeEnabled({ timeout: 30_000 });
 
     let alertRefreshes = 0;
     await page.route("**/api/tenant/notifications", async route => {

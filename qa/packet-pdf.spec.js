@@ -12,15 +12,45 @@ async function signInWithQaPersona(page, personaName) {
 
 async function openPacketUpload(page) {
   await expect(page.getByRole("heading", { name: "Leader Dashboard" })).toBeVisible();
-  const moreActions = page.getByRole("button", { name: "More actions", exact: true });
-  if (await moreActions.isVisible()) await moreActions.click();
-  const uploadPacket = page.getByRole("button", { name: "Upload packet" });
-  await expect(uploadPacket).toBeVisible();
-  await uploadPacket.click();
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("region", { name: "Notifications" })
+    .getByRole("button", { name: "Open inventories", exact: true })
+    .click();
+
+  const workspace = page.getByRole("region", { name: "Inventory workspace" });
+  await expect(workspace.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
+
+  const addItems = workspace.getByRole("button", { name: "Add items from packet", exact: true });
+  const inventoryTools = workspace.locator("details.session-tools");
+  const inventoryToolsSummary = inventoryTools.locator(":scope > summary");
+  const startFromPacket = workspace.getByRole("button", { name: "Start inventory from packet", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Upload packet" });
+
+  await expect.poll(async () => {
+    if (await dialog.isVisible()) return true;
+
+    try {
+      if (await addItems.isVisible()) {
+        await addItems.click({ timeout: 1_000 });
+      } else if (await inventoryToolsSummary.isVisible()) {
+        if (!(await inventoryTools.evaluate(element => element.open))) {
+          await inventoryToolsSummary.click({ timeout: 1_000 });
+        }
+        const addPacket = inventoryTools.getByRole("button", { name: "Add packet", exact: true });
+        if (await addPacket.isVisible()) await addPacket.click({ timeout: 1_000 });
+      } else if (await startFromPacket.isVisible()) {
+        await startFromPacket.click({ timeout: 1_000 });
+      }
+    } catch {
+      // The session list may swap the empty state for a selected inventory mid-click.
+    }
+
+    return dialog.isVisible();
+  }, { timeout: 15_000, intervals: [100, 200, 500] }).toBe(true);
 }
 
 test.describe("PDF packet import", () => {
-  test("uses an open session when the session list finishes loading after the wizard opens", async ({ page }) => {
+  test("uses an open inventory when the inventory list finishes loading after the wizard opens", async ({ page }) => {
     let releaseSessionList;
     const sessionListGate = new Promise(resolve => {
       releaseSessionList = resolve;
@@ -48,16 +78,16 @@ test.describe("PDF packet import", () => {
     sessionListReleased = true;
     releaseSessionList();
 
-    await expect(dialog.getByText("Use an open session")).toBeVisible();
+    await expect(dialog.getByText("Use an open inventory")).toBeVisible();
     const chooseSourceButton = dialog.getByRole("button", { name: "Choose source" });
     await expect(chooseSourceButton).toBeEnabled();
     await chooseSourceButton.click();
 
     await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
-    await expect(page.getByText("Name the inventory session first.")).toHaveCount(0);
+    await expect(page.getByText("Name the inventory first.")).toHaveCount(0);
   });
 
-  test("keeps packet source usable when the background session refresh loses its connection", async ({ page }) => {
+  test("keeps packet source usable when the background inventory refresh loses its connection", async ({ page }) => {
     test.setTimeout(60_000);
     let abortedDetailRequests = 0;
 
@@ -96,7 +126,7 @@ test.describe("PDF packet import", () => {
     await expect(dialog.getByText(/27 ready to import/)).toBeVisible();
   });
 
-  test("platoon admin can upload an Army-style PDF and review parsed rows", async ({ page }) => {
+  test("platoon admin can upload an Army-style PDF and review parsed items", async ({ page }) => {
     test.setTimeout(60_000);
 
     await page.goto(TENANT_URL);
@@ -118,18 +148,21 @@ test.describe("PDF packet import", () => {
     const parserSummary = dialog.getByLabel("Packet parser summary");
     await expect(parserSummary.getByText("PDF", { exact: true })).toBeVisible();
     await expect(parserSummary.getByText("army-packet-clean.pdf")).toBeVisible();
-    await expect(parserSummary.getByText("Rows ready")).toBeVisible();
+    await expect(parserSummary.getByText("Items ready")).toBeVisible();
     await expect(parserSummary.getByText("Skipped page text")).toBeVisible();
     await expect(dialog.getByText("Ignored text")).toBeVisible();
-    await expect(dialog.getByRole("status")).toContainText(/item rows ready.*headers or page text were skipped/i);
+    await expect(dialog.getByRole("status")).toContainText(/items? ready.*headers or page text were skipped/i);
     await expect(dialog.getByRole("alert")).toHaveCount(0);
     await expect(dialog.getByText(/27 ready to import/)).toBeVisible();
-    await expect(dialog.getByText(/27 rows found/)).toBeVisible();
+    await expect(dialog.getByText(/27 items found/)).toBeVisible();
     await expect(dialog.locator(".packet-confidence.low")).toHaveCount(0);
-    await expect(dialog.locator(".packet-confidence").first()).toHaveAttribute("title", /parser confidence/i);
+    const confidence = dialog.locator(".packet-confidence").first();
+    await expect(confidence).toHaveAttribute("aria-label", /import confidence.*show explanation/i);
+    await confidence.click();
+    await expect(confidence.locator("xpath=..").getByRole("note")).toContainText(/confidence.*recognized the packet text/i);
     await expect(dialog.locator(".packet-row-number").first()).toHaveText("1");
     await expect(dialog.locator("textarea").first()).toHaveValue(/COMBAT LIFESAVER|RADIAC SET|ARMAMENT SUBSYS/);
-    await expect(dialog.getByRole("button", { name: "Import 27 rows" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Import 27 items" })).toBeVisible();
   });
 
   test("explains a PDF reader asset failure without blaming the inventory API", async ({ page }) => {
@@ -219,9 +252,9 @@ test.describe("PDF packet import", () => {
     await dialog.getByRole("button", { name: "Choose source" }).click();
     const sourceText = dialog.getByPlaceholder(/Paste hand-receipt text/);
     await sourceText.fill("000009148 R20684 RADIAC SET: AN/VDR-2");
-    await dialog.getByRole("button", { name: "Review rows" }).click();
+    await dialog.getByRole("button", { name: "Review items" }).click();
 
-    const importButton = dialog.getByRole("button", { name: "Import 1 row" });
+    const importButton = dialog.getByRole("button", { name: "Import 1 item" });
     await importButton.evaluate(button => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -237,12 +270,12 @@ test.describe("PDF packet import", () => {
     await expect(dialog.getByRole("alert")).toContainText("Temporary packet import failure");
     expect(importAttempts).toBe(1);
 
-    await dialog.getByRole("button", { name: "Import 1 row" }).click();
+    await dialog.getByRole("button", { name: "Import 1 item" }).click();
     await expect(dialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
     expect(importAttempts).toBe(2);
   });
 
-  test("keeps reviewed packet rows when a successful response does not confirm every save", async ({ page }) => {
+  test("keeps reviewed packet items when a successful response does not confirm every save", async ({ page }) => {
     test.setTimeout(60_000);
     let importAttempts = 0;
     await page.route("**/api/inventory/sessions/*/items/bulk", async route => {
@@ -263,20 +296,20 @@ test.describe("PDF packet import", () => {
     await dialog.getByRole("button", { name: "Choose source" }).click();
     const sourceText = dialog.getByPlaceholder(/Paste hand-receipt text/);
     await sourceText.fill("000009148 R20684 RADIAC SET: AN/VDR-2");
-    await dialog.getByRole("button", { name: "Review rows" }).click();
+    await dialog.getByRole("button", { name: "Review items" }).click();
 
     const packetRow = dialog.locator(".packet-review-line").first();
     const locationHint = dialog.locator(".packet-review-row").first().getByLabel("Location hint");
     await locationHint.fill("Vault 2, rack 4");
-    await dialog.getByRole("button", { name: "Import 1 row" }).click();
+    await dialog.getByRole("button", { name: "Import 1 item" }).click();
 
     await expect(dialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
-    await expect(dialog.getByRole("alert")).toContainText("couldn't confirm that any packet rows were saved");
+    await expect(dialog.getByRole("alert")).toContainText("couldn't confirm that any items were saved");
     await expect(dialog.getByText("Pasted packet text", { exact: true })).toBeVisible();
     await expect(packetRow).toHaveValue(/R20684 RADIAC SET/);
     await expect(locationHint).toHaveValue("Vault 2, rack 4");
     await expect(dialog.getByText("army-packet-clean.pdf")).toHaveCount(0);
-    await expect(dialog.getByRole("button", { name: "Import 1 row" })).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Import 1 item" })).toBeEnabled();
     expect(importAttempts).toBe(1);
   });
 });

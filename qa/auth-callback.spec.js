@@ -123,7 +123,9 @@ test.describe("OIDC callback recovery", () => {
     await page.goto(ROOT_CALLBACK_URL);
 
     await expect(page.getByRole("heading", { name: "Opening workspace" })).toBeVisible();
-    await expect(page.getByText("Sign-in reached the app, but the inventory API did not finish the callback. Try again or ask an admin to check API routing.")).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText(
+      "Sign-in started, but the workspace did not finish opening. Try again or ask an admin for help."
+    );
     await expect(page.getByText("Failed to fetch")).toHaveCount(0);
   });
 });

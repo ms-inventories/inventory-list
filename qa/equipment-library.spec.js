@@ -196,7 +196,7 @@ test.describe("equipment library", () => {
     await expect(oxygenCard.getByText("Motor pool, bay 4", { exact: true })).toBeVisible();
     await expect(oxygenCard.getByText("Cage 2, left wall", { exact: true })).toBeVisible();
     await expect(oxygenCard.getByText("4 approved observations", { exact: true })).toBeVisible();
-    await expect(oxygenCard.getByText("3 inventory sessions", { exact: true })).toBeVisible();
+    await expect(oxygenCard.getByText("3 inventories", { exact: true })).toBeVisible();
     await expect(oxygenCard.locator(".equipment-library-result-badges .equipment-open-inventory")).toHaveText("Open inventory");
     await expect(oxygenCard.locator(".equipment-last-found .equipment-open-inventory")).toHaveCount(0);
     const openPriorLocation = oxygenCard.locator(".equipment-prior-locations li", { hasText: "Cage 2, left wall" });
@@ -220,7 +220,7 @@ test.describe("equipment library", () => {
 
     const unmatchedRow = page.locator(".equipment-exception-row", { hasText: "UNKNOWN WORDING" });
     await unmatchedRow.getByRole("button", { name: "Link to equipment" }).click();
-    const linkDialog = page.getByRole("dialog", { name: "Link unmatched row" });
+    const linkDialog = page.getByRole("dialog", { name: "Link unmatched item" });
     await expect(linkDialog).toBeVisible();
     await linkDialog.getByLabel("Search equipment").fill("generator shed");
     const generatorChoice = linkDialog.getByRole("radio", { name: /Field Generator/ });
