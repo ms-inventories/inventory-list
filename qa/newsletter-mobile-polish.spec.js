@@ -191,12 +191,20 @@ for (const viewport of viewports) {
       const row = table.getByRole("row").filter({ hasText: "Rejected Mobile Subscriber" });
       await expect(row).toBeVisible();
       await expect(row).not.toContainText("rejected-mobile@876en.test");
-      const pillAlignment = await row.locator(".status-pill").evaluate(element => ({
-        alignItems: getComputedStyle(element).alignItems,
-        justifyContent: getComputedStyle(element).justifyContent,
-        textAlign: getComputedStyle(element).textAlign
+      const statusAppearance = await row.locator(".status-pill").evaluate(element => ({
+        tagName: element.tagName,
+        role: element.getAttribute("role"),
+        borderTopWidth: getComputedStyle(element).borderTopWidth,
+        borderRadius: getComputedStyle(element).borderRadius,
+        backgroundColor: getComputedStyle(element).backgroundColor,
+        cursor: getComputedStyle(element).cursor
       }));
-      expect(pillAlignment).toEqual({ alignItems: "center", justifyContent: "center", textAlign: "center" });
+      expect(statusAppearance.tagName).toBe("SPAN");
+      expect(statusAppearance.role).not.toBe("button");
+      expect(statusAppearance.borderTopWidth).toBe("0px");
+      expect(statusAppearance.borderRadius).toBe("0px");
+      expect(statusAppearance.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      expect(statusAppearance.cursor).not.toBe("pointer");
       await row.getByRole("button", { name: "View details" }).click();
       const dialog = page.getByRole("dialog", { name: "Rejected Mobile Subscriber" });
       await expect(dialog).toContainText("rejected-mobile@876en.test");

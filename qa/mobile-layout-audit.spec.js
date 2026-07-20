@@ -59,19 +59,25 @@ async function expectInsideHorizontally(container, child) {
   expect(childBox.x + childBox.width).toBeLessThanOrEqual(containerBox.x + containerBox.width + 1);
 }
 
-async function expectChipTextCentered(locator) {
+async function expectPassiveLabel(locator) {
   await expect(locator).toBeVisible();
-  const alignment = await locator.evaluate(element => {
+  const appearance = await locator.evaluate(element => {
     const style = getComputedStyle(element);
     return {
-      alignItems: style.alignItems,
-      justifyContent: style.justifyContent,
-      textAlign: style.textAlign
+      tagName: element.tagName,
+      role: element.getAttribute("role"),
+      borderTopWidth: style.borderTopWidth,
+      borderRadius: style.borderRadius,
+      backgroundColor: style.backgroundColor,
+      cursor: style.cursor
     };
   });
-  expect(alignment.alignItems).toBe("center");
-  expect(alignment.justifyContent).toBe("center");
-  expect(alignment.textAlign).toBe("center");
+  expect(["BUTTON", "A"]).not.toContain(appearance.tagName);
+  expect(appearance.role).not.toBe("button");
+  expect(appearance.borderTopWidth).toBe("0px");
+  expect(appearance.borderRadius).toBe("0px");
+  expect(appearance.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+  expect(appearance.cursor).not.toBe("pointer");
 }
 
 async function expectTextCenteredInBox(locator) {
@@ -146,7 +152,7 @@ test.describe("mobile layout audit", () => {
     await expect(platoonCard).toBeVisible();
     await expectMinFontSize(platoonCard.getByRole("heading", { name: "MS Platoon" }), 17);
     await expectTextCenteredInBox(platoonCard.locator(".tenant-avatar"));
-    await expectChipTextCentered(platoonCard.locator(".status-pill"));
+    await expectPassiveLabel(platoonCard.locator(".status-pill"));
     await expectMinTargetSize(platoonCard.getByRole("button", { name: "Copy link for MS Platoon" }), { width: 44, height: 44 });
     await expectMinTargetSize(platoonCard.getByRole("link", { name: /Enter MS Platoon workspace/i }), { height: 48 });
     await expectContained(platoonGrid);
@@ -412,7 +418,7 @@ test.describe("mobile layout audit", () => {
 
     const subscriberRow = page.locator(".newsletter-subscriber-table-row", { hasText: "Lewis Benson" });
     await expectContained(subscriberRow);
-    await expectChipTextCentered(subscriberRow.locator(".status-pill"));
+    await expectPassiveLabel(subscriberRow.locator(".status-pill"));
     const viewDetails = subscriberRow.getByRole("button", { name: "View details", exact: true });
     await expectMinTargetSize(viewDetails, { height: 44 });
     await viewDetails.click();
