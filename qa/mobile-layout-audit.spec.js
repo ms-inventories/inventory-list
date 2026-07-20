@@ -230,7 +230,7 @@ test.describe("mobile layout audit", () => {
     await expect(addTeammate).not.toHaveAttribute("open", "");
     await addTeammate.locator(".add-teammate-summary").click();
     await expect(page.getByText("Permanent account setup is not connected yet.", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open inventories" })).toBeVisible();
+    await expect(addTeammate.getByRole("button", { name: "Open inventories" })).toBeVisible();
     await expect(page.getByLabel("Name", { exact: true })).toHaveCount(0);
 
     const peoplePanel = page.locator(".people-panel");
@@ -322,15 +322,42 @@ test.describe("mobile layout audit", () => {
     await assignmentLists.getByRole("button", { name: /^Unclaimed\b/ }).click();
     const sessionRow = inventoryWorkspace.locator(".session-item", { hasText: "Generator" });
     await expect(sessionRow).toBeVisible();
+    for (const label of ["Item", "Location", "Assigned", "Status", "Action"]) {
+      await expect(sessionRow.locator(".queue-cell-label").getByText(label, { exact: true })).toBeVisible();
+    }
     await expect(sessionRow.getByRole("button", { name: "Found", exact: true })).toBeHidden();
     await expect(sessionRow.getByRole("button", { name: "Claim item" })).toBeVisible();
     await expectMinTargetSize(sessionRow.getByRole("button", { name: "Claim item" }), { height: 44 });
     await expect(sessionRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
     await expect(page.getByRole("dialog"), "inventory items should not require a generic item dialog").toHaveCount(0);
-    const inlineControls = sessionRow.locator(".session-item-inline-manage");
-    await expect(inlineControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
-    await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Assign to" }), { height: 44 });
-    await expectMinTargetSize(inlineControls.getByRole("combobox", { name: "Set result" }), { height: 44 });
+    const leaderMenu = sessionRow.getByRole("button", { name: /More actions for .*Generator/i });
+    const leaderControls = sessionRow.getByRole("group", { name: /Manage .*Generator/i });
+    await expectMinTargetSize(leaderMenu, { width: 44, height: 44 });
+    await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
+    await expect(leaderMenu).toHaveAttribute("aria-controls", /.+/);
+    await expect(leaderControls).toHaveCount(0);
+    await leaderMenu.click();
+    await expect(leaderControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
+    await expectWithinViewport(page, leaderControls);
+    const assignControl = leaderControls.getByRole("combobox", { name: "Assign to" });
+    await expectMinTargetSize(assignControl, { height: 44 });
+    await expectMinTargetSize(leaderControls.getByRole("combobox", { name: "Set result" }), { height: 44 });
+    await assignControl.focus();
+    await page.keyboard.press("Escape");
+    await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
+    await expect(leaderControls).toHaveCount(0);
+    await expect(leaderMenu).toBeFocused();
+
+    const bottomRow = inventoryWorkspace.locator(".session-item").last();
+    const bottomMenu = bottomRow.getByRole("button", { name: /More actions for / });
+    const bottomControls = bottomRow.getByRole("group", { name: /Manage / });
+    await bottomMenu.evaluate(element => element.scrollIntoView({ block: "end" }));
+    await bottomMenu.click();
+    await expectWithinViewport(page, bottomControls);
+    await bottomControls.getByRole("combobox", { name: "Set result" }).focus();
+    await page.keyboard.press("Escape");
+    await expect(bottomControls).toHaveCount(0);
+    await expect(bottomMenu).toBeFocused();
     const sessionMain = inventoryWorkspace.locator(".session-main");
     await expectInsideHorizontally(inventoryWorkspace, sessionMain);
     await expect(inventoryWorkspace.locator(".session-layout")).toHaveClass(/dashboard/);
@@ -537,7 +564,8 @@ test.describe("intermediate inventory layout", () => {
 
     const row = inventoryWorkspace.locator(".session-item", { hasText: "Quiet Generator" });
     const actions = row.locator(".session-item-actions");
-    const inlineControls = row.locator(".session-item-inline-manage");
+    const leaderMenu = row.getByRole("button", { name: /More actions for .*Quiet Generator/i });
+    const queueHeader = inventoryWorkspace.locator(".session-items-table-head");
     const sessionMain = inventoryWorkspace.locator(".session-main");
     const topbar = page.locator(".leader-topbar");
     const topbarSearch = topbar.locator(".leader-search");
@@ -545,6 +573,13 @@ test.describe("intermediate inventory layout", () => {
     const topbarRefresh = topbar.getByRole("button", { name: "Refresh workspace", exact: true });
     const topbarNotifications = topbar.getByRole("button", { name: /^Notifications/ });
     const topbarUserTrigger = topbar.getByRole("button", { name: "Open user menu", exact: true });
+    await expect(row).toBeVisible();
+    await expect(queueHeader).toBeVisible();
+    const [queueHeaderTracks, queueRowTracks] = await Promise.all([
+      queueHeader.evaluate(element => getComputedStyle(element).gridTemplateColumns),
+      row.evaluate(element => getComputedStyle(element).gridTemplateColumns)
+    ]);
+    expect(queueRowTracks).toBe(queueHeaderTracks);
     await expectInsideHorizontally(inventoryWorkspace, sessionMain);
     await expect(inventoryWorkspace.locator(".session-layout")).toHaveClass(/dashboard/);
 
@@ -567,10 +602,20 @@ test.describe("intermediate inventory layout", () => {
       await expect(row.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
       await expect(row.getByRole("button", { name: "Claim item", exact: true })).toBeVisible();
       await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-      await expect(inlineControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
-      await expectInsideHorizontally(row, inlineControls);
+      await expectMinTargetSize(leaderMenu, { width: 44, height: 44 });
+      await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
       await expectInsideHorizontally(inventoryWorkspace, sessionMain);
     }
+
+    await leaderMenu.click();
+    const leaderControls = row.getByRole("group", { name: /Manage .*Quiet Generator/i });
+    await expect(leaderControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
+    await expectContained(leaderControls);
+    await leaderControls.getByRole("combobox", { name: "Assign to" }).focus();
+    await page.keyboard.press("Escape");
+    await expect(leaderControls).toHaveCount(0);
+    await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
+    await expect(leaderMenu).toBeFocused();
 
     await expect(page.getByRole("dialog"), "resizing inline inventory work must not open a dialog").toHaveCount(0);
   });

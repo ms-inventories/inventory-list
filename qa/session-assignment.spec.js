@@ -143,8 +143,11 @@ test.describe("session assignment", () => {
     await expect(toolKitRow.getByRole("button", { name: "Not found", exact: true })).toHaveCount(0);
     await expect(toolKitRow.getByRole("button", { name: "Claim item" })).toBeVisible();
     await expect(toolKitRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-    await expect(page.getByRole("dialog"), "assignment controls should remain inline").toHaveCount(0);
-    const leaderTools = toolKitRow.getByRole("region", { name: /Manage / });
+    await expect(page.getByRole("dialog"), "assignment controls should stay in the row menu").toHaveCount(0);
+    const leaderMenu = toolKitRow.getByRole("button", { name: /More actions for / });
+    await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
+    await leaderMenu.click();
+    const leaderTools = toolKitRow.getByRole("group", { name: /Manage / });
     await expect(leaderTools.getByRole("heading", { name: "Leader controls" })).toBeVisible();
     await leaderTools.getByRole("combobox", { name: "Assign to" }).selectOption({ label: "QA NCO" });
     await expect(inventoryWorkspace.getByRole("status")).toContainText("Item assigned.");

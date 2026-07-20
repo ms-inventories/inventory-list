@@ -91,8 +91,13 @@ async function openScenario(page, scenario) {
   const row = page.locator(".session-item", { hasText: scenario.packetLine });
   await expect(row).toBeVisible();
   await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
-  await expect(page.getByRole("dialog"), "leader item controls should be inline").toHaveCount(0);
-  const leaderControls = row.getByRole("region", { name: `Manage ${scenario.packetLine}` });
+  await expect(page.getByRole("dialog"), "leader item controls should stay in the row menu").toHaveCount(0);
+  const leaderMenu = row.getByRole("button", { name: `More actions for ${scenario.packetLine}` });
+  const leaderControls = row.getByRole("group", { name: `Manage ${scenario.packetLine}` });
+  await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
+  await expect(leaderMenu).toHaveAttribute("aria-controls", /.+/);
+  await expect(leaderControls).toHaveCount(0);
+  await leaderMenu.click();
   await expect(leaderControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
   return { row, leaderControls, panel: page.locator(".session-panel") };
 }

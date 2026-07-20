@@ -159,6 +159,7 @@
 
 .session-alert,
 .session-item-main .session-proof-state,
+.session-item-state .session-proof-state,
 .session-item-main .session-known-item,
 .session-item-main .session-assignment-summary,
 .session-proof-awaiting,
@@ -189,6 +190,7 @@
 
 .session-alert,
 .session-item-main .session-proof-state.requested,
+.session-item-state .session-proof-state.requested,
 .session-proof-awaiting,
 .session-item-main .session-prior-chip.suggested,
 .equipment-open-inventory,
@@ -210,6 +212,7 @@
 
 .session-alert::before,
 .session-item-main .session-proof-state::before,
+.session-item-state .session-proof-state::before,
 .session-item-main .session-known-item::before,
 .session-item-main .session-assignment-summary::before,
 .session-proof-awaiting::before,

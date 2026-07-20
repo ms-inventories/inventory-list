@@ -314,7 +314,10 @@ test.describe("inline session item work", () => {
     await expect(viewer).toBeHidden();
     await expect(evidenceButton).toBeFocused();
 
-    const leaderTools = row.getByRole("region", { name: `Manage ${scenario.title}` });
+    const leaderMenu = row.getByRole("button", { name: `More actions for ${scenario.title}` });
+    await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
+    await leaderMenu.click();
+    const leaderTools = row.getByRole("group", { name: `Manage ${scenario.title}` });
     await expect(leaderTools.getByRole("heading", { name: "Leader controls" })).toBeVisible();
     const assignment = leaderTools.getByRole("combobox", { name: "Assign to" });
     await expect(assignment).toHaveValue(scenario.ncoMemberId);

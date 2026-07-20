@@ -128,8 +128,14 @@ test.describe("review queue decisions", () => {
 
     const dialog = page.getByRole("dialog", { name: "Review proof", exact: true });
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator(".review-card", { hasText: pending.packetLine })).toBeVisible();
+    const reviewCard = dialog.locator(".review-card", { hasText: pending.packetLine });
+    await expect(reviewCard).toBeVisible();
     await expect(dialog.locator(".review-card")).toHaveCount(1);
+    if (testInfo.project.name === "mobile-chrome") {
+      for (const label of ["Submission", "Evidence", "Decision"]) {
+        await expect(reviewCard.locator(".queue-cell-label").getByText(label, { exact: true })).toBeVisible();
+      }
+    }
     await expect(page.locator(".embedded-workspace-panel").filter({ hasText: "Review Queue" })).toHaveCount(0);
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
 
@@ -150,13 +156,36 @@ test.describe("review queue decisions", () => {
     await openReviewQueue(page);
 
     const approvedCard = page.locator(".review-card", { hasText: approved.packetLine });
+    const rejectedCard = page.locator(".review-card", { hasText: rejected.packetLine });
+    const returnedCard = page.locator(".review-card", { hasText: returned.packetLine });
+    const reviewDialog = page.getByRole("dialog", { name: "Review queue", exact: true });
+    const reviewHeader = reviewDialog.locator(".review-list-table-head");
     await expect(approvedCard).toBeVisible();
+    await expect(rejectedCard).toBeVisible();
+    await expect(returnedCard).toBeVisible();
+    expect(await reviewDialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+    if (testInfo.project.name === "mobile-chrome") {
+      await expect(reviewHeader).toBeHidden();
+      for (const card of [approvedCard, rejectedCard, returnedCard]) {
+        for (const label of ["Submission", "Evidence", "Decision"]) {
+          await expect(card.locator(".queue-cell-label").getByText(label, { exact: true })).toBeVisible();
+        }
+      }
+    } else {
+      await expect(reviewHeader).toBeVisible();
+      await expect(reviewHeader).toContainText("Submission");
+      await expect(reviewHeader).toContainText("Evidence");
+      await expect(reviewHeader).toContainText("Decision");
+      const [headerTracks, rowTracks] = await Promise.all([
+        reviewHeader.evaluate(element => getComputedStyle(element).gridTemplateColumns),
+        approvedCard.evaluate(element => getComputedStyle(element).gridTemplateColumns)
+      ]);
+      expect(rowTracks).toBe(headerTracks);
+    }
     await approvedCard.getByRole("button", { name: "Approve" }).click();
     await expect(page.getByText(`Approved proof for ${approved.packetLine}.`)).toBeVisible();
     await expect(approvedCard).toHaveCount(0);
 
-    const rejectedCard = page.locator(".review-card", { hasText: rejected.packetLine });
-    await expect(rejectedCard).toBeVisible();
     await rejectedCard.getByRole("button", { name: "Reject" }).click();
     await expect(rejectedCard.getByLabel("Reason for rejection")).toHaveValue("");
     await rejectedCard.getByLabel("Reason for rejection").fill(`Wrong item for ${suffix}.`);
@@ -166,8 +195,6 @@ test.describe("review queue decisions", () => {
     await expect(rejectedCard).toHaveCount(0);
 
     const returnMessage = `Need a closer item photo for ${suffix}.`;
-    const returnedCard = page.locator(".review-card", { hasText: returned.packetLine });
-    await expect(returnedCard).toBeVisible();
     await returnedCard.getByRole("button", { name: "Reject" }).click();
     await returnedCard.getByLabel("Reason for rejection").fill(returnMessage);
     await expect(returnedCard.getByRole("checkbox", { name: /Keep assigned to the submitter/ })).toBeChecked();

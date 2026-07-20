@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
@@ -301,10 +301,20 @@ function useMediaQuery(query) {
   return matches;
 }
 
-function ResponsiveActionMenu({ label = "More actions", ariaLabel = label, children, className = "", disabled = false }) {
+function ResponsiveActionMenu({
+  label = "More actions",
+  ariaLabel = label,
+  children,
+  className = "",
+  panelClassName = "",
+  panelAriaLabel = "",
+  compact = false,
+  disabled = false
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
   const triggerRef = useRef(null);
+  const panelId = useId();
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -329,22 +339,26 @@ function ResponsiveActionMenu({ label = "More actions", ariaLabel = label, child
   }, [isOpen]);
 
   return (
-    <div ref={menuRef} className={`responsive-action-menu ${className}`.trim()}>
+    <div ref={menuRef} className={`responsive-action-menu ${compact ? "compact" : ""} ${className}`.trim()}>
       <button
         ref={triggerRef}
-        className="btn btn-secondary"
+        className={`btn btn-secondary ${compact ? "responsive-action-trigger-compact" : ""}`.trim()}
         type="button"
         aria-label={ariaLabel}
         aria-expanded={isOpen}
+        aria-controls={panelId}
         disabled={disabled}
         onClick={() => setIsOpen(open => !open)}
       >
         <MoreHorizontal aria-hidden="true" />
-        <span>{label}</span>
+        <span className={compact ? "sr-only" : ""}>{label}</span>
       </button>
       {isOpen ? (
         <div
-          className="responsive-action-panel"
+          id={panelId}
+          className={`responsive-action-panel ${panelClassName}`.trim()}
+          role={panelAriaLabel ? "group" : undefined}
+          aria-label={panelAriaLabel || undefined}
           onClick={event => {
             if (event.target.closest("button, a")) setIsOpen(false);
           }}
@@ -2056,17 +2070,72 @@ function PossiblePriorMatchCard({ item, action = "", onConfirm, onDismiss, onOpe
   );
 }
 
+function SessionItemLeaderMenu({
+  item,
+  assignmentAction,
+  directCheckAction,
+  assignableMembers,
+  assignedMemberId,
+  assignedName,
+  hasAssignment,
+  onAssign,
+  onDirectCheck
+}) {
+  const title = itemDisplayName(item);
+  const isAssignmentPending = Boolean(assignmentAction);
+  const isDirectCheckPending = Boolean(directCheckAction);
+  const hasCurrentMemberOption = assignedMemberId && assignableMembers.some(member => member.id === assignedMemberId);
+  const assignmentValue = assignedMemberId || (hasAssignment ? "__current_assignment__" : "");
+
+  return (
+    <ResponsiveActionMenu
+      className="session-item-leader-menu"
+      panelClassName="session-item-leader-panel"
+      label="Leader actions"
+      ariaLabel={`More actions for ${title}`}
+      panelAriaLabel={`Manage ${title}`}
+      compact
+      disabled={isAssignmentPending || isDirectCheckPending}
+    >
+      <div className="session-item-leader-heading">
+        <h3>Leader controls</h3>
+        <small>{title}</small>
+      </div>
+      <div className="session-item-inline-controls">
+        <label className="session-assignment-control">
+          <span>Assign to</span>
+          <select value={assignmentValue} disabled={isAssignmentPending || isDirectCheckPending} onChange={event => onAssign(event.target.value)}>
+            {hasAssignment && !hasCurrentMemberOption ? (
+              <option value="__current_assignment__" disabled>{assignedName || "Current assignee"}</option>
+            ) : null}
+            <option value="">Unassigned</option>
+            {assignableMembers.map(member => (
+              <option value={member.id} key={member.id}>
+                {member.displayName || member.email || formatRole(member.role)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="session-assignment-control">
+          <span>Set result</span>
+          <select value="" disabled={isAssignmentPending || isDirectCheckPending} onChange={event => {
+            if (event.target.value) onDirectCheck(event.target.value);
+          }}>
+            <option value="">{isDirectCheckPending ? "Saving result..." : "Choose a result"}</option>
+            <option value="found">Found / accounted for</option>
+            <option value="not_found">Not found</option>
+          </select>
+        </label>
+      </div>
+    </ResponsiveActionMenu>
+  );
+}
+
 function SessionItemInlineContext({
   item,
   canManage,
   isClosed,
-  assignmentAction,
-  directCheckAction,
   matchAction,
-  assignableMembers,
-  assignedMemberId,
-  onAssign,
-  onDirectCheck,
   onResolveMatch,
   onOpenHistory,
   onOpenSuggestedPhoto,
@@ -2074,9 +2143,10 @@ function SessionItemInlineContext({
 }) {
   const title = itemDisplayName(item);
   const submissions = item.submissions || [];
-  const isAssignmentPending = Boolean(assignmentAction);
-  const isDirectCheckPending = Boolean(directCheckAction);
   const priorSnapshot = getPriorInventorySnapshot(item);
+  const hasSuggestedMatch = Boolean(canManage && !isClosed && item.suggestedInventoryItem);
+
+  if (!priorSnapshot && !hasSuggestedMatch && !submissions.length) return null;
 
   return (
     <div className="session-item-context-stack">
@@ -2093,7 +2163,7 @@ function SessionItemInlineContext({
         </button>
       ) : null}
 
-      {canManage && !isClosed && item.suggestedInventoryItem ? (
+      {hasSuggestedMatch ? (
         <PossiblePriorMatchCard
           item={item}
           action={matchAction}
@@ -2143,34 +2213,6 @@ function SessionItemInlineContext({
         </section>
       ) : null}
 
-      {canManage && !isClosed ? (
-        <section className="session-item-context session-item-inline-manage" aria-label={`Manage ${title}`}>
-          <div className="session-item-context-heading"><h3>Leader controls</h3></div>
-          <div className="session-item-inline-controls">
-            <label className="session-assignment-control">
-              <span>Assign to</span>
-              <select value={assignedMemberId} disabled={isAssignmentPending || isDirectCheckPending} onChange={event => onAssign(event.target.value)}>
-                <option value="">Unassigned</option>
-                {assignableMembers.map(member => (
-                  <option value={member.id} key={member.id}>
-                    {member.displayName || member.email || formatRole(member.role)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="session-assignment-control">
-              <span>Set result</span>
-              <select value="" disabled={isAssignmentPending || isDirectCheckPending} onChange={event => {
-                if (event.target.value) onDirectCheck(event.target.value);
-              }}>
-                <option value="">{isDirectCheckPending ? "Saving result..." : "Choose a result"}</option>
-                <option value="found">Found / accounted for</option>
-                <option value="not_found">Not found</option>
-              </select>
-            </label>
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }
@@ -3621,7 +3663,14 @@ function SessionPanel({
                 </div>
               ) : null}
 
-              <div className="session-items" role="region" aria-label="Inventory items">
+              <div className={`session-items ${visibleDetailItems.length ? "session-items-table" : ""}`} role="region" aria-label="Inventory items">
+                {visibleDetailItems.length ? <div className="session-items-table-head" aria-hidden="true">
+                  <span>Item</span>
+                  <span>Location</span>
+                  <span>Assigned</span>
+                  <span>Status</span>
+                  <span>Action</span>
+                </div> : null}
                 {visibleDetailItems.length ? visibleDetailItems.map(item => {
                   const submission = latestSubmission(item);
                   const isRejectedProof = submission?.reviewState === "rejected";
@@ -3647,76 +3696,99 @@ function SessionPanel({
                   const isAssignmentPending = Boolean(assignmentAction);
                   return (
                     <article className={`session-item ${needsMoreProof ? "needs-response" : ""}`} data-session-item-id={item.id} key={item.id}>
-                      <div className="session-item-main">
+                      <div className="session-item-main session-item-cell">
                         <span className="session-item-leading-thumb">
                           {leadingPhoto ? <ProtectedMediaImage src={leadingPhoto.url} alt="" loading="lazy" /> : <FileText aria-hidden="true" />}
                         </span>
                         <div>
+                          <span className="queue-cell-label">Item</span>
                           <strong>{item.inventoryItem?.commonName || item.inventoryItem?.title || item.packetLine || "Untitled item"}</strong>
                           {item.inventoryItem?.lin || item.inventoryItem?.nsn ? (
                             <span>
                               {[item.inventoryItem.lin ? `LIN ${item.inventoryItem.lin}` : "", item.inventoryItem.nsn ? `NSN ${item.inventoryItem.nsn}` : ""].filter(Boolean).join(" · ")}
                             </span>
                           ) : item.packetLine && item.packetLine !== itemDisplayName(item) ? <span>{item.packetLine}</span> : null}
-                          {knownLocation ? <small>{knownLocation}</small> : null}
                           {item.inventoryItem ? <small className="session-prior-chip confirmed">Saved record</small> : null}
                           {canManage && item.suggestedInventoryItem ? <small className="session-prior-chip suggested">Possible previous record</small> : null}
-                          {submission ? (
-                            <small className={`session-proof-state ${needsMoreProof ? "requested" : ""}`}>
-                              {formatReviewState(submission.reviewState)}
-                            </small>
-                          ) : null}
-                          {needsMoreProof && submission.reviewNote ? (
-                            <small className="session-proof-request">{isRejectedProof ? "Rejected" : "Requested"}: {submission.reviewNote}</small>
-                          ) : null}
-                          <small className={`session-assignment-summary ${assignedName ? "assigned" : ""}`}>
-                            {assignedName ? `Assigned to ${assignedName}` : "Unassigned"}
-                          </small>
                         </div>
                       </div>
-                      <div className="session-item-actions">
+                      <div className="session-item-cell session-item-location">
+                        <span className="queue-cell-label">Location</span>
+                        <span>{knownLocation || "—"}</span>
+                      </div>
+                      <div className="session-item-cell session-item-assignee">
+                        <span className="queue-cell-label">Assigned</span>
+                        <span className={`session-assignment-summary ${assignedName ? "assigned" : ""}`}>
+                          {assignedName ? `Assigned to ${assignedName}` : "Unassigned"}
+                        </span>
+                      </div>
+                      <div className="session-item-cell session-item-state">
+                        <span className="queue-cell-label">Status</span>
                         <span className={`status-pill ${item.status}`}>{formatItemStatus(item.status)}</span>
-                        {canClaim ? (
-                          <button
-                            className="btn btn-secondary btn-small session-row-claim-action"
-                            type="button"
-                            disabled={isAssignmentPending || isDirectCheckPending}
-                            onClick={() => updateSessionItemAssignment(item.id, "self", { claim: true })}
-                          >
-                            <UserPlus aria-hidden="true" />
-                            <span>{assignmentAction === "claim" ? "Claiming..." : "Claim item"}</span>
-                          </button>
-                        ) : null}
-                        {canWithdrawProof && !selectedSessionIsClosed ? (
-                          <button className="btn btn-secondary btn-small session-row-primary-action" type="button" disabled={withdrawingSubmissionId === submission.id} onClick={() => withdrawSubmission(submission)}>
-                            <X aria-hidden="true" />
-                            <span>{withdrawingSubmissionId === submission.id ? "Withdrawing..." : "Withdraw submission"}</span>
-                          </button>
-                        ) : pendingProof && canManage && onOpenReview && !selectedSessionIsClosed ? (
-                          <button className="btn btn-primary btn-small session-row-primary-action" type="button" onClick={() => onOpenReview(submission.id)}>
-                            <MessageSquare aria-hidden="true" />
-                            <span>Review proof</span>
-                          </button>
-                        ) : pendingProof ? (
-                          <span className="session-proof-awaiting">Awaiting review</span>
-                        ) : canSubmitItemProof && selectedSession.status !== "closed" ? (
-                          <button data-proof-item-id={item.id} className="btn btn-primary btn-small session-row-primary-action" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => openProof(item.id)}>
-                            <Camera aria-hidden="true" />
-                            <span>{needsMoreProof ? "Respond" : "Add proof"}</span>
-                          </button>
+                        {submission ? (
+                          <small className={`session-proof-state ${needsMoreProof ? "requested" : ""}`}>
+                            {formatReviewState(submission.reviewState)}
+                          </small>
                         ) : null}
                       </div>
+                      <div className="session-item-actions">
+                        <span className="queue-cell-label">Action</span>
+                        <div className="session-item-action-controls">
+                          {canClaim ? (
+                            <button
+                              className="btn btn-secondary btn-small session-row-claim-action"
+                              type="button"
+                              disabled={isAssignmentPending || isDirectCheckPending}
+                              onClick={() => updateSessionItemAssignment(item.id, "self", { claim: true })}
+                            >
+                              <UserPlus aria-hidden="true" />
+                              <span>{assignmentAction === "claim" ? "Claiming..." : "Claim item"}</span>
+                            </button>
+                          ) : null}
+                          {canWithdrawProof && !selectedSessionIsClosed ? (
+                            <button className="btn btn-secondary btn-small session-row-primary-action" type="button" disabled={withdrawingSubmissionId === submission.id} onClick={() => withdrawSubmission(submission)}>
+                              <X aria-hidden="true" />
+                              <span>{withdrawingSubmissionId === submission.id ? "Withdrawing..." : "Withdraw submission"}</span>
+                            </button>
+                          ) : pendingProof && canManage && onOpenReview && !selectedSessionIsClosed ? (
+                            <button className="btn btn-primary btn-small session-row-primary-action" type="button" onClick={() => onOpenReview(submission.id)}>
+                              <MessageSquare aria-hidden="true" />
+                              <span>Review proof</span>
+                            </button>
+                          ) : pendingProof ? (
+                            <span className="session-proof-awaiting">Awaiting review</span>
+                          ) : canSubmitItemProof && selectedSession.status !== "closed" ? (
+                            <button data-proof-item-id={item.id} className="btn btn-primary btn-small session-row-primary-action" type="button" disabled={isAssignmentPending || isDirectCheckPending} onClick={() => openProof(item.id)}>
+                              <Camera aria-hidden="true" />
+                              <span>{needsMoreProof ? "Respond" : "Add proof"}</span>
+                            </button>
+                          ) : null}
+                          {canManage && !selectedSessionIsClosed ? (
+                            <SessionItemLeaderMenu
+                              item={item}
+                              assignmentAction={assignmentAction}
+                              directCheckAction={directCheckAction}
+                              assignableMembers={assignmentOptions}
+                              assignedMemberId={assignedMemberId}
+                              assignedName={assignedName}
+                              hasAssignment={Boolean(item.assignedTo || item.assignedToEmail)}
+                              onAssign={memberId => updateSessionItemAssignment(item.id, memberId === "__current_assignment__" ? assignedMemberId : memberId)}
+                              onDirectCheck={nextStatus => updateDirectCheck(item.id, nextStatus)}
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                      {needsMoreProof && submission.reviewNote ? (
+                        <div className="session-item-feedback">
+                          <strong>{isRejectedProof ? "Rejected" : "Requested"}</strong>
+                          <span>{submission.reviewNote}</span>
+                        </div>
+                      ) : null}
                       <SessionItemInlineContext
                         item={item}
                         canManage={canManage}
                         isClosed={selectedSessionIsClosed}
-                        assignmentAction={assignmentAction}
-                        directCheckAction={directCheckAction}
                         matchAction={matchAction}
-                        assignableMembers={assignmentOptions}
-                        assignedMemberId={assignedMemberId}
-                        onAssign={memberId => updateSessionItemAssignment(item.id, memberId)}
-                        onDirectCheck={nextStatus => updateDirectCheck(item.id, nextStatus)}
                         onResolveMatch={action => resolvePriorMatch(item.id, action)}
                         onOpenHistory={() => openHistory(item.id)}
                         onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
@@ -3781,13 +3853,7 @@ function SessionPanel({
                           item={item}
                           canManage={canManage}
                           isClosed
-                          assignmentAction=""
-                          directCheckAction=""
                           matchAction=""
-                          assignableMembers={assignmentOptions}
-                          assignedMemberId=""
-                          onAssign={() => {}}
-                          onDirectCheck={() => {}}
                           onResolveMatch={() => {}}
                           onOpenHistory={() => openHistory(item.id)}
                           onOpenSuggestedPhoto={index => openItemPhotoViewer(item, getInventoryItemPhotos(item.suggestedInventoryItem), index)}
@@ -5101,10 +5167,19 @@ function ReviewPanel({
 
       <StatusLine status={status} />
 
-      <div className="review-list" role="region" aria-label="Review queue results">
-        {visibleSubmissions.length ? visibleSubmissions.map(submission => (
+      <div className={`review-list ${visibleSubmissions.length ? "review-list-table" : ""}`} role="region" aria-label="Review queue results">
+        {visibleSubmissions.length ? <>
+          {!submissionId ? (
+            <div className="review-list-table-head" aria-hidden="true">
+              <span>Submission</span>
+              <span>Evidence</span>
+              <span>Decision</span>
+            </div>
+          ) : null}
+          {visibleSubmissions.map(submission => (
           <article className={`review-card ${isAccountabilityNoteEvidence(submission) ? "accountability-note-only" : ""}`} key={submission.id}>
             <div className="review-card-main">
+              <span className="queue-cell-label">Submission</span>
               <strong>{submission.sessionItem?.packetLine || "Inventory item"}</strong>
               <span>{submission.session?.name} - {submission.submittedByName || submission.submittedByEmail}</span>
               {submission.locationText ? <small>Location: {submission.locationText}</small> : null}
@@ -5115,20 +5190,23 @@ function ReviewPanel({
               ) : null}
             </div>
 
-            {isAccountabilityNoteEvidence(submission) ? (
-              <details className="accountability-evidence-label">
-                <summary>
-                  <Info aria-hidden="true" />
-                  <strong>No photo attached</strong>
-                </summary>
-                <p>The submitter used an accountability note. Review who verified the item and the reported status above.</p>
-              </details>
-            ) : null}
+            <div className="review-card-evidence">
+              <span className="queue-cell-label">Evidence</span>
+              {isAccountabilityNoteEvidence(submission) ? (
+                <details className="accountability-evidence-label">
+                  <summary>
+                    <Info aria-hidden="true" />
+                    <strong>No photo attached</strong>
+                  </summary>
+                  <p>The submitter used an accountability note. Review who verified the item and the reported status above.</p>
+                </details>
+              ) : null}
 
-            <ProofPhotoStrip
-              photos={submission.photos}
-              onOpen={index => openPhotoViewer(submission, submission, submission.photos, index)}
-            />
+              <ProofPhotoStrip
+                photos={submission.photos}
+                onOpen={index => openPhotoViewer(submission, submission, submission.photos, index)}
+              />
+            </div>
 
             {(submission.history || []).length > 1 ? (
               <div className="proof-timeline">
@@ -5205,6 +5283,7 @@ function ReviewPanel({
               ) : null}
 
             <div className="review-actions">
+              <span className="queue-cell-label">Decision</span>
               <button
                 className="btn btn-primary btn-small"
                 type="button"
@@ -5265,7 +5344,8 @@ function ReviewPanel({
               </form>
             ) : null}
           </article>
-        )) : (
+          ))}
+        </> : (
           <EmptyPanel
             title={submissionId ? "Proof no longer waiting" : hasSearchQuery ? "No matching review work" : "Nothing to review"}
             body={submissionId ? "This submission was already reviewed or withdrawn." : hasSearchQuery ? "Clear the search or try an item, inventory, submitter, serial number, location, or proof note." : "Submitted proof will appear here."}

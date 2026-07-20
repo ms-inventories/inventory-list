@@ -14168,3 +14168,426 @@ button {
     gap: 10px;
   }
 }
+
+/* Inventory and review queues use one continuous row surface. Actions keep
+   button styling; read-only fields stay in predictable table columns. */
+.session-items-table,
+.review-list-table {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.session-items-table {
+  --session-queue-columns: minmax(230px, 2fr) minmax(105px, 0.85fr) minmax(105px, 0.85fr) minmax(90px, 0.65fr) minmax(180px, 0.9fr);
+}
+
+.session-items-table-head,
+.review-list-table-head {
+  display: grid;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  padding: 9px 14px;
+  text-transform: uppercase;
+}
+
+.session-items-table-head {
+  grid-template-columns: var(--session-queue-columns);
+}
+
+.session-items-table > .session-item {
+  grid-template-columns: var(--session-queue-columns);
+  align-items: center;
+  gap: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 12px 14px;
+}
+
+.session-items-table > .session-item:last-child {
+  border-bottom: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.session-items-table > .session-item.needs-response {
+  box-shadow: inset 3px 0 0 #d4a548;
+}
+
+.session-item .queue-cell-label,
+.review-card .queue-cell-label {
+  display: none;
+}
+
+.session-item-cell,
+.session-item-location,
+.session-item-assignee,
+.session-item-state {
+  min-width: 0;
+}
+
+.session-item-location,
+.session-item-assignee,
+.session-item-state {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+
+.session-item-location > span:last-child,
+.session-item-assignee > span:last-child {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.session-item-state .session-proof-state {
+  margin-top: 2px;
+}
+
+.session-items-table .session-item-actions {
+  display: grid;
+  grid-column: auto;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: stretch;
+  justify-items: end;
+  gap: 5px;
+}
+
+.session-item-action-controls {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  justify-self: stretch;
+  gap: 8px;
+}
+
+.responsive-action-menu.session-item-leader-menu {
+  display: block;
+  width: 44px;
+  min-width: 44px;
+  flex: 0 0 44px;
+}
+
+.session-item-leader-menu > .responsive-action-trigger-compact {
+  display: inline-grid;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  place-items: center;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.session-item-leader-menu > .responsive-action-trigger-compact svg {
+  width: 21px;
+  height: 21px;
+  margin: 0;
+}
+
+.session-item-leader-menu > .responsive-action-trigger-compact > span {
+  display: none;
+}
+
+.session-item-leader-menu .session-item-leader-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 45;
+  width: min(310px, calc(100vw - 32px));
+  min-width: 0;
+  max-height: min(360px, calc(100dvh - 32px));
+  gap: 12px;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.session-item-leader-heading {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.session-item-leader-heading h3,
+.session-item-leader-heading small {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-item-leader-heading h3 {
+  color: var(--ink);
+  font-size: 0.92rem;
+  line-height: 1.25;
+}
+
+.session-item-leader-heading small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.session-item-leader-panel .session-item-inline-controls {
+  grid-template-columns: 1fr;
+}
+
+.session-item-leader-panel .session-assignment-control {
+  width: 100%;
+  min-width: 0;
+}
+
+.session-item-feedback {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  border-left: 3px solid #d4a548;
+  background: #fff8e9;
+  color: #765018;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 8px 10px;
+}
+
+.session-item-feedback strong,
+.session-item-feedback span {
+  overflow-wrap: anywhere;
+}
+
+.session-items-table .session-item-context-stack {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.review-list-table {
+  --review-queue-columns: minmax(240px, 1.4fr) minmax(180px, 1fr) minmax(130px, 0.55fr);
+}
+
+.review-list-table-head {
+  grid-template-columns: var(--review-queue-columns);
+  column-gap: 16px;
+}
+
+.review-list-table > .review-card {
+  grid-template-columns: var(--review-queue-columns);
+  align-items: start;
+  gap: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 14px;
+}
+
+.review-list-table > .review-card:first-child {
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.review-list-table > .review-card:last-child {
+  border-bottom: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.review-list-table > .review-card:only-child {
+  border-radius: var(--radius);
+}
+
+.review-list-table > .review-card.accountability-note-only {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.review-card-main {
+  grid-column: 1;
+}
+
+.review-card-evidence {
+  display: grid;
+  grid-column: 2;
+  min-width: 0;
+  gap: 8px;
+}
+
+.review-list-table .review-actions {
+  display: grid;
+  grid-column: 3;
+  grid-row: 1;
+  align-content: start;
+  gap: 8px;
+}
+
+.review-list-table .review-actions .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.review-card > .proof-timeline,
+.review-card > .prior-match-card,
+.review-card > .saved-evidence-picker,
+.review-card > .proof-request-form {
+  grid-column: 1 / -1;
+}
+
+.modal-panel.review-workspace-modal {
+  width: min(100%, 980px);
+  container: review-workspace / inline-size;
+}
+
+@container review-workspace (max-width: 760px) {
+  .review-list-table-head {
+    display: none;
+  }
+
+  .review-card .queue-cell-label {
+    display: block;
+    color: var(--muted);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .review-list-table > .review-card {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .review-card-main,
+  .review-card-evidence,
+  .review-list-table .review-actions {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .review-list-table .review-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-list-table .review-actions > .queue-cell-label {
+    grid-column: 1 / -1;
+  }
+}
+
+@container leader-main (max-width: 880px) {
+  .session-items-table-head {
+    display: none;
+  }
+
+  .session-items-table > .session-item {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "item item"
+      "location assignee"
+      "state actions"
+      "feedback feedback"
+      "context context";
+    align-items: start;
+    gap: 11px 14px;
+    padding: 14px;
+  }
+
+  .session-item .queue-cell-label {
+    display: block;
+    color: var(--muted);
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .session-item-main {
+    grid-area: item;
+    align-items: flex-start;
+  }
+
+  .session-item-location {
+    grid-area: location;
+  }
+
+  .session-item-assignee {
+    grid-area: assignee;
+  }
+
+  .session-item-state {
+    grid-area: state;
+  }
+
+  .session-items-table .session-item-actions {
+    grid-area: actions;
+    align-self: end;
+    justify-items: end;
+  }
+
+  .session-item-feedback {
+    grid-area: feedback;
+  }
+
+  .session-item-context-stack {
+    grid-area: context;
+  }
+
+}
+
+@media (max-width: 560px) {
+  .session-items-table > .session-item {
+    grid-template-areas:
+      "item item"
+      "location assignee"
+      "state state"
+      "actions actions"
+      "feedback feedback"
+      "context context";
+  }
+
+  .session-items-table .session-item-actions {
+    align-self: stretch;
+    justify-items: stretch;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+
+  .session-item-action-controls {
+    width: 100%;
+  }
+
+  .session-item-action-controls > .session-row-claim-action,
+  .session-item-action-controls > .session-row-primary-action {
+    min-width: 0;
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .session-item-leader-menu .session-item-leader-panel {
+    position: fixed;
+    top: auto;
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: max(16px, env(safe-area-inset-left));
+    z-index: 75;
+    width: auto;
+  }
+
+  .review-list-table .review-actions {
+    grid-template-columns: 1fr;
+  }
+}

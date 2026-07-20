@@ -364,7 +364,11 @@ test.describe("tenant mobile and tablet polish", () => {
 
       await expect(row.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
       await expect(page.getByRole("dialog"), "item context should be visible without a generic dialog").toHaveCount(0);
-      const leaderControls = row.getByRole("region", { name: `Manage ${packetLine}` });
+      const leaderMenu = row.getByRole("button", { name: `More actions for ${packetLine}` });
+      await expectMinTargetSize(leaderMenu, { width: 44, height: 44 });
+      await expect(leaderMenu).toHaveAttribute("aria-expanded", "false");
+      await leaderMenu.click();
+      const leaderControls = row.getByRole("group", { name: `Manage ${packetLine}` });
       await expect(leaderControls.getByRole("heading", { name: "Leader controls" })).toBeVisible();
       await expectMinTargetSize(leaderControls.getByRole("combobox", { name: "Assign to" }));
       await expectMinTargetSize(leaderControls.getByRole("combobox", { name: "Set result" }));

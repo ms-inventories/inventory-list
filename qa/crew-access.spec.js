@@ -131,11 +131,13 @@ test.describe("temporary crew access", () => {
       let itemRow = page.locator(".session-item", { hasText: packetLine });
       await expect(itemRow).toBeVisible();
       await expect(itemRow.getByRole("button", { name: /Open details|Open item/i })).toHaveCount(0);
+      await expect(itemRow.getByRole("button", { name: /More actions for / })).toHaveCount(0);
       await itemRow.getByRole("button", { name: "Claim item" }).click();
       await expect(page.locator(".session-panel").getByRole("status")).toContainText("Item claimed. It is now in Mine.");
       await expect(page.getByRole("dialog"), "claiming work must not open the item or proof form").toHaveCount(0);
 
       itemRow = page.locator(".session-item", { hasText: packetLine });
+      await expect(itemRow.getByRole("button", { name: /More actions for / })).toHaveCount(0);
       await expect(itemRow.getByRole("button", { name: "Add proof", exact: true })).toBeVisible();
       await itemRow.getByRole("button", { name: "Add proof", exact: true }).click();
       const proofDialog = page.getByRole("dialog", { name: `Add proof for ${packetLine}` });
