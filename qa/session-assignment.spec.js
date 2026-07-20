@@ -95,10 +95,18 @@ async function createSession(page, name) {
   await expectSelectedInventory(page, name);
 }
 
-async function addPacketRows(page) {
-  await page.getByRole("region", { name: "Inventory workspace" })
-    .getByRole("button", { name: "Add items from packet", exact: true })
-    .click();
+async function addPacketRows(page, inventoryName) {
+  const workspace = page.getByRole("region", { name: "Inventory workspace" });
+  const inventoryActionsTrigger = workspace.getByRole("button", {
+    name: `Inventory actions for ${inventoryName}`,
+    exact: true
+  });
+  await inventoryActionsTrigger.click();
+  const inventoryActions = workspace.getByRole("group", {
+    name: `Manage inventory ${inventoryName}`,
+    exact: true
+  });
+  await inventoryActions.getByRole("button", { name: "Add packet", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Upload packet" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
@@ -134,7 +142,7 @@ test.describe("session assignment", () => {
     }));
     cleanupSessionId = createdSessions.sessions.find(candidate => candidate.name === sessionName)?.id || "";
     expect(cleanupSessionId).toBeTruthy();
-    await addPacketRows(page);
+    await addPacketRows(page, sessionName);
 
     let inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
     let assignmentLists = inventoryWorkspace.getByRole("group", { name: "Work assignment lists" });

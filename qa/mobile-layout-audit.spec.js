@@ -361,9 +361,32 @@ test.describe("mobile layout audit", () => {
     const sessionMain = inventoryWorkspace.locator(".session-main");
     await expectInsideHorizontally(inventoryWorkspace, sessionMain);
     await expect(inventoryWorkspace.locator(".session-layout")).toHaveClass(/dashboard/);
-    const toolsSummary = inventoryWorkspace.locator(".session-tools > summary");
-    const [rowBox, toolsBox] = await Promise.all([sessionRow.boundingBox(), toolsSummary.boundingBox()]);
-    expect(rowBox.y).toBeLessThan(toolsBox.y);
+    await expect(inventoryWorkspace.locator(".session-tools")).toHaveCount(0);
+    await expect(inventoryWorkspace.getByText("Inventory tools", { exact: true })).toHaveCount(0);
+    await expect(inventoryWorkspace.getByText("Close-out report", { exact: true })).toHaveCount(0);
+    await expect(inventoryWorkspace.getByText("Inventory status", { exact: true })).toHaveCount(0);
+    const inventoryActionsTrigger = inventoryWorkspace.getByRole("button", {
+      name: "Inventory actions for July sensitive items",
+      exact: true
+    });
+    const inventoryActions = inventoryWorkspace.getByRole("group", {
+      name: "Manage inventory July sensitive items",
+      exact: true
+    });
+    await expectMinTargetSize(inventoryActionsTrigger, { width: 44, height: 44 });
+    await expect(inventoryActionsTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(inventoryActionsTrigger).toHaveAttribute("aria-controls", /.+/);
+    await expect(inventoryActions).toHaveCount(0);
+    await inventoryActionsTrigger.click();
+    await expect(inventoryActionsTrigger).toHaveAttribute("aria-expanded", "true");
+    await expectWithinViewport(page, inventoryActions);
+    await expectContained(inventoryActions);
+    await expectMinTargetSize(inventoryActions.getByRole("button", { name: "Add packet", exact: true }), { height: 44 });
+    await expectMinTargetSize(inventoryActions.getByRole("button", { name: "Close inventory", exact: true }), { height: 44 });
+    await page.keyboard.press("Escape");
+    await expect(inventoryActions).toHaveCount(0);
+    await expect(inventoryActionsTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(inventoryActionsTrigger).toBeFocused();
     await expectContained(sessionRow);
     await expectContained(page.locator("main"));
   });

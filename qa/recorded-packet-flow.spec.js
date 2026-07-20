@@ -46,13 +46,21 @@ async function createBlankInventory(page, name) {
   await expectSelectedInventory(page, name);
 }
 
-async function openInventoryTools(page) {
-  const tools = page.locator("details.session-tools");
-  await expect(tools).toBeVisible();
-  if (!(await tools.evaluate(element => element.open))) {
-    await tools.locator(":scope > summary").click();
-  }
-  return tools;
+async function openInventoryActions(page, inventoryName) {
+  const workspace = page.getByRole("region", { name: "Inventory workspace" });
+  const trigger = workspace.getByRole("button", { name: `Inventory actions for ${inventoryName}`, exact: true });
+  const panel = workspace.getByRole("group", { name: `Manage inventory ${inventoryName}`, exact: true });
+
+  await expect(workspace.getByText("Inventory tools", { exact: true })).toHaveCount(0);
+  await expect(workspace.getByText("Close-out report", { exact: true })).toHaveCount(0);
+  await expect(workspace.getByText("Inventory status", { exact: true })).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(trigger).toHaveAttribute("aria-controls", /.+/);
+  await expect(panel).toHaveCount(0);
+  await trigger.click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(panel).toBeVisible();
+  return { trigger, panel };
 }
 
 async function captureStep(page, testInfo, name) {
@@ -87,9 +95,8 @@ test.describe("recorded packet and inventory regression", () => {
     cleanupSessionId = sessionPayload.sessions?.find(session => session.name === sessionName)?.id || "";
     expect(cleanupSessionId).toBeTruthy();
 
-    await page.getByRole("region", { name: "Inventory workspace" })
-      .getByRole("button", { name: "Add items from packet", exact: true })
-      .click();
+    const { panel: packetActions } = await openInventoryActions(page, sessionName);
+    await packetActions.getByRole("button", { name: "Add packet", exact: true }).click();
     const packetDialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(packetDialog).toBeVisible();
     await expect(packetDialog.getByRole("heading", { name: "Add the packet source" })).toBeVisible();
@@ -121,25 +128,27 @@ test.describe("recorded packet and inventory regression", () => {
     await expect(page.getByRole("region", { name: "Active inventory" })).toContainText("27 items");
     const importedRow = page.locator(".session-item", { hasText: "Vault 2, rack 4" });
     await expect(importedRow).toHaveCount(1);
-    const inventoryTools = await openInventoryTools(page);
-    const importHistoryDisclosure = inventoryTools.locator("details.packet-import-history");
-    await expect(importHistoryDisclosure).toBeVisible();
-    await importHistoryDisclosure.locator("summary").click();
-    const importHistory = page.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
+    let { trigger: inventoryActionsTrigger, panel: inventoryActions } = await openInventoryActions(page, sessionName);
+    await expect(inventoryActions.getByRole("button", { name: /^Import history\b/ })).toBeVisible();
+    await inventoryActions.getByRole("button", { name: /^Import history\b/ }).click();
+    const importHistoryDialog = page.getByRole("dialog", { name: "Import history", exact: true });
+    await expect(importHistoryDialog).toBeVisible();
+    await expect(importHistoryDialog).toHaveAttribute("aria-modal", "true");
+    await expect(inventoryActions).toHaveCount(0);
+    const importHistory = importHistoryDialog.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
     await expect(importHistory).toBeVisible();
     await expect(importHistory).not.toContainText("application/pdf");
     await expect(importHistory).toContainText("uploaded by QA Platoon Admin");
     await expect(importHistory.getByRole("link", { name: /Open source|Source/i })).toHaveCount(0);
     await expect(importHistory.locator('a[href*="/packet-imports/"]')).toHaveCount(0);
-    await importHistory.getByRole("button", { name: "Review again" }).click();
-    await expect(packetDialog).toBeVisible();
-    await expect(packetDialog.getByRole("heading", { name: "Review before saving" })).toBeVisible();
-    await expect(packetDialog.getByText("army-packet-clean.pdf")).toBeVisible();
-    await packetDialog.getByRole("button", { name: "Close packet wizard" }).click();
-    await expect(packetDialog).toBeHidden();
+    await expect(importHistoryDialog.getByRole("button", { name: "Review again" })).toHaveCount(0);
     await captureStep(page, testInfo, "04-session-with-source-history");
+    await page.keyboard.press("Escape");
+    await expect(importHistoryDialog).toBeHidden();
+    await expect(inventoryActionsTrigger).toBeFocused();
 
-    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    ({ panel: inventoryActions } = await openInventoryActions(page, sessionName));
+    await inventoryActions.getByRole("button", { name: "Close inventory", exact: true }).click();
     const closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
     await expect(closeDialog).toBeVisible();
     await closeDialog.getByRole("button", { name: "Close inventory" }).click();
@@ -168,18 +177,22 @@ test.describe("recorded packet and inventory regression", () => {
     await expectSelectedInventory(page, sessionName);
     await expect(page.getByText("Internal server error")).toHaveCount(0);
 
-    const persistedInventoryTools = await openInventoryTools(page);
-    const persistedHistoryDisclosure = persistedInventoryTools.locator("details.packet-import-history");
-    await expect(persistedHistoryDisclosure).toBeVisible();
-    await persistedHistoryDisclosure.locator("summary").click();
-    const persistedHistory = page.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
+    ({ trigger: inventoryActionsTrigger, panel: inventoryActions } = await openInventoryActions(page, sessionName));
+    await inventoryActions.getByRole("button", { name: /^Import history\b/ }).click();
+    const persistedHistoryDialog = page.getByRole("dialog", { name: "Import history", exact: true });
+    await expect(persistedHistoryDialog).toBeVisible();
+    const persistedHistory = persistedHistoryDialog.locator(".packet-import-history-row", { hasText: "army-packet-clean.pdf" }).first();
     await expect(persistedHistory).not.toContainText("application/pdf");
     await expect(persistedHistory).toContainText("uploaded by QA Platoon Admin");
     await expect(persistedHistory.getByRole("link", { name: /Open source|Source/i })).toHaveCount(0);
     await expect(persistedHistory.locator('a[href*="/packet-imports/"]')).toHaveCount(0);
+    await expect(persistedHistoryDialog.getByRole("button", { name: "Review again" })).toHaveCount(0);
     expect(packetMediaRequests, "normal item and provenance use must never navigate to raw packet media").toHaveLength(0);
     await expect(page.getByText("Internal server error")).toHaveCount(0);
     await captureStep(page, testInfo, "06-persisted-session-history");
+    await persistedHistoryDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(persistedHistoryDialog).toBeHidden();
+    await expect(inventoryActionsTrigger).toBeFocused();
     } finally {
       if (cleanupSessionId) {
         await request.patch(`${API_URL}/inventory/sessions/${cleanupSessionId}`, {

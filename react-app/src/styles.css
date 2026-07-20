@@ -14591,3 +14591,183 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+.session-panel > .admin-card-heading > div {
+  min-width: 0;
+}
+
+.session-heading-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.responsive-action-menu.inventory-actions-menu {
+  display: block;
+  width: 44px;
+  min-width: 44px;
+  flex: 0 0 44px;
+}
+
+.inventory-actions-menu > .responsive-action-trigger-compact {
+  display: inline-grid;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  place-items: center;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.inventory-actions-menu > .responsive-action-trigger-compact svg {
+  width: 21px;
+  height: 21px;
+  margin: 0;
+}
+
+.inventory-actions-menu > .responsive-action-trigger-compact > span {
+  display: none;
+}
+
+.inventory-actions-menu .inventory-actions-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 45;
+  width: min(290px, calc(100vw - 32px));
+  min-width: 0;
+  max-height: min(390px, calc(100dvh - 32px));
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.inventory-actions-panel-heading {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  padding: 4px 10px 10px;
+}
+
+.inventory-actions-panel-heading strong,
+.inventory-actions-panel-heading small {
+  overflow-wrap: anywhere;
+}
+
+.inventory-actions-panel-heading strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.inventory-actions-panel-heading small,
+.inventory-actions-panel button > small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.inventory-actions-panel button > small {
+  margin-left: auto;
+}
+
+.inventory-actions-panel > button {
+  min-height: 44px;
+}
+
+.inventory-actions-panel .inventory-action-lifecycle {
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 6px 6px;
+  margin-top: 4px;
+}
+
+.inventory-actions-panel .inventory-action-lifecycle.danger {
+  color: var(--danger);
+}
+
+.import-history-backdrop {
+  z-index: 80;
+}
+
+.modal-panel.import-history-modal {
+  display: grid;
+  width: min(100%, 760px);
+  max-height: calc(100dvh - 36px);
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  padding: 0;
+}
+
+.import-history-modal-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+  padding: 18px 20px;
+}
+
+.import-history-modal-heading .modal-heading {
+  min-width: 0;
+}
+
+.import-history-modal-heading .modal-copy {
+  overflow-wrap: anywhere;
+}
+
+.import-history-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 20px;
+}
+
+.import-history-modal .packet-import-history-row {
+  background: var(--surface-muted);
+  padding: 12px;
+}
+
+.import-history-modal-actions {
+  border-top: 1px solid var(--line);
+  padding: 14px 20px;
+}
+
+@media (max-width: 860px) {
+  .import-history-backdrop {
+    align-items: flex-start;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .modal-panel.import-history-modal {
+    max-height: calc(100dvh - 20px);
+  }
+
+  .import-history-modal-heading {
+    padding: 16px;
+  }
+
+  .import-history-modal-body {
+    padding: 12px;
+  }
+
+  .import-history-modal-actions {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 560px) {
+  .inventory-actions-menu .inventory-actions-panel {
+    position: fixed;
+    top: auto;
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: max(16px, env(safe-area-inset-left));
+    z-index: 75;
+    width: auto;
+  }
+}

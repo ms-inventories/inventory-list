@@ -16,22 +16,19 @@ async function openPacketUpload(page) {
   await expect(workspace).toBeVisible();
   await expect(workspace.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
 
-  const addItems = workspace.getByRole("button", { name: "Add items from packet", exact: true });
-  const inventoryTools = workspace.locator("details.session-tools");
-  const inventoryToolsSummary = inventoryTools.locator(":scope > summary");
+  const inventoryActionsTrigger = workspace.getByRole("button", { name: /^Inventory actions for / }).first();
+  const inventoryActions = workspace.getByRole("group", { name: /^Manage inventory / }).first();
   const dialog = page.getByRole("dialog", { name: "Upload packet" });
 
   await expect.poll(async () => {
     if (await dialog.isVisible()) return true;
 
     try {
-      if (await addItems.isVisible()) {
-        await addItems.click({ timeout: 1_000 });
-      } else if (await inventoryToolsSummary.isVisible()) {
-        if (!(await inventoryTools.evaluate(element => element.open))) {
-          await inventoryToolsSummary.click({ timeout: 1_000 });
+      if (await inventoryActionsTrigger.isVisible()) {
+        if ((await inventoryActionsTrigger.getAttribute("aria-expanded")) !== "true") {
+          await inventoryActionsTrigger.click({ timeout: 1_000 });
         }
-        const addPacket = inventoryTools.getByRole("button", { name: "Add packet", exact: true });
+        const addPacket = inventoryActions.getByRole("button", { name: "Add packet", exact: true });
         if (await addPacket.isVisible()) await addPacket.click({ timeout: 1_000 });
       }
     } catch {

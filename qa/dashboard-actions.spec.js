@@ -585,19 +585,36 @@ test.describe("dashboard action destinations", () => {
     await expect(page.getByRole("region", { name: "Inventory workspace" })
       .locator(".session-item", { hasText: selectedItem.packetLine })).toBeVisible();
 
-    const inventoryTools = page.locator("details.session-tools");
-    await expect(inventoryTools).toBeVisible();
-    if (!(await inventoryTools.evaluate(element => element.open))) {
-      await inventoryTools.locator(":scope > summary").click();
-    }
-    await inventoryTools.getByRole("button", { name: "Add packet", exact: true }).click();
+    const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    const inventoryActionsTrigger = inventoryWorkspace.getByRole("button", {
+      name: `Inventory actions for ${selectedInventory.name}`,
+      exact: true
+    });
+    const inventoryActions = inventoryWorkspace.getByRole("group", {
+      name: `Manage inventory ${selectedInventory.name}`,
+      exact: true
+    });
+    await expect(inventoryWorkspace.getByText("Inventory tools", { exact: true })).toHaveCount(0);
+    await expect(inventoryWorkspace.getByText("Close-out report", { exact: true })).toHaveCount(0);
+    await expect(inventoryWorkspace.getByText("Inventory status", { exact: true })).toHaveCount(0);
+    await expect(inventoryActionsTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(inventoryActionsTrigger).toHaveAttribute("aria-controls", /.+/);
+    await expect(inventoryActions).toHaveCount(0);
+    await inventoryActionsTrigger.click();
+    await expect(inventoryActions).toBeVisible();
+    await expect(inventoryActions.getByRole("button", { name: /^Import history\b/ })).toHaveCount(0);
+    await inventoryActions.getByRole("button", { name: "Add packet", exact: true }).click();
 
     const packetDialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(packetDialog).toBeVisible();
+    await expect(inventoryActions).toHaveCount(0);
     await expect(packetDialog.getByRole("heading", { name: "Add the packet source", exact: true })).toBeVisible();
     await expect(packetDialog.getByRole("heading", { name: "Choose where these items belong", exact: true })).toHaveCount(0);
     await expect(packetDialog.getByText("Start a new inventory", { exact: true })).toHaveCount(0);
     await expect(packetDialog.getByLabel("Packet import progress").locator("span.active small")).toHaveText("Source");
+    await packetDialog.getByRole("button", { name: "Close packet wizard" }).click();
+    await expect(packetDialog).toBeHidden();
+    await expect(inventoryActionsTrigger).toBeFocused();
   });
 
   test("active inventory selector immediately swaps the visible work queue", async ({ page, request }, testInfo) => {

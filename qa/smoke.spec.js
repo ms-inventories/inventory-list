@@ -332,9 +332,18 @@ test.describe("QA smoke", () => {
     await expect(inventorySelect.locator("option:checked")).toHaveText("July sensitive items");
     await expect(page.getByRole("region", { name: "Inventory workspace" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Work queue", exact: true })).toBeVisible();
-    const inventoryTools = page.locator("details.session-tools");
-    await inventoryTools.locator(":scope > summary").click();
-    await inventoryTools.getByRole("button", { name: "Add packet", exact: true }).click();
+    const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    const inventoryActionsTrigger = inventoryWorkspace.getByRole("button", {
+      name: "Inventory actions for July sensitive items",
+      exact: true
+    });
+    await inventoryActionsTrigger.click();
+    const inventoryActions = inventoryWorkspace.getByRole("group", {
+      name: "Manage inventory July sensitive items",
+      exact: true
+    });
+    await expect(inventoryActions).toBeVisible();
+    await inventoryActions.getByRole("button", { name: "Add packet", exact: true }).click();
 
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();

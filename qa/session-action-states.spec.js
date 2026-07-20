@@ -102,6 +102,18 @@ async function openScenario(page, scenario) {
   return { row, leaderControls, panel: page.locator(".session-panel") };
 }
 
+async function openInventoryActions(page, inventoryName) {
+  const workspace = page.getByRole("region", { name: "Inventory workspace" });
+  const trigger = workspace.getByRole("button", { name: `Inventory actions for ${inventoryName}`, exact: true });
+  const panel = workspace.getByRole("group", { name: `Manage inventory ${inventoryName}`, exact: true });
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(trigger).toHaveAttribute("aria-controls", /.+/);
+  await expect(panel).toHaveCount(0);
+  await trigger.click();
+  await expect(panel).toBeVisible();
+  return { trigger, panel };
+}
+
 test.describe("session async action states", () => {
   test("locks direct checks and close mutations through delay, failure, and retry", async ({ page, request }, testInfo) => {
     test.setTimeout(75_000);
@@ -183,11 +195,8 @@ test.describe("session async action states", () => {
     await expect(row).toHaveCount(0);
     await expect(page.getByRole("dialog"), "direct checks must not open an item dialog").toHaveCount(0);
 
-    const inventoryTools = page.locator(".session-tools");
-    if (!(await inventoryTools.evaluate(element => element.open))) {
-      await inventoryTools.locator(".session-tools-heading").click();
-    }
-    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    const { panel: inventoryActions } = await openInventoryActions(page, scenario.sessionName);
+    await inventoryActions.getByRole("button", { name: "Close inventory", exact: true }).click();
     let closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
     await expect(closeDialog).toBeVisible();
     await closeDialog.getByRole("button", { name: "Close inventory", exact: true }).click();

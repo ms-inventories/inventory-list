@@ -47,11 +47,19 @@ test.describe("tenant inventory cleanup", () => {
 
     await expectSelectedInventory(page, sessionName);
     await expect(page.getByRole("region", { name: "Active inventory" })).toContainText("0 items");
-    const inventoryTools = page.locator("details.session-tools");
-    if (!(await inventoryTools.evaluate(element => element.open))) {
-      await inventoryTools.locator("summary").click();
-    }
-    await inventoryTools.getByRole("button", { name: "Delete empty inventory" }).click();
+    const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
+    const inventoryActionsTrigger = inventoryWorkspace.getByRole("button", {
+      name: `Inventory actions for ${sessionName}`,
+      exact: true
+    });
+    await expect(inventoryActionsTrigger).toHaveAttribute("aria-expanded", "false");
+    await inventoryActionsTrigger.click();
+    const inventoryActions = inventoryWorkspace.getByRole("group", {
+      name: `Manage inventory ${sessionName}`,
+      exact: true
+    });
+    await expect(inventoryActions).toBeVisible();
+    await inventoryActions.getByRole("button", { name: "Delete empty inventory" }).click();
 
     const deleteDialog = page.getByRole("dialog", { name: "Delete empty inventory?" });
     await expect(deleteDialog).toBeVisible();

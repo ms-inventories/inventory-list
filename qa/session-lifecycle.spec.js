@@ -43,13 +43,22 @@ async function createEmptySession(page, name) {
   await expectSelectedInventory(page, name);
 }
 
-async function openInventoryTools(page) {
-  const tools = page.locator("details.session-tools");
-  await expect(tools).toBeVisible();
-  if (!(await tools.evaluate(element => element.open))) {
-    await tools.locator(":scope > summary").click();
-  }
-  return tools;
+async function openInventoryActions(page, inventoryName) {
+  const workspace = page.getByRole("region", { name: "Inventory workspace" });
+  const trigger = workspace.getByRole("button", { name: `Inventory actions for ${inventoryName}`, exact: true });
+  const panel = workspace.getByRole("group", { name: `Manage inventory ${inventoryName}`, exact: true });
+
+  await expect(workspace.getByText("Inventory tools", { exact: true })).toHaveCount(0);
+  await expect(workspace.getByText("Close-out report", { exact: true })).toHaveCount(0);
+  await expect(workspace.getByText("Inventory status", { exact: true })).toHaveCount(0);
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(trigger).toHaveAttribute("aria-controls", /.+/);
+  await expect(panel).toHaveCount(0);
+  await trigger.click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(panel).toBeVisible();
+  return { trigger, panel };
 }
 
 async function mockSelectedInventoryRemoval(page, { targetItemCount }) {
@@ -157,8 +166,9 @@ test.describe("session lifecycle", () => {
       .getByRole("combobox", { name: "Active inventory", exact: true });
     if (await selector.isVisible()) await expect(selector.locator("option", { hasText: sessionName })).toHaveCount(1);
 
-    const inventoryTools = await openInventoryTools(page);
-    await inventoryTools.getByRole("button", { name: "Delete empty inventory" }).click();
+    const { panel: inventoryActions } = await openInventoryActions(page, sessionName);
+    await expect(inventoryActions.getByRole("button", { name: /^Import history\b/ })).toHaveCount(0);
+    await inventoryActions.getByRole("button", { name: "Delete empty inventory" }).click();
     await expect(page.getByRole("dialog", { name: "Delete empty inventory?" })).toBeVisible();
     await page.getByRole("button", { name: "Delete inventory" }).click();
 
@@ -175,9 +185,8 @@ test.describe("session lifecycle", () => {
     await openSessions(page);
     await createEmptySession(page, sessionName);
 
-    await page.getByRole("region", { name: "Inventory workspace" })
-      .getByRole("button", { name: "Add items from packet", exact: true })
-      .click();
+    const { panel: packetActions } = await openInventoryActions(page, sessionName);
+    await packetActions.getByRole("button", { name: "Add packet", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Upload packet" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Add the packet source", exact: true })).toBeVisible();
@@ -188,14 +197,16 @@ test.describe("session lifecycle", () => {
     await expect(dialog.getByRole("heading", { name: "Packet imported" })).toBeVisible();
     await dialog.getByRole("button", { name: "Open inventory" }).click();
 
-    const inventoryTools = await openInventoryTools(page);
-    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    let { trigger: inventoryActionsTrigger, panel: inventoryActions } = await openInventoryActions(page, sessionName);
+    await inventoryActions.getByRole("button", { name: "Close inventory", exact: true }).click();
     let closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
     await expect(closeDialog).toBeVisible();
     await closeDialog.getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByRole("dialog", { name: "Close this inventory?" })).toHaveCount(0);
+    await expect(inventoryActionsTrigger).toBeFocused();
 
-    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    ({ panel: inventoryActions } = await openInventoryActions(page, sessionName));
+    await inventoryActions.getByRole("button", { name: "Close inventory", exact: true }).click();
     closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
     await closeDialog.getByRole("button", { name: "Close inventory" }).click();
 
@@ -214,8 +225,8 @@ test.describe("session lifecycle", () => {
 
     const inventoryWorkspace = page.getByRole("region", { name: "Inventory workspace" });
     await expect(inventoryWorkspace.locator(".session-item", { hasText: scenario.targetPacketLine })).toBeVisible();
-    const inventoryTools = await openInventoryTools(page);
-    await inventoryTools.getByRole("button", { name: "Close inventory", exact: true }).click();
+    const { panel: inventoryActions } = await openInventoryActions(page, scenario.target.name);
+    await inventoryActions.getByRole("button", { name: "Close inventory", exact: true }).click();
     const closeDialog = page.getByRole("dialog", { name: "Close this inventory?" });
     await expect(closeDialog).toBeVisible();
     await closeDialog.getByRole("button", { name: "Close inventory", exact: true }).click();
@@ -237,8 +248,8 @@ test.describe("session lifecycle", () => {
     await openSessions(page);
     await expectSelectedInventory(page, scenario.target.name);
 
-    const inventoryTools = await openInventoryTools(page);
-    await inventoryTools.getByRole("button", { name: "Delete empty inventory" }).click();
+    const { panel: inventoryActions } = await openInventoryActions(page, scenario.target.name);
+    await inventoryActions.getByRole("button", { name: "Delete empty inventory" }).click();
     const deleteDialog = page.getByRole("dialog", { name: "Delete empty inventory?" });
     await expect(deleteDialog).toBeVisible();
     await deleteDialog.getByRole("button", { name: "Delete inventory" }).click();
@@ -251,6 +262,9 @@ test.describe("session lifecycle", () => {
       "the queue should converge on the same fallback inventory shown by the dashboard"
     ).toBeVisible();
     await expect(page.getByText(`Deleted empty inventory ${scenario.target.name}.`)).toBeVisible();
+    await expect(
+      inventoryWorkspace.getByRole("button", { name: `Inventory actions for ${scenario.fallback.name}`, exact: true })
+    ).toBeFocused();
   });
 
   test("clears a stale inventory load error after refresh", async ({ page }) => {

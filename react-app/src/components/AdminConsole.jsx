@@ -309,11 +309,12 @@ function ResponsiveActionMenu({
   panelClassName = "",
   panelAriaLabel = "",
   compact = false,
-  disabled = false
+  disabled = false,
+  triggerRef: forwardedTriggerRef = null
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
-  const triggerRef = useRef(null);
+  const internalTriggerRef = useRef(null);
   const panelId = useId();
 
   useEffect(() => {
@@ -327,7 +328,7 @@ function ResponsiveActionMenu({
       if (event.key !== "Escape") return;
       event.preventDefault();
       setIsOpen(false);
-      window.requestAnimationFrame(() => triggerRef.current?.focus());
+      window.requestAnimationFrame(() => internalTriggerRef.current?.focus());
     }
 
     document.addEventListener("pointerdown", handlePointerDown, true);
@@ -341,7 +342,10 @@ function ResponsiveActionMenu({
   return (
     <div ref={menuRef} className={`responsive-action-menu ${compact ? "compact" : ""} ${className}`.trim()}>
       <button
-        ref={triggerRef}
+        ref={node => {
+          internalTriggerRef.current = node;
+          if (forwardedTriggerRef) forwardedTriggerRef.current = node;
+        }}
         className={`btn btn-secondary ${compact ? "responsive-action-trigger-compact" : ""}`.trim()}
         type="button"
         aria-label={ariaLabel}
@@ -2131,6 +2135,68 @@ function SessionItemLeaderMenu({
   );
 }
 
+function InventoryActionsMenu({
+  session,
+  importCount = 0,
+  isPacketBusy = false,
+  statusAction = "",
+  triggerRef,
+  onAddPacket,
+  onOpenImportHistory,
+  onDelete,
+  onClose
+}) {
+  if (!session) return null;
+
+  const itemCount = Number(session.itemCount || 0);
+  const isClosed = session.status === "closed";
+  const isLifecyclePending = Boolean(statusAction);
+
+  if (isClosed && !importCount) return null;
+
+  return (
+    <ResponsiveActionMenu
+      className="inventory-actions-menu"
+      panelClassName="inventory-actions-panel"
+      label="Inventory actions"
+      ariaLabel={`Inventory actions for ${session.name}`}
+      panelAriaLabel={`Manage inventory ${session.name}`}
+      compact
+      disabled={isLifecyclePending}
+      triggerRef={triggerRef}
+    >
+      <div className="inventory-actions-panel-heading">
+        <strong>Inventory actions</strong>
+        <small>{session.name}</small>
+      </div>
+      {!isClosed ? (
+        <button type="button" aria-haspopup="dialog" disabled={isPacketBusy} onClick={onAddPacket}>
+          <FileUp aria-hidden="true" />
+          <span>{isPacketBusy ? "Working on packet..." : "Add packet"}</span>
+        </button>
+      ) : null}
+      {importCount ? (
+        <button type="button" aria-haspopup="dialog" onClick={onOpenImportHistory}>
+          <History aria-hidden="true" />
+          <span>Import history</span>
+          <small>{countLabel(importCount, "import")}</small>
+        </button>
+      ) : null}
+      {!isClosed && itemCount === 0 ? (
+        <button className="inventory-action-lifecycle danger" type="button" aria-haspopup="dialog" disabled={isLifecyclePending} onClick={onDelete}>
+          <Trash2 aria-hidden="true" />
+          <span>Delete empty inventory</span>
+        </button>
+      ) : !isClosed ? (
+        <button className="inventory-action-lifecycle" type="button" aria-haspopup="dialog" disabled={isLifecyclePending} onClick={onClose}>
+          <CheckCircle2 aria-hidden="true" />
+          <span>{statusAction === "closed" ? "Closing..." : "Close inventory"}</span>
+        </button>
+      ) : null}
+    </ResponsiveActionMenu>
+  );
+}
+
 function SessionItemInlineContext({
   item,
   canManage,
@@ -2358,9 +2424,8 @@ function SessionPanel({
   const [matchActions, setMatchActions] = useState(() => new Map());
   const [sessionStatusActions, setSessionStatusActions] = useState(() => new Map());
   const [withdrawingSubmissionId, setWithdrawingSubmissionId] = useState("");
-  const [printReportId, setPrintReportId] = useState("");
   const [closedSessionLimit, setClosedSessionLimit] = useState(20);
-  const [sessionToolsOpenId, setSessionToolsOpenId] = useState("");
+  const [importHistoryTarget, setImportHistoryTarget] = useState(null);
   const [packetWizardModeTouched, setPacketWizardModeTouched] = useState(false);
   const [packetWizardSessionLocked, setPacketWizardSessionLocked] = useState(false);
   const packetFileInputRef = useRef(null);
@@ -2368,6 +2433,8 @@ function SessionPanel({
   const detailPhotoTriggerRef = useRef(null);
   const proofTriggerRef = useRef(null);
   const historyTriggerRef = useRef(null);
+  const inventoryActionsTriggerRef = useRef(null);
+  const refreshInventoryButtonRef = useRef(null);
   const packetWizardTriggerRef = useRef(null);
   const lifecycleDialogTriggerRef = useRef(null);
   const packetWizardCurrentRef = useRef({ mode: "existing", sessionId: "", sessionName: "" });
@@ -2384,6 +2451,7 @@ function SessionPanel({
   const assignmentActionRef = useRef(new Map());
   const matchActionRef = useRef(new Map());
   const sessionStatusActionRef = useRef(new Map());
+  const restoreInventoryFocusAfterDeleteRef = useRef(false);
   const isPacketUploadIntent = uploadIntent === "packet" || isPacketImportOpen;
   const isPacketBusy = Boolean(packetAction);
   const isReadingPacket = packetAction === "read";
@@ -2677,8 +2745,8 @@ function SessionPanel({
     }
   }
 
-  function openPacketWizard(sessionId = selectedSessionId) {
-    if (!packetWizardOpen) packetWizardTriggerRef.current = document.activeElement;
+  function openPacketWizard(sessionId = selectedSessionId, returnFocusTarget = null) {
+    if (!packetWizardOpen) packetWizardTriggerRef.current = returnFocusTarget || document.activeElement;
     const fallbackSessionId = sessionId || selectedSessionId || openSessions[0]?.id || "";
     const lockToSelectedSession = dashboardMode && Boolean(fallbackSessionId);
     setPacketWizardModeTouched(false);
@@ -2715,9 +2783,9 @@ function SessionPanel({
     onInventoryChanged?.();
   }
 
-  function requestDeleteSession(session) {
+  function requestDeleteSession(session, returnFocusTarget = null) {
     if (!session || Number(session.itemCount || 0) > 0) return;
-    lifecycleDialogTriggerRef.current = document.activeElement;
+    lifecycleDialogTriggerRef.current = returnFocusTarget || document.activeElement;
     setDeleteSessionTarget(session);
     setStatus({ text: "", isError: false });
   }
@@ -2728,9 +2796,9 @@ function SessionPanel({
     window.requestAnimationFrame(() => lifecycleDialogTriggerRef.current?.focus?.());
   }
 
-  function requestCloseSession(session) {
+  function requestCloseSession(session, returnFocusTarget = null) {
     if (!session || session.status === "closed" || sessionStatusActionRef.current.has(session.id)) return;
-    lifecycleDialogTriggerRef.current = document.activeElement;
+    lifecycleDialogTriggerRef.current = returnFocusTarget || document.activeElement;
     setCloseSessionTarget(session);
     setStatus({ text: "", isError: false });
   }
@@ -2922,31 +2990,6 @@ function SessionPanel({
   function reviewWizardPacketRows() {
     const rows = reviewPacketRows(packetRows, packetSourceName, packetWizardSessionId || selectedSessionId);
     if (rows.length) setPacketWizardStep(3);
-  }
-
-  function retryImportBatch(batch) {
-    if (!batch?.extractedText) {
-      setStatus({ text: "That import does not have saved text to retry.", isError: true });
-      return;
-    }
-
-    setPacketRows(batch.extractedText);
-    setPacketSourceFile(null);
-    const rows = reviewPacketRows(
-      batch.extractedText,
-      batch.sourceName || "Saved import",
-      selectedSessionId,
-      { fileName: batch.sourceName || "Saved import", mimeType: batch.sourceMimeType || "text/plain" }
-    );
-    if (!rows.length) return;
-    setPacketWizardModeTouched(false);
-    setPacketWizardOpen(true);
-    setPacketWizardStep(3);
-    setPacketWizardSummary(null);
-    setPacketWizardMode("existing");
-    setPacketWizardSessionId(selectedSessionId);
-    setPacketWizardSessionName("");
-    setIsPacketImportOpen(false);
   }
 
   async function importPacketRowsToSession(targetSessionId = selectedSessionId) {
@@ -3237,8 +3280,8 @@ function SessionPanel({
         token,
         tenantSlug
       });
+      restoreInventoryFocusAfterDeleteRef.current = true;
       setDeleteSessionTarget(null);
-      window.requestAnimationFrame(() => lifecycleDialogTriggerRef.current?.focus?.());
       if (selectedSessionId === target.id) {
         setSelectedSessionId("");
         setDetail(null);
@@ -3254,40 +3297,6 @@ function SessionPanel({
     } finally {
       setIsDeletingSession(false);
     }
-  }
-
-  async function copyCloseoutReport(report) {
-    try {
-      await navigator.clipboard.writeText(buildSessionReportText(report));
-      setStatus({ text: "Close-out report copied.", isError: false });
-    } catch {
-      setStatus({ text: "Could not copy report from this browser.", isError: true });
-    }
-  }
-
-  function exportCloseoutCsv(report) {
-    try {
-      const fileName = `${safeFileNamePart(report.session?.name)}-closeout.csv`;
-      downloadTextFile(fileName, buildSessionReportCsv(report), "text/csv;charset=utf-8");
-      setStatus({ text: "Close-out CSV exported.", isError: false });
-    } catch {
-      setStatus({ text: "Could not export CSV from this browser.", isError: true });
-    }
-  }
-
-  function printCloseoutReport(report) {
-    const reportId = report.session?.id || selectedSessionId;
-    if (!reportId) return;
-
-    setPrintReportId(reportId);
-    setStatus({ text: "Preparing report for print...", isError: false });
-    window.setTimeout(() => {
-      window.print();
-      window.setTimeout(() => {
-        setPrintReportId(current => current === reportId ? "" : current);
-        setStatus(current => current.text === "Preparing report for print..." ? { text: "", isError: false } : current);
-      }, 500);
-    }, 0);
   }
 
   const requestedSessionId = dashboardMode && preferredSessionId ? preferredSessionId : selectedSessionId;
@@ -3367,10 +3376,6 @@ function SessionPanel({
     : sessionItemFilter === "mine"
       ? (sessionItemFilterCounts.available ? ["available", "Show unclaimed"] : ["team", "Show others"])
       : (sessionItemFilterCounts.available ? ["available", "Show unclaimed"] : ["mine", "Show mine"]);
-  const sessionReport = useMemo(
-    () => selectedSession ? buildSessionReport(selectedSession, detailIsCurrent ? detail?.items || [] : []) : null,
-    [selectedSession, detailIsCurrent, detail?.items]
-  );
   const importBatches = detailIsCurrent ? detail?.importBatches || [] : [];
   const proofItem = detailItems.find(item => item.id === proofItemId) || null;
   const historyItem = detailItems.find(item => item.id === historyItemId) || null;
@@ -3384,13 +3389,39 @@ function SessionPanel({
   }, [historyItemId, historyItem]);
 
   useEffect(() => {
-    if (!proofItem && !historyItem && !detailPhotoViewer && !packetWizardOpen && !closeSessionTarget && !deleteSessionTarget) return undefined;
+    if (!proofItem && !historyItem && !detailPhotoViewer && !packetWizardOpen && !importHistoryTarget && !closeSessionTarget && !deleteSessionTarget) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [Boolean(proofItem), Boolean(historyItem), Boolean(detailPhotoViewer), packetWizardOpen, Boolean(closeSessionTarget), Boolean(deleteSessionTarget)]);
+  }, [Boolean(proofItem), Boolean(historyItem), Boolean(detailPhotoViewer), packetWizardOpen, Boolean(importHistoryTarget), Boolean(closeSessionTarget), Boolean(deleteSessionTarget)]);
+
+  useEffect(() => {
+    setImportHistoryTarget(current => (
+      current && current.session.id !== selectedSession?.id ? null : current
+    ));
+  }, [selectedSession?.id, tenantSlug]);
+
+  useEffect(() => {
+    if (
+      !restoreInventoryFocusAfterDeleteRef.current
+      || deleteSessionTarget
+      || isLoadingSessions
+      || detailLoadState.isLoading
+    ) return undefined;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const inventoryActionTrigger = inventoryActionsTriggerRef.current;
+      const focusTarget = inventoryActionTrigger?.isConnected
+        ? inventoryActionTrigger
+        : refreshInventoryButtonRef.current;
+      if (!focusTarget?.isConnected) return;
+      focusTarget.focus();
+      restoreInventoryFocusAfterDeleteRef.current = false;
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [deleteSessionTarget, isLoadingSessions, detailLoadState.isLoading, selectedSession?.id, detail?.session?.id]);
 
   function openFirstPossibleMatch() {
     const first = possibleMatchItems[0];
@@ -3420,6 +3451,19 @@ function SessionPanel({
   function closeHistory() {
     setHistoryItemId("");
     window.requestAnimationFrame(() => historyTriggerRef.current?.focus?.());
+  }
+
+  function openImportHistory() {
+    if (!selectedSession || !importBatches.length) return;
+    setImportHistoryTarget({
+      session: selectedSession,
+      batches: [...importBatches]
+    });
+  }
+
+  function closeImportHistory() {
+    setImportHistoryTarget(null);
+    window.requestAnimationFrame(() => inventoryActionsTriggerRef.current?.focus?.());
   }
 
   function openItemPhotoViewer(item, photos, index, submission = null) {
@@ -3465,9 +3509,6 @@ function SessionPanel({
   const selectedSessionStatusAction = selectedSession?.id ? sessionStatusActions.get(selectedSession.id) || "" : "";
   const closeSessionAction = closeSessionTarget?.id ? sessionStatusActions.get(closeSessionTarget.id) || "" : "";
 
-  useEffect(() => {
-    setSessionToolsOpenId(selectedSessionIsClosed ? selectedSession?.id || "" : "");
-  }, [selectedSession?.id, selectedSessionIsClosed]);
   const openSessions = useMemo(
     () => sessions.filter(session => session.status !== "closed"),
     [sessions]
@@ -3571,9 +3612,24 @@ function SessionPanel({
           <p className="eyebrow">Inventory workspace</p>
           <h2>Work queue</h2>
         </div>
-        <button className="icon-button admin-card-heading-action" type="button" aria-label="Refresh inventory" title="Refresh inventory" onClick={refreshSessions}>
-          <RefreshCw aria-hidden="true" />
-        </button>
+        <div className="session-heading-actions">
+          <button ref={refreshInventoryButtonRef} className="icon-button" type="button" aria-label="Refresh inventory" title="Refresh inventory" onClick={refreshSessions}>
+            <RefreshCw aria-hidden="true" />
+          </button>
+          {canManage && selectedSession && detailIsCurrent ? (
+            <InventoryActionsMenu
+              session={selectedSession}
+              importCount={importBatches.length}
+              isPacketBusy={isPacketBusy}
+              statusAction={selectedSessionStatusAction}
+              triggerRef={inventoryActionsTriggerRef}
+              onAddPacket={() => openPacketWizard(selectedSession.id, inventoryActionsTriggerRef.current)}
+              onOpenImportHistory={openImportHistory}
+              onDelete={() => requestDeleteSession(selectedSession, inventoryActionsTriggerRef.current)}
+              onClose={() => requestCloseSession(selectedSession, inventoryActionsTriggerRef.current)}
+            />
+          ) : null}
+        </div>
       </div>
 
       <div className={`session-layout ${dashboardMode ? "dashboard" : ""}`}>
@@ -3823,13 +3879,9 @@ function SessionPanel({
                 ) : detailItems.length ? null : (
                   <EmptyPanel
                     title="No inventory items yet"
-                    body="Add a packet or paste items from the hand receipt to start the inventory."
-                    action={canManage ? (
-                      <button className="btn btn-primary btn-small" type="button" onClick={() => openPacketWizard(selectedSession.id)}>
-                        <FileUp aria-hidden="true" />
-                        <span>Add items from packet</span>
-                      </button>
-                    ) : null}
+                    body={canManage
+                      ? "Use the three-dot inventory menu above to add a packet."
+                      : "A leader needs to add the hand-receipt packet before work can begin."}
                   />
                 )}
               </div>
@@ -3868,92 +3920,6 @@ function SessionPanel({
                 </details>
               ) : null}
 
-              {canManage ? (
-                <details
-                  className="session-tools"
-                  key={selectedSession.id}
-                  open={sessionToolsOpenId === selectedSession.id}
-                  onToggle={event => setSessionToolsOpenId(event.currentTarget.open ? selectedSession.id : "")}
-                >
-                  <summary className="session-tools-heading">
-                    <span>
-                      <strong>Inventory tools</strong>
-                      <small>Packets, import history, reports, and inventory status</small>
-                    </span>
-                    <ChevronDown aria-hidden="true" />
-                  </summary>
-                  <div className="session-tools-body">
-                    {!selectedSessionIsClosed && Number(selectedSession.itemCount || 0) > 0 ? (
-                      <div className="packet-wizard-entry">
-                        <div>
-                          <strong>Add items from a packet</strong>
-                          <span>Upload a PDF, CSV, photo, or paste items from the hand receipt.</span>
-                        </div>
-                        <button className="btn btn-secondary btn-small" type="button" onClick={() => openPacketWizard(selectedSession.id)}>
-                          <FileUp aria-hidden="true" />
-                          <span>Add packet</span>
-                        </button>
-                      </div>
-                    ) : null}
-
-                    {importBatches.length ? (
-                      <details className="packet-import-history">
-                        <summary className="packet-import-history-heading">
-                          <strong>Import history</strong>
-                          <span>{importBatches.length}</span>
-                        </summary>
-                        <div className="packet-import-history-list">
-                          {importBatches.slice(0, 4).map(batch => (
-                            <div className="packet-import-history-row" key={batch.id}>
-                              <div>
-                                <strong>{batch.sourceName || "Packet import"}</strong>
-                                <span>
-                                  {countLabel(batch.rowCount || 0, "item")} - {formatDate(batch.createdAt)}
-                                  {batch.createdByName || batch.createdByEmail ? ` - uploaded by ${batch.createdByName || batch.createdByEmail}` : ""}
-                                </span>
-                              </div>
-                              <div className="packet-import-history-actions">
-                                {!selectedSessionIsClosed ? (
-                                  <button className="btn btn-secondary btn-small" type="button" onClick={() => retryImportBatch(batch)}>
-                                    <ClipboardPlus aria-hidden="true" />
-                                    <span>Review again</span>
-                                  </button>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    ) : null}
-
-                    <SessionCloseoutReport
-                      report={sessionReport}
-                      isPrintTarget={printReportId === sessionReport?.session?.id}
-                      onCopy={copyCloseoutReport}
-                      onExportCsv={exportCloseoutCsv}
-                      onPrint={printCloseoutReport}
-                    />
-
-                    <div className="session-lifecycle-actions">
-                      <span>Inventory status</span>
-                      {Number(selectedSession.itemCount || 0) === 0 ? (
-                        <button className="btn btn-danger-soft btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestDeleteSession(selectedSession)}>
-                          <Trash2 aria-hidden="true" />
-                          <span>Delete empty inventory</span>
-                        </button>
-                      ) : selectedSession.status !== "closed" ? (
-                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => requestCloseSession(selectedSession)}>
-                          <span>{selectedSessionStatusAction === "closed" ? "Closing..." : "Close inventory"}</span>
-                        </button>
-                      ) : (
-                        <button className="btn btn-secondary btn-small" type="button" disabled={Boolean(selectedSessionStatusAction)} onClick={() => updateSessionStatus("active")}>
-                          <span>{selectedSessionStatusAction === "active" ? "Reopening..." : "Reopen inventory"}</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </details>
-              ) : null}
               </>
             ) : selectedDetailLoadState.error && !selectedDetailLoadState.isLoading ? (
               <EmptyPanel
@@ -4111,6 +4077,52 @@ function SessionPanel({
         onSelect={selectDetailPhotoViewer}
         onToggleZoom={() => setDetailPhotoViewer(current => current ? { ...current, isZoomed: !current.isZoomed } : current)}
       />
+
+      {importHistoryTarget ? (
+        <div className="modal-backdrop import-history-backdrop" role="presentation">
+          <section
+            className="modal-panel import-history-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="importHistoryTitle"
+            onKeyDown={event => handleModalKeyDown(event, closeImportHistory)}
+          >
+            <div className="import-history-modal-heading">
+              <div className="modal-heading">
+                <span className="modal-icon">
+                  <History aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="eyebrow">Inventory records</p>
+                  <h2 className="modal-title" id="importHistoryTitle">Import history</h2>
+                  <p className="modal-copy">Packets added to {importHistoryTarget.session.name}.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" aria-label="Close import history" onClick={closeImportHistory} autoFocus>
+                <X aria-hidden="true" />
+              </button>
+            </div>
+            <div className="import-history-modal-body">
+              <div className="packet-import-history-list">
+                {importHistoryTarget.batches.map(batch => (
+                  <div className="packet-import-history-row" key={batch.id}>
+                    <div>
+                      <strong>{batch.sourceName || "Packet import"}</strong>
+                      <span>
+                        {countLabel(batch.rowCount || 0, "item")} - {formatDate(batch.createdAt)}
+                        {batch.createdByName || batch.createdByEmail ? ` - uploaded by ${batch.createdByName || batch.createdByEmail}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-actions import-history-modal-actions">
+              <button className="btn btn-secondary" type="button" onClick={closeImportHistory}>Close</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {packetWizardOpen ? (
         <div className="modal-backdrop packet-wizard-backdrop" role="presentation">

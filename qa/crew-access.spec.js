@@ -124,6 +124,11 @@ test.describe("temporary crew access", () => {
       await expect(page.getByRole("button", { name: "Review Queue", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Team", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Workspace Settings", exact: true })).toHaveCount(0);
+      await expect(inventoryWorkspace.getByRole("button", {
+        name: `Inventory actions for ${session.name}`,
+        exact: true
+      })).toHaveCount(0);
+      await expect(inventoryWorkspace.getByText("Inventory tools", { exact: true })).toHaveCount(0);
       if (mobileNavigation) {
         await page.locator(".leader-brand").getByRole("button", { name: "Close menu" }).click();
       }
