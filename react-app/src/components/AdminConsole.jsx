@@ -6665,7 +6665,7 @@ function NewsletterPanel({ token, me, onRefresh, onLogout }) {
   );
 }
 
-function PlatformPanel({ token, me, onRefresh, onLogout }) {
+function PlatformPanel({ token, me, canUseNewsletter = false, onRefresh, onLogout }) {
   const isMobileViewport = useMediaQuery("(max-width: 860px)");
   const [tenants, setTenants] = useState([]);
   const [platformUsers, setPlatformUsers] = useState([]);
@@ -7511,10 +7511,12 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
               </button>
             );
           })}
-          <button type="button" onClick={openNewsletter}>
-            <MailPlus aria-hidden="true" />
-            <span>Newsletter</span>
-          </button>
+          {canUseNewsletter ? (
+            <button type="button" onClick={openNewsletter}>
+              <MailPlus aria-hidden="true" />
+              <span>Newsletter</span>
+            </button>
+          ) : null}
         </nav>
 
         <div className="platform-sidebar-foot">
@@ -7627,7 +7629,35 @@ function PlatformPanel({ token, me, onRefresh, onLogout }) {
           <StatusLine status={status} />
 
           {activeView === "dashboard" ? (
-            renderPlatoonCards()
+            <>
+              {canUseNewsletter ? (
+                <section className="platform-dashboard-shortcuts" aria-label="Admin shortcuts">
+                  <a
+                    className="platform-dashboard-shortcut-card"
+                    href={`#${newsletterSectionHashes.overview}`}
+                    aria-label="Open FRG Newsletter"
+                    onClick={event => {
+                      event.preventDefault();
+                      openNewsletter();
+                    }}
+                  >
+                    <span className="platform-dashboard-shortcut-icon" aria-hidden="true">
+                      <MailPlus />
+                    </span>
+                    <span className="platform-dashboard-shortcut-copy">
+                      <small>Communications</small>
+                      <strong>FRG Newsletter</strong>
+                      <span>Manage homepage updates, newsletter issues, and subscribers.</span>
+                    </span>
+                    <span className="platform-dashboard-shortcut-action">
+                      <span>Open newsletter</span>
+                      <ArrowRight aria-hidden="true" />
+                    </span>
+                  </a>
+                </section>
+              ) : null}
+              {renderPlatoonCards()}
+            </>
           ) : null}
 
           {activeView === "users" ? (
@@ -12007,7 +12037,7 @@ export default function AdminConsole() {
               : <EmptyPanel title="Newsletter admin access required" body="This account can sign in, but it is not assigned newsletter publishing access." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           ) : isPlatformPage ? (
             canUsePlatform
-              ? <PlatformPanel token={token} me={me} onRefresh={refreshAccess} onLogout={logout} />
+              ? <PlatformPanel token={token} me={me} canUseNewsletter={canUseNewsletter} onRefresh={refreshAccess} onLogout={logout} />
               : <EmptyPanel title="Platform access required" body="This account can sign in, but it is not a root admin." action={<a className="btn btn-primary btn-small" href="/#/launch">Choose workspace</a>} />
           ) : canUseTenant ? (
             <TenantPanel token={token} tenantSlug={tenantSlug} me={me} onRefresh={refreshAccess} onLogout={logout} />

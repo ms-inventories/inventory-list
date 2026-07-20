@@ -2944,6 +2944,97 @@ button {
   display: none;
 }
 
+.platform-dashboard-shortcuts {
+  min-width: 0;
+}
+
+.platform-dashboard-shortcut-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  border: 1px solid #cbdccb;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, #ffffff 0%, #f2f7f1 100%);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.06);
+  padding: 18px 20px;
+  color: var(--platform-ink);
+  text-decoration: none;
+}
+
+.platform-dashboard-shortcut-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 10px 30px rgba(36, 64, 44, 0.12);
+}
+
+.platform-dashboard-shortcut-card:focus-visible {
+  outline: 3px solid rgba(54, 91, 62, 0.28);
+  outline-offset: 3px;
+}
+
+.platform-dashboard-shortcut-icon {
+  display: inline-flex;
+  width: 52px;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.platform-dashboard-shortcut-icon svg {
+  width: 25px;
+  height: 25px;
+}
+
+.platform-dashboard-shortcut-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.platform-dashboard-shortcut-copy small {
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.platform-dashboard-shortcut-copy strong {
+  font-size: 1.08rem;
+  line-height: 1.25;
+}
+
+.platform-dashboard-shortcut-copy > span {
+  color: var(--platform-muted);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.platform-dashboard-shortcut-action {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #b6cdb8;
+  border-radius: 12px;
+  background: #fff;
+  padding: 0 14px;
+  color: var(--primary-strong);
+  font-size: 0.88rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.platform-dashboard-shortcut-action svg {
+  width: 17px;
+  height: 17px;
+}
+
 .platform-platoon-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
@@ -11569,6 +11660,26 @@ button {
   .platform-page-heading p {
     font-size: 1.0625rem;
     line-height: 1.5;
+  }
+
+  .platform-dashboard-shortcut-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .platform-dashboard-shortcut-icon {
+    width: 48px;
+    height: 48px;
+  }
+
+  .platform-dashboard-shortcut-action {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 50px;
+    border-color: var(--primary);
+    background: var(--primary);
+    color: #fff;
   }
 
   .platform-heading-actions {

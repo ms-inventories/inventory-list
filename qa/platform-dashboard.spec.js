@@ -67,6 +67,27 @@ test.describe("Platform dashboard", () => {
     await expect(page.getByRole("button", { name: "Create platoon", exact: true })).toBeVisible();
   });
 
+  test("authorized admins can open the newsletter from the dashboard shortcut", async ({ page }) => {
+    await seedQaRootSession(page);
+    await page.goto(ADMIN_URL);
+
+    const shortcuts = page.getByRole("region", { name: "Admin shortcuts" });
+    const newsletterLink = shortcuts.getByRole("link", { name: "Open FRG Newsletter", exact: true });
+    await expect(shortcuts).toBeVisible();
+    await expect(newsletterLink).toBeVisible();
+    await expect(newsletterLink.getByText("Communications", { exact: true })).toBeVisible();
+    await expect(newsletterLink.getByText("FRG Newsletter", { exact: true })).toBeVisible();
+    await expect(newsletterLink.getByText("Open newsletter", { exact: true })).toBeVisible();
+    expect(await newsletterLink.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+    expect(await page.evaluate(() =>
+      document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+    )).toBeTruthy();
+
+    await newsletterLink.click();
+    await expect(page).toHaveURL(/#\/newsletter$/);
+    await expect(page.getByRole("heading", { name: "Newsletter", exact: true })).toBeVisible();
+  });
+
   test("platoon cards stay contained at desktop and docked widths", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium", "Desktop containment is covered once in Chromium.");
     await seedQaRootSession(page);

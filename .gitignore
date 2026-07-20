@@ -6,6 +6,7 @@ test-results/
 qa-artifacts/
 .codex-remote-attachments/
 tmp/
+.codex-collab
 .env
 .env.*
 !.env.example
